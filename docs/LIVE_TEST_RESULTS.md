@@ -1,6 +1,6 @@
 # Live Test Results
 
-Last refreshed: 2026-06-11
+Last refreshed: 2026-06-15
 
 These are release-validation smoke tests using real external services. They are
 not a penetration test, a scale test, or a compliance certification.
@@ -63,11 +63,11 @@ python -m pytest -q --tb=no
 Result:
 
 ```text
-558 passed, 1 skipped
+598 passed, 1 skipped
 ```
 
-Current package regression note: after the v0.7.3 security remediation release,
-the full local suite passed with `558 passed, 1 skipped`. The skip is the
+Current package regression note: after the v0.7.5 demo/red-team hardening pass,
+the full local suite passed with `598 passed, 1 skipped`. The skip is the
 Postgres optional-driver negative test when `psycopg2` is installed locally.
 
 ## Active Security Prompt Remediation
@@ -101,7 +101,7 @@ Summary:
   `tests/test_api.py::test_run_blocks_weapon_construction_via_safety_classifier tests/test_classifier.py`
   -> `73 passed`.
 - Full validation: `python -m pytest tests/ -q --tb=no` ->
-  `558 passed, 1 skipped`.
+  `598 passed, 1 skipped`.
 
 ## Clean Environment Checks
 
@@ -389,7 +389,7 @@ source-controlled release docs.
 Command:
 
 ```text
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 ```text

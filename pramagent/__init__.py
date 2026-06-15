@@ -31,7 +31,8 @@ from .auth import APIKeyRegistry, JWTManager, PostgresAPIKeyRegistry
 from .otel import OpenTelemetryExporter, OpenTelemetryNotInstalled
 from .anchoring import EthereumAnchor, EthereumAnchorReceipt
 from .redteam import RedTeamReport, run_injection_benchmark
-from .types import AgentResponse, HITLStatus, TraceEvent, Verdict
+from .types import (AgentResponse, EscalatePolicy, HITLStatus, TraceEvent,
+                    Verdict)
 from .usage import (
     InMemoryUsageLedger,
     InMemoryUsageSink,
@@ -45,13 +46,14 @@ from .usage import (
     WebhookUsageSink,
 )
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 __all__ = [
     "Pramagent",
     "AgentResponse",
     "TraceEvent",
     "Verdict",
     "HITLStatus",
+    "EscalatePolicy",
     "IsolationLayer",
     "ObservabilityLayer",
     "ComplianceLayer",

@@ -321,6 +321,13 @@ def build_default_armor() -> Pramagent:
             timeout_s=hitl_timeout,
             approver=slack_approver,
         ),
+        # The reference deployment enforces input escalations: the
+        # escalate_transfer rule above is ESCALATE, so a "transfer $N" prompt
+        # is held for human approval before the model runs. With no approver
+        # configured (no Slack), propose() idles and the call is not executed —
+        # fail-safe. Output escalations stay "log" (record only). Deployments
+        # that want a different posture pass their own escalate_policy.
+        escalate_policy={"pre": "hitl"},
         audit=audit,
         store=store,
     )
@@ -631,6 +638,24 @@ def create_app(armor: Optional[Pramagent] = None,
             r"(\$|routing\s+number|account|acct[-_ ]?\d{6,}|refund|vendor)",
             r"\b(routing\s+number|account\s+\d{6,18}|acct[-_ ]?\d{6,})\b"
             r"[\s\S]{0,100}\b(wire|transfer|send|refund|payment)\b",
+            # Consequential trading actions (SEC-2026-06-15 F-4): approving a
+            # margin call or ordering a liquidation moves money and must gate
+            # the same way a wire does. "approve the margin call" + "proceed
+            # with liquidation of positions" previously sailed through as a
+            # plain response.
+            r"\b(approve|authori[sz]e|confirm|execute|proceed\s+with|process)\b"
+            r"[\s\S]{0,80}\b(margin\s+call|liquidat(?:e|ion|ing)|"
+            r"close\s+(?:out\s+)?(?:all\s+)?positions?|sell\s+(?:off\s+)?(?:all\s+)?positions?)\b",
+            r"\bliquidat(?:e|ion|ing)\b[\s\S]{0,40}\bpositions?\b",
+            r"\bmargin\s+call\b[\s\S]{0,80}\b(approve|authori[sz]e|liquidat|proceed|sell|close)\b",
+            # International / cross-border transfers (SEC-2026-06-15 F-2): an
+            # IBAN or SWIFT/BIC value alongside a move verb must gate like ACH.
+            # Requiring both the value and the verb keeps "how do IBAN
+            # transfers work?" from being treated as an action.
+            r"\b(transfer|wire|send|remit|initiate|process|pay)\b[\s\S]{0,120}"
+            r"\b([A-Z]{2}\d{2}[A-Z0-9]{11,30}|SWIFT(?:\s+code)?|BIC)\b",
+            r"\b([A-Z]{2}\d{2}[A-Z0-9]{11,30}|SWIFT(?:\s+code)?|BIC)\b[\s\S]{0,120}"
+            r"\b(transfer|wire|send|remit|payment)\b",
         ]
         return any(re.search(pattern, prompt, re.IGNORECASE) for pattern in patterns)
 
@@ -675,7 +700,24 @@ def create_app(armor: Optional[Pramagent] = None,
                         r"\b(requests\.post|httpx\.post|urllib\.request|urlopen)\b"
                     ),
                     detail="provider output appears to contain file exfiltration code",
-                )
+                ),
+                # SEC-2026-06-15-01 (SE-2): catch a model that accepts a fake
+                # emergency override and declares its own safety controls off
+                # ("OVERRIDE_ACCEPTED ... Content filters disabled"). Even when
+                # the input slips past the isolation heuristics, this confirmed
+                # self-disabling output must never reach the caller.
+                Rule(
+                    "withhold_filter_override_confirmation",
+                    Verdict.BLOCK,
+                    pattern=(
+                        r"\boverride[_\s]?(accepted|confirmed|granted|enabled)\b|"
+                        r"\b(content\s+)?filters?\s+(are\s+)?(now\s+)?(disabled|off|bypassed|deactivated|lifted)\b|"
+                        r"\bsafety\s+(filters?|checks?|guardrails?|controls?)\s+(are\s+)?(now\s+)?(disabled|off|bypassed)\b|"
+                        r"\bunrestricted\s+mode\s+(enabled|active|activated|on)\b|"
+                        r"\b(all\s+)?restrictions?\s+(are\s+)?(now\s+)?(lifted|removed|disabled|off)\b"
+                    ),
+                    detail="provider output confirms a fake override / disabled safety controls",
+                ),
             ]
             safety_classifier = build_safety_classifier(force_keyword_only=True)
 

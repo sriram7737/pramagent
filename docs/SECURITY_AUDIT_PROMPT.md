@@ -137,7 +137,7 @@ python -m bandit -r pramagent deploy\dashboard
 docker run --rm -v "${PWD}:/src" -w /src semgrep/semgrep:latest `
   semgrep scan --metrics=off --config p/security-audit --config p/python `
   --error pramagent deploy/dashboard
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 For API-facing reviews, also run authenticated OWASP ZAP against the OpenAPI

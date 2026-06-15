@@ -159,6 +159,8 @@ _FALLBACK_KEYWORDS = [
     r"\b(without|with\s+no)\s+(any\s+)?(filters?|rules?|restrictions?|policy|policies)\b",
     r"\b(ignore|disregard|bypass|override)\s+(your\s+)?"
     r"(safety|guidelines?|rules?|polic(?:y|ies))\b",
+    r"\b(ignore|disregard|bypass|override)\s+"
+    r"(all\s+)?(safety\s+)?(boundaries|controls?|checks?|guardrails?)\b",
     r"\bfrom\s+now\s+on\b.{0,80}\b(obey|comply|answer|follow|ignore|bypass|disable)\b",
     r"\bfor\s+(testing|debugging|debug|development)\s+(purposes?|only)\b"
     r".{0,100}\b(disable|bypass|ignore|override|remove|turn\s+off)\b"
@@ -177,6 +179,10 @@ _FALLBACK_KEYWORDS = [
     r"(?m)^\s*(#{1,6}\s*)?(system|developer|assistant|tool|function)\s*"
     r"(message|prompt|instructions?|role|turn)?\s*[:>\-=]\s*.{0,120}"
     r"\b(ignore|override|bypass|reveal|leak|comply|new\s+directive|you\s+(are|must|will))\b",
+    r"\b(follow\s+this\s+note|translate\s+the\s+next\s+sentence|hidden\s+note|"
+    r"api\s+response\s+metadata|tool\s+output)\b.{0,140}"
+    r"\b(system|developer|assistant|tool)\s+(message|prompt|instructions?|role|turn)\b"
+    r".{0,140}\b(ignore|override|bypass|reveal|leak|comply)\b",
     r"\b(fake|pretend|simulated|synthetic)\s+"
     r"(system|developer|assistant|tool)\s+(message|prompt|turn|role)\b.{0,120}"
     r"\b(ignore|override|bypass|reveal|leak|comply)\b",
@@ -191,6 +197,9 @@ _FALLBACK_KEYWORDS = [
     r"instructions?|context|memory|secrets?|secret\s+keys?|hidden\s+values?(\s+keys?)?|"
     r"environment\s+variables?|env|configuration|private\s+rules?|"
     r"customer\s+(secrets?|credentials?|private\s+data))\b",
+    r"\b(exfiltrate|leak|dump|return|print|show|reveal|disclose)\b.{0,80}"
+    r"\b(credentials?|tokens?|api\s+keys?|secret\s+keys?|private\s+data|secrets?)\b",
+    r"\breveal\b.{0,80}\b(hidden\s+)?(rules?|instructions?|polic(?:y|ies))\b",
     r"\bwhat\s+are\s+your\s+(exact\s+)?(system\s+)?(instructions?|directives?|guidelines?|rules?)\??",
     r"\bshow\s+me\s+everything\s+before\s+the\s+user\s+message\b",
     r"\b(include|append|send|return)\b.{0,80}\b(all\s+)?"
@@ -231,13 +240,15 @@ _FALLBACK_KEYWORDS = [
     # Indirect prompt injection through retrieved/tool content.
     r"\b(tool|search|document|file|api|web(?:page)?|result|retrieved\s+content)\b"
     r".{0,80}\b(says|returned|contains|claims|instructs)\b.{0,120}"
-    r"\b(ignore|disregard|forget|override|supersede|replace|reveal|return|print|show|disclose|leak|comply)\b",
+    r"\b(ignore|disregard|forget|override|supersede|replace|reveal|return|print|show|disclose|leak|exfiltrate|dump|comply)\b",
     r"\btreat\b.{0,80}\b(tool|search|document|file|api|result|retrieved\s+content)\b"
     r".{0,120}\b(higher\s+priority|system\s+message|developer\s+message|authoritative)\b",
 ]
 _FALLBACK_RX = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in _FALLBACK_KEYWORDS]
 
-_B64_TOKEN = re.compile(r"\b[A-Za-z0-9+/]{24,}={0,2}\b")
+_B64_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9+/=])([A-Za-z0-9+/]{24,}={0,2})(?![A-Za-z0-9+/=])"
+)
 _B64_CONTEXT_RX = re.compile(
     r"\b(hidden\s+note|tool\s+output|api\s+response\s+metadata|retrieved\s+document|"
     r"begin\s+tool\s+result|file\s+footer|audit\s+log\s+comment|system\s+transcript\s+fragment|"

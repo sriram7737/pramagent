@@ -320,7 +320,7 @@ pip install pramagent
 Run the benchmark:
 
 ```bash
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 Open the repo:

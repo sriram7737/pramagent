@@ -31,6 +31,70 @@ class HITLStatus(str, Enum):
     IDLE = "idle"                   # timed out with no response -> did nothing
 
 
+@dataclass(frozen=True)
+class EscalatePolicy:
+    """What the pipeline does when a SafetyLayer pass returns Verdict.ESCALATE.
+
+    ESCALATE sits between ALLOW and BLOCK: "suspicious, but not certain enough
+    to block." Deployments differ on how to treat that, and input screening vs
+    output screening often warrant different responses, so the policy is set
+    per stage:
+
+        pre  -- verdict from safety.pre  (suspicious INPUT, before the model)
+        post -- verdict from safety.post (suspicious OUTPUT, after the model)
+
+    Each stage takes one of:
+
+        "log"   -- record the verdict in the trace and continue (default). The
+                   audit chain keeps the evidence; the caller is not gated.
+        "hitl"  -- route to the human-in-the-loop gate. Propose-and-wait; on
+                   silence (IDLE) or DENIED the call does not proceed.
+        "block" -- hard block. Stop immediately: no model call for a pre
+                   escalation, no output for a post escalation.
+
+    Default is ("log", "log") so adding an ESCALATE rule never silently starts
+    gating traffic. Production deployments handling consequential actions
+    should set at minimum {"pre": "hitl"}.
+
+    Build from a string (applies to both stages), a dict, or directly::
+
+        EscalatePolicy.from_config("hitl")
+        EscalatePolicy.from_config({"pre": "hitl", "post": "log"})
+        EscalatePolicy(pre="hitl", post="block")
+    """
+    pre: str = "log"
+    post: str = "log"
+
+    VALID = ("log", "hitl", "block")
+
+    def __post_init__(self):
+        for field_name, value in (("pre", self.pre), ("post", self.post)):
+            if value not in self.VALID:
+                raise ValueError(
+                    f"escalate_policy.{field_name} must be one of "
+                    f"{self.VALID}, got {value!r}")
+
+    @classmethod
+    def from_config(cls, value) -> "EscalatePolicy":
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return cls(pre=value, post=value)
+        if isinstance(value, dict):
+            unknown = set(value) - {"pre", "post"}
+            if unknown:
+                raise ValueError(
+                    "escalate_policy dict keys must be 'pre'/'post', got "
+                    f"unexpected {sorted(unknown)}")
+            return cls(pre=value.get("pre", "log"),
+                       post=value.get("post", "log"))
+        raise TypeError(
+            "escalate_policy must be str, dict, or EscalatePolicy, got "
+            f"{type(value).__name__}")
+
+
 @dataclass
 class RuleResult:
     """Record of a single rule evaluation by the SafetyLayer rule engine.

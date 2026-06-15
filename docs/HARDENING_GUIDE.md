@@ -49,7 +49,7 @@ Run these before any public release announcement:
 ```bash
 python -m pytest -q --tb=no
 python -m compileall pramagent tests
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 Then validate the optional systems you plan to claim:

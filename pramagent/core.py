@@ -38,7 +38,8 @@ from .layers.tool_guard import ToolDecision
 from .providers import BaseProvider, MockProvider
 from .store import MemoryStore
 from .telemetry import trace_layer, span_from_headers
-from .types import (AgentResponse, HITLStatus, LayerEvent, TraceEvent, Verdict)
+from .types import (AgentResponse, EscalatePolicy, HITLStatus, LayerEvent,
+                    TraceEvent, Verdict)
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class Pramagent:
         tool_guard=None,
         consent=None,
         consent_purpose: str = "service_provision",
+        escalate_policy=None,
     ):
         """Create a Pramagent orchestrator.
 
@@ -91,6 +93,10 @@ class Pramagent:
         # keeps the previous behaviour (no consent enforcement).
         self.consent = consent
         self.consent_purpose = consent_purpose
+        # What to do when a SafetyLayer pass returns Verdict.ESCALATE, per
+        # stage. Default ("log", "log") records the verdict without gating —
+        # see EscalatePolicy. Accepts a str, dict, or EscalatePolicy.
+        self.escalate_policy = EscalatePolicy.from_config(escalate_policy)
 
     def validate_tool(
         self,
@@ -269,6 +275,14 @@ class Pramagent:
                     block_reason="blocked by input safety rule")
                 return response
 
+            # 3a) escalate_policy for the input pass. A pre escalation is
+            # handled BEFORE the model runs (default "log" is a no-op).
+            early = await self._apply_escalate_policy(
+                tr=tr, mark=mark, verdict=pre_verdict, stage="pre",
+                output="", t_start=t_start)
+            if early is not None:
+                return early
+
             # 3b) ToolGuard — validate proposed tool call before any side effect
             if tool_name is not None:
                 t0 = time.perf_counter()
@@ -380,6 +394,14 @@ class Pramagent:
                 output = "[output withheld by safety rule]"
             elif post_verdict == Verdict.REDACT:
                 output, _ = self.compliance.scrub(output)
+            elif post_verdict == Verdict.ESCALATE:
+                # escalate_policy for the output pass. The model already ran;
+                # "hitl"/"block" can still withhold the suspicious output.
+                early = await self._apply_escalate_policy(
+                    tr=tr, mark=mark, verdict=post_verdict, stage="post",
+                    output=output, t_start=t_start)
+                if early is not None:
+                    return early
 
             # 5b) Output size cap
             t0 = time.perf_counter()
@@ -402,7 +424,9 @@ class Pramagent:
             if not ov.ok:
                 output = "[output withheld by tool output validation]"
 
-            # 6) HITL
+            # 6) HITL. A consequential action label gates here. ESCALATE
+            # verdicts are handled separately by escalate_policy (steps 3a/5a)
+            # so they can act before the model runs and per stage.
             t0 = time.perf_counter()
             with trace_layer("HITLLayer", attributes={"action": action}) as span:
                 status = await self.hitl.gate(
@@ -418,6 +442,56 @@ class Pramagent:
             root_span.set_attribute("blocked", False)
             self.observability.record_result(blocked=False, latency_ms=response.trace.total_latency_ms)
             return response
+
+    async def _apply_escalate_policy(self, *, tr, mark, verdict, stage,
+                                     output, t_start):
+        """Enforce self.escalate_policy when a safety pass returns ESCALATE.
+
+        Returns an AgentResponse to short-circuit the pipeline, or None to
+        continue. `stage` is "pre" (before the model) or "post" (after). The
+        ESCALATE verdict is already recorded in tr.rules_evaluated, so the
+        "log" policy needs no work here — it just continues.
+        """
+        policy_value = getattr(self.escalate_policy, stage)
+        if verdict != Verdict.ESCALATE or policy_value == "log":
+            return None
+
+        t0 = time.perf_counter()
+        if policy_value == "block":
+            reason = f"escalated and blocked by policy ({stage})"
+            mark(f"EscalatePolicy.{stage}", "blocked", reason, t0)
+            response = await self._finalize(tr, output="", blocked=True,
+                                            reason=reason, t_start=t_start)
+            self.observability.record_result(
+                blocked=True, latency_ms=response.trace.total_latency_ms,
+                block_reason=reason)
+            return response
+
+        # policy_value == "hitl": a human must approve before the call is
+        # treated as done. propose() forces the gate regardless of whether the
+        # action label is registered as consequential (gate() would auto-pass
+        # an unregistered synthetic action). Silence (IDLE) is never consent.
+        with trace_layer("HITLLayer",
+                         attributes={"action": f"escalated_{stage}"}) as span:
+            status = await self.hitl.propose(
+                f"escalated_{stage}",
+                {"tenant": tr.tenant_id, "stage": stage,
+                 "output_preview": (output or tr.input_text or "")[:120],
+                 "reason": "SafetyLayer.ESCALATE"})
+            span.set_attribute("hitl.status", status.value)
+        tr.hitl_status = status.value
+        mark("HITLLayer", status.value, f"escalated_{stage} ({policy_value})", t0)
+        if status != HITLStatus.APPROVED:
+            response = await self._finalize(
+                tr,
+                output="[action not executed - awaiting/declined human approval]",
+                blocked=False,
+                reason=f"escalated ({stage}); human review {status.value}",
+                t_start=t_start)
+            self.observability.record_result(
+                blocked=False, latency_ms=response.trace.total_latency_ms)
+            return response
+        return None  # approved -> continue the pipeline
 
     async def _finalize(self, tr, *, output, blocked, reason, t_start):
         # The caller receives `output` as-is; the durable record (trace +

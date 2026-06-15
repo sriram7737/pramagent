@@ -50,7 +50,7 @@ Invoke-RestMethod http://localhost:8080/v1/audit/verify | ConvertTo-Json
 Run:
 
 ```bash
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 Say plainly: this is a guardrail/audit MVP. It adds deterministic policy gates

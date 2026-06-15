@@ -85,6 +85,17 @@ def test_hitl_idle_on_silence():
     assert r.hitl == "idle"
 
 
+def test_allow_verdict_auto_under_default_policy():
+    """Regression guard: a normal ALLOW call must auto-pass. escalate_policy
+    handling (default "log") must not gate ordinary responses. The ESCALATE
+    policy matrix is covered in test_escalate_policy.py."""
+    armor = Pramagent(provider=MockProvider())
+    r = run(armor.run("hello there", action="respond"))
+    assert r.trace.pre_verdict == "allow"
+    assert r.hitl == "auto"
+    assert r.output and "action not executed" not in r.output
+
+
 def test_tamper_breaks_chain():
     armor = Pramagent(provider=MockProvider())
     run(armor.run("a")); run(armor.run("b"))

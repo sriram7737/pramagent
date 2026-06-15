@@ -69,12 +69,25 @@ class ComplianceLayer:
         "phone": r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
         "account": r"\bacct[-_ ]?\d{6,}\b",
         "iban": r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b",   # distinctive enough to keep
+        # HIPAA identifiers (SEC-2026-06-15 H-1). The literal "MRN" prefix makes
+        # a medical record number distinctive enough to redact wherever it
+        # appears, like SSN/IBAN.
+        "mrn": r"\bMRN[-:\s]*\d{4,}\b",
     }
 
     # label -> (value_pattern, [context_keywords])
     DEFAULT_CONTEXTUAL = {
         "routing_number": (r"\b\d{9}\b", ["routing", "aba", "rtn"]),
         "dob": (r"\b\d{4}-\d{2}-\d{2}\b", ["dob", "d.o.b", "birth", "born"]),
+        # Insurance member / payer IDs (SEC-2026-06-15 H-1). The dash-separated
+        # alpha-numeric shape ("BCB-992341") is the precision lever — without
+        # requiring a nearby insurance keyword, a bare LETTERS-DIGITS token
+        # would eat SKUs and order codes. Redact only when both are present.
+        "insurance_id": (
+            r"\b[A-Za-z]{2,4}-\d{5,}\b",
+            ["insurance", "policy", "subscriber", "payer", "member",
+             "bcbs", "health plan", "group number"],
+        ),
     }
 
     CONTEXT_WINDOW = 32  # chars on each side of a candidate to scan for a keyword

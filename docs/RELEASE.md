@@ -12,7 +12,7 @@ python -m compileall -q pramagent tests
 python -m pytest -q --tb=no
 python test_agent_v2.py --mock --suite load tenant regression --report test-results/test_agent_v2_mock.json
 python examples/dynamic_feed_agent.py --provider mock --reset-db --report test-results/dynamic_feed_agent_mock.json
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 Clean-environment check:
@@ -27,7 +27,7 @@ python -m venv %TEMP%/pramagent-release-venv
 Optional extras install check:
 
 ```bash
-python -m pip install "dist/pramagent-0.7.3-py3-none-any.whl[all]"
+python -m pip install "dist/pramagent-0.7.5-py3-none-any.whl[all]"
 python - <<'PY'
 import anthropic, aiohttp, fastapi, uvicorn, jinja2, httpx, cryptography
 import opentelemetry, redis, psycopg2, web3, boto3
@@ -87,14 +87,14 @@ python -m twine check dist/*
 
 ```bash
 git status --short
-git tag -a v0.7.3 -m "v0.7.3"
+git tag -a v0.7.5 -m "v0.7.5"
 git push origin main
-git push origin v0.7.3
+git push origin v0.7.5
 ```
 
-Create a GitHub Release from tag `v0.7.3` and include:
+Create a GitHub Release from tag `v0.7.5` and include:
 
-- Test result: `558 passed, 1 skipped`
+- Test result: `598 passed, 1 skipped`
 - Security prompt remediation result: `SEC-2026-06-11-01` and
   `SEC-2026-06-11-02` closed in commits `085c7b4` and `e8392aa`; evidence in
   `pramagent_security_test_results.md`
@@ -149,5 +149,5 @@ python -m twine upload --repository testpypi dist/*
 ```bash
 pip install "pramagent[api,dashboard,redis,postgres]"
 pramagent --help
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```

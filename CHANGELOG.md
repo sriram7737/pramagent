@@ -1,8 +1,61 @@
 # Changelog
 
-## Unreleased
+## v0.7.5 - 2026-06-15
 
-No unreleased changes.
+### Added
+
+- `escalate_policy` on `Pramagent`: configurable handling of a
+  `Verdict.ESCALATE` from the safety passes, set per stage (`pre` = input,
+  `post` = output) to `"log"` | `"hitl"` | `"block"`. Accepts a string (both
+  stages), a dict, or an `EscalatePolicy`; invalid values raise at construction.
+  Default is `"log"` (record and continue) so adding an ESCALATE rule never
+  silently starts gating traffic. `"hitl"` routes through the human-in-the-loop
+  gate (propose-and-wait, idle-on-silence); a `pre` escalation is handled
+  before the model call. Three recommended deployment profiles are documented
+  in the README. Generalizes the earlier hard-wired ESCALATE→HITL behavior into
+  an explicit, opt-in policy.
+
+### Fixed
+
+- Fixed `SEC-2026-06-15-01` (red-team SE-2): a fake "emergency override"
+  prompt that asked to disable content filters bypassed the isolation
+  heuristics, and the model's `OVERRIDE_ACCEPTED` / "content filters disabled"
+  reply was returned verbatim. Added `emergency_override` and
+  `disable_safety_controls` input heuristics to `IsolationLayer`, plus a
+  `withhold_filter_override_confirmation` output rule on the public demo so a
+  self-disabling completion is withheld even if the input slips through.
+- Fixed red-team F-4: approving a margin call or ordering a liquidation was
+  treated as a plain response. `_demo_financial_intent` now recognizes margin
+  call / liquidation / close-positions language and routes it through the HITL
+  gate (`hitl=idle` → action not executed).
+- Fixed red-team F-2: IBAN / SWIFT international transfers now trip the same
+  demo financial-intent gate as ACH transfers (routed to the `wire_transfer`
+  HITL action). The underlying latent gap — a `Verdict.ESCALATE` from the
+  safety passes being recorded but never acted on — is addressed by the new
+  `escalate_policy` (see Added). The reference deployment (`build_default_armor`,
+  served at `/v1/run`) now sets `escalate_policy={"pre": "hitl"}`, so its
+  `escalate_transfer` rule holds a `transfer $N` prompt for approval before the
+  model runs; with no approver configured it idles and is not executed. `IDLE`
+  is never consent.
+- Fixed red-team H-1: HIPAA MRN (`MRN-…`) is now redacted as a high-precision
+  identifier, and dash-separated insurance/payer member IDs (`BCB-992341`) are
+  redacted when an insurance context keyword is nearby. The contextual guard
+  keeps SKUs and order codes from being over-redacted.
+- Fixed four dynamic red-team benchmark misses found after the SE/F/H fixes:
+  padded base64 payloads were not decoded by the fallback classifier because of
+  a trailing word-boundary bug, and indirect wrappers around `exfiltrate
+  credentials` / inline developer-message instructions were too narrow.
+
+### Verified
+
+- `python -m pytest -q` -> `598 passed, 1 skipped`.
+- `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> `200/200 caught`, `0` false positives.
+- `escalate_policy` matrix covered in `tests/test_escalate_policy.py`
+  (log/hitl/block × pre/post, dict form, idle/deny/approve, invalid-config).
+- Confirmed the report's six false-positive prompts (env vars, auth vs authz,
+  LLM vulnerabilities, rate limiting, directory monitoring, IBAN explainer) and
+  legitimate ops phrases ("enable debug mode") do not trip the new heuristics.
 
 ## v0.7.3 - 2026-06-11
 

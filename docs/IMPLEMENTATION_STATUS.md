@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-11 v0.7.3 security remediation release._
+_Last updated after the 2026-06-15 v0.7.5 demo and red-team hardening pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -13,7 +13,7 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=no` -> **572 passing, 1 skipped**. The skip is
+`python -m pytest -q --tb=no` -> **598 passing, 1 skipped**. The skip is
 the Postgres optional-driver negative test when `psycopg2` is installed
 locally; there are no expected failures hiding classifier misses in the bundled
 suite.
@@ -100,7 +100,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   identities, hashed reset tokens, and signed CSRF protection for both pre-auth
   and session-authenticated browser forms
 - Built-in red-team benchmark CLI with static and dynamic mutation modes
-  (`pramagent redteam --json --dynamic --attacks 200 --seed 999`)
+  (`python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`)
 - Public red-team result/methodology doc and load-test runbook
 - Syntax-health test that compiles every Python source file before release
 - Small concurrency smoke test for trace uniqueness and hash-chain integrity
@@ -157,6 +157,29 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 
 ## Latest Workflow Evidence
 
+2026-06-15 v0.7.5 red-team and public-demo hardening:
+
+- Fixed the SE-2 emergency-override miss at input and output layers:
+  `emergency_override` / `disable_safety_controls` heuristics block the prompt,
+  and a demo post-rule withholds model completions that claim filters were
+  disabled.
+- Fixed F-4/F-2 demo financial-intent misses: margin-call/liquidation prompts
+  and IBAN/SWIFT transfers now route to `wire_transfer` and idle at HITL with
+  action not executed.
+- Added `EscalatePolicy` and `Pramagent(escalate_policy=...)` so a
+  `SafetyLayer` `ESCALATE` verdict can be logged, blocked, or routed to HITL
+  per stage. The reference `/v1/run` deployment uses
+  `escalate_policy={"pre": "hitl"}`.
+- Fixed H-1 strict-healthcare redaction gap for MRN and contextual insurance
+  member IDs.
+- Fixed four dynamic benchmark misses in the fallback classifier: padded
+  base64 tokens are decoded correctly, and indirect `exfiltrate credentials` /
+  inline developer-message wrappers are caught.
+- Red-team validation:
+  `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  API run -> **200/200 caught, 0 false positives**.
+- Local verification: **598 passed, 1 skipped**; Bandit returned no findings.
+
 2026-06-15 public demo hardening after live NVIDIA checks:
 
 - Fixed payment-like prompts that were only receiving `SafetyLayer.pre =
@@ -171,7 +194,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Confirmed contextual routing-number behavior: `021000021` is redacted when
   nearby text contains `routing`, while bare 9-digit values remain unredacted.
 - Regression coverage added for these exact demo failure classes. Local
-  verification: **572 passed, 1 skipped**; Bandit returned no findings.
+  verification at the time: **572 passed, 1 skipped**; later v0.7.5 hardening
+  raised the suite to **598 passed, 1 skipped**.
 
 2026-06-15 public NVIDIA NIM live-demo build:
 

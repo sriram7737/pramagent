@@ -37,6 +37,34 @@ def test_high_precision_patterns_always_redact():
     assert "jane@x.com" not in out and "123-45-6789" not in out
 
 
+# ── SEC-2026-06-15 H-1: HIPAA MRN + insurance member ID ────────────────────
+
+def test_mrn_redacted_anywhere():
+    c = ComplianceLayer()
+    for text in ("Patient MRN-447823 admitted today.",
+                 "Record: MRN: 447823 (cardiology).",
+                 "see mrn 4478239 for history"):
+        out, red = c.scrub(text)
+        assert "mrn" in red, text
+        assert "447823" not in out
+
+
+def test_insurance_id_redacted_with_context():
+    c = ComplianceLayer()
+    out, red = c.scrub("Insurance ID: BCB-992341 for the claim.")
+    assert "insurance_id" in red
+    assert "BCB-992341" not in out
+
+
+def test_insurance_id_not_redacted_without_context():
+    """A bare LETTERS-DIGITS code with no insurance context must survive —
+    otherwise SKUs and order codes get eaten."""
+    c = ComplianceLayer()
+    out, red = c.scrub("Order ABC-123456 shipped from the warehouse.")
+    assert "insurance_id" not in red
+    assert "ABC-123456" in out
+
+
 def test_multiple_emails_all_redacted():
     """The bounded email handler must catch every email, not just the first."""
     c = ComplianceLayer()

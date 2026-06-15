@@ -1,4 +1,4 @@
-﻿# Pramagent Deployment Guide
+# Pramagent Deployment Guide
 
 ## One-command local (Docker Compose)
 ```bash
@@ -12,7 +12,7 @@ pramagent validate       # checks config + Redis/Postgres connectivity
 ## Local without Docker (dev)
 ```bash
 pip install -e ".[dev,api,redis,postgres,otel,encrypted]"
-python -m pytest -q  # 572 passing, 1 optional-environment skip
+python -m pytest -q  # 598 passing, 1 optional-environment skip
 uvicorn pramagent.api.app:app --port 8080
 ```
 
@@ -253,9 +253,9 @@ kubectl create secret generic pramagent-secrets \
   --from-literal=PRAMAGENT_API_KEY=... --from-literal=PRAMAGENT_JWT_SECRET=... \
   --from-literal=PRAMAGENT_REDIS_URL=redis://... --from-literal=PRAMAGENT_POSTGRES_DSN=postgresql://...
 helm install pramagent deploy/helm/pramagent \
-  --set image.tag=0.7.3 --set otel.endpoint=http://otel-collector:4317
+  --set image.tag=0.7.5 --set otel.endpoint=http://otel-collector:4317
 ```
-Includes readiness/liveness probes, HorizontalPodAutoscaler (3–10 replicas), and
+Includes readiness/liveness probes, HorizontalPodAutoscaler (3�10 replicas), and
 secret-based config. Point `otel.endpoint` at any OTLP collector (Jaeger,
 Honeycomb, Datadog, Grafana Tempo) for distributed traces.
 

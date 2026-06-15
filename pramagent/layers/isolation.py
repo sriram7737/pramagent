@@ -107,6 +107,26 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
      re.compile(r"(```\s*end\s+of\s+prompt|<\|im_end\|>|<\|endoftext\|>|---\s*new\s+prompt)",
                 re.IGNORECASE),
      "attempt to inject a chat-template delimiter"),
+    # ── SEC-2026-06-15-01: fake "emergency override" framing ────────────────
+    # Red-team proved a bypass that frames the request as activating a system
+    # emergency/maintenance override ("this is a test of the emergency override
+    # system") and then asks to disable content filters. The classic
+    # disregard_safety pattern misses it: the verb is "disable"/"activate" (not
+    # ignore/override) and the target is "content filters" (not safety/rules).
+    ("emergency_override",
+     re.compile(
+         r"\b(emergency|maintenance|activate|enable|trigger|initiate|engage)\b"
+         r"[\s\S]{0,40}\b(override|bypass|sudo|godmode|god\s+mode|"
+         r"unrestricted\s+mode)\b",
+         re.IGNORECASE),
+     "fake emergency/override-mode activation attempt"),
+    ("disable_safety_controls",
+     re.compile(
+         r"\b(disable|deactivate|turn\s+off|switch\s+off|suspend|bypass)\b"
+         r"[\s\S]{0,40}\b((content\s+)?filters?|content\s+moderation|"
+         r"guardrails?|safeguards?|safety\s+(filters?|checks?|controls?|guidelines?))\b",
+         re.IGNORECASE),
+     "request to disable safety/content controls"),
 ]
 
 # ── SEC-2026-06-11-02: authority framing + indirection wrappers ────────────

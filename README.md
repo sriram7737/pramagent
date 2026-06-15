@@ -137,11 +137,11 @@ Run the release sanity checks:
 
 ```bash
 python -m pytest -q --tb=no
-pramagent redteam --json --attacks 100
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --attacks 100
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
-Current local result: `572 passed, 1 skipped`.
+Current local result: `598 passed, 1 skipped`.
 
 ## ToolGuard Example
 
@@ -234,6 +234,33 @@ Included corpora:
 - `FICTIONAL_WRAPPER`
 - `PHI_PATTERNS`
 - `FINANCIAL_PII`
+
+## Escalation Policy
+
+`Verdict.ESCALATE` means "suspicious, but not certain enough to block." What
+the pipeline does with it is configurable per stage — `pre` (the input pass,
+before the model runs) and `post` (the output pass, after) — with one of
+`"log"` (record and continue), `"hitl"` (route to the human-in-the-loop gate,
+idle-on-silence), or `"block"` (hard stop). The default is `"log"` so adding an
+ESCALATE rule never silently starts gating traffic; the ESCALATE verdict is
+always recorded in the trace either way.
+
+```python
+# Healthcare / finance — maximum caution
+Pramagent(safety=SafetyLayer(rules=[...]),
+          escalate_policy={"pre": "hitl", "post": "block"})
+
+# Developer tool — minimal interruption (default)
+Pramagent(safety=SafetyLayer(rules=[...]),
+          escalate_policy="log")
+
+# Internal enterprise — gate suspicious input, log suspicious output
+Pramagent(safety=SafetyLayer(rules=[...]),
+          escalate_policy={"pre": "hitl", "post": "log"})
+```
+
+A string applies to both stages; a dict sets them independently. Invalid values
+raise at construction, not at request time.
 
 ## Persistent HITL Queue
 
@@ -413,7 +440,7 @@ gzip JSON while keeping metadata available for compliance reporting.
 pramagent init
 docker compose up -d
 python -m pytest -q --tb=no
-pramagent redteam --json --dynamic --attacks 200 --seed 999
+python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 Then use the dashboard to inspect traces, pending HITL approvals, audit status,
