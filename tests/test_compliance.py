@@ -65,6 +65,17 @@ def test_insurance_id_not_redacted_without_context():
     assert "ABC-123456" in out
 
 
+def test_npi_redacted_before_phone_number_pattern():
+    c = ComplianceLayer()
+    out, red = c.scrub(
+        "Attending physician NPI 1234567890 is assigned to MRN-998812."
+    )
+    assert "npi" in red
+    assert "mrn" in red
+    assert "phone" not in red
+    assert "1234567890" not in out
+
+
 def test_multiple_emails_all_redacted():
     """The bounded email handler must catch every email, not just the first."""
     c = ComplianceLayer()

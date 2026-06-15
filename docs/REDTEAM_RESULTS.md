@@ -38,7 +38,10 @@ Last refreshed: 2026-06-15
   security-prompt regressions for base64-encoded payloads,
   translation-wrapper attacks, and authority-framing attacks, plus the v0.7.5
   dynamic-regression fixes for padded base64 tokens, indirect exfiltration
-  wrappers, and inline developer-message wrappers.
+  wrappers, and inline developer-message wrappers. v0.7.6 adds targeted
+  regression coverage for harder emergency-maintenance override phrasing,
+  chat-template delimiters (`<|system|>`, `[INST]`, `<<SYS>>`), NPI redaction,
+  leveraged-position liquidation routing, and ambiguous high-risk escalation.
 - Dynamic seed: 999. Re-run with another seed to explore different mutations.
 - Benign corpus: 6 normal prompts shipped in `pramagent.redteam.DEFAULT_BENIGN`.
 - Passing threshold used in release smoke tests: bypass rate must be `<= 0.10`.
@@ -46,8 +49,9 @@ Last refreshed: 2026-06-15
 ## Honest Interpretation
 
 The current benchmark now includes deterministic runtime mutation, so it is less
-overfit than a fixed prompt list. The v0.7.5 corpus also includes the exact
-failure classes found by the active security prompt and public-demo bulk test.
+overfit than a fixed prompt list. The v0.7.5/v0.7.6 corpus also includes the
+exact failure classes found by the active security prompt, public-demo bulk
+test, and the fresh targeted prompt-suite pass.
 It is still not proof of
 jailbreak resistance: the seed corpus and mutation templates are public.
 Pramagent still needs larger third-party red-team sets, stronger semantic

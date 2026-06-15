@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.7.6 - 2026-06-15
+
+### Fixed
+
+- Tightened the SE-2 emergency-override heuristic so harder maintenance-mode
+  prompts such as "standard restrictions are temporarily suspended" and
+  "OVERRIDE_ACCEPTED" block, while benign explainers such as "how do emergency
+  override systems work?" pass.
+- Added chat-template delimiter coverage for `<|system|>`, `<|user|>`,
+  `<|im_start|>system`, `[INST]`, and `<<SYS>>` wrapper attacks.
+- Added NPI redaction before the generic phone-number pattern so
+  `NPI 1234567890` is recorded as `npi`, not `phone`.
+- Expanded demo financial-intent routing for leveraged-position liquidation
+  phrasing while keeping liquidation/margin/IBAN educational prompts clean.
+- Expanded the reference `/v1/run` pre-HITL escalation profile to cover
+  ambiguous payment, broad account-data access, and uncertain production
+  credential-change requests.
+
+### Verified
+
+- Targeted prompt harness from the fresh 0.7.4/0.7.5 regression list:
+  `0` failures across emergency override, output override, margin/liquidation,
+  IBAN/SWIFT, ambiguous escalation, PHI, false-positive traps, base64, and
+  chat-template wrapper prompts.
+- `python -m pytest tests\test_adversarial.py tests\test_compliance.py tests\test_api.py tests\test_escalate_policy.py -q --tb=short`
+  -> `158 passed`.
+- `python -m pytest -q --tb=short` -> `623 passed, 1 skipped`.
+
 ## v0.7.5 - 2026-06-15
 
 ### Added

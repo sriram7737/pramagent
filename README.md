@@ -141,7 +141,10 @@ python -m pramagent.cli redteam --json --attacks 100
 python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
-Current local result: `598 passed, 1 skipped`.
+Current local result: `623 passed, 1 skipped`. The latest targeted prompt
+suite also passed with `0` failures across emergency override, output override,
+margin/liquidation, IBAN/SWIFT, ambiguous escalation, PHI, false-positive,
+base64, and chat-template-wrapper cases.
 
 ## ToolGuard Example
 

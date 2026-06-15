@@ -66,6 +66,10 @@ class ComplianceLayer:
         "email": r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
         "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
         "credit_card": r"\b(?:\d[ -]*?){13,16}\b",
+        # National Provider Identifier: distinctive only when the NPI context
+        # marker is present. It must run before the generic phone pattern, or
+        # the 10 digits in "NPI 1234567890" look like a phone number.
+        "npi": r"\bNPI[-:#\s]*(?:\d[\s-]?){10}\b",
         "phone": r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
         "account": r"\bacct[-_ ]?\d{6,}\b",
         "iban": r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b",   # distinctive enough to keep

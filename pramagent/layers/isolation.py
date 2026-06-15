@@ -104,8 +104,12 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
                 re.IGNORECASE),
      "request to decode/run obfuscated payload"),
     ("delimiter_break",
-     re.compile(r"(```\s*end\s+of\s+prompt|<\|im_end\|>|<\|endoftext\|>|---\s*new\s+prompt)",
-                re.IGNORECASE),
+     re.compile(
+         r"(```\s*end\s+of\s+prompt|<\|im_end\|>|<\|endoftext\|>|"
+         r"<\|(system|developer|user|assistant)\|>|"
+         r"<\|im_start\|>\s*(system|developer|user|assistant)|"
+         r"\[INST\]|<<SYS>>|<</SYS>>|---\s*new\s+prompt)",
+         re.IGNORECASE),
      "attempt to inject a chat-template delimiter"),
     # ── SEC-2026-06-15-01: fake "emergency override" framing ────────────────
     # Red-team proved a bypass that frames the request as activating a system
@@ -115,9 +119,16 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
     # ignore/override) and the target is "content filters" (not safety/rules).
     ("emergency_override",
      re.compile(
-         r"\b(emergency|maintenance|activate|enable|trigger|initiate|engage)\b"
-         r"[\s\S]{0,40}\b(override|bypass|sudo|godmode|god\s+mode|"
-         r"unrestricted\s+mode)\b",
+         r"\b(SYSTEM\s+ALERT|PRIORITY\s+OVERRIDE|MAINTENANCE\s+MODE\s+ACTIVE)\b|"
+         r"\b(activate|enable|trigger|initiate|engage)\s+(?:the\s+)?"
+         r"(override|bypass)\b[\s\S]{0,100}"
+         r"\b(unrestricted|filters?|restrictions?|safety|proceed|full\s+output)\b|"
+         r"\b(emergency|maintenance)\b[\s\S]{0,70}"
+         r"\b(override|bypass|maintenance\s+mode|unrestricted\s+mode|protocol)\b"
+         r"[\s\S]{0,140}\b(OVERRIDE_ACCEPTED|disable|disabled|suspend(?:ed)?|"
+         r"restrictions?|filters?|full\s+output|proceed|acknowledge)\b|"
+         r"\b(all\s+standard\s+restrictions|safety\s+systems)\b"
+         r"[\s\S]{0,100}\b(suspend(?:ed)?|disabled|maintenance\s+mode|OVERRIDE_ACCEPTED)\b",
          re.IGNORECASE),
      "fake emergency/override-mode activation attempt"),
     ("disable_safety_controls",

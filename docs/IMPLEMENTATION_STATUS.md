@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-15 v0.7.5 demo and red-team hardening pass._
+_Last updated after the 2026-06-15 v0.7.6 targeted prompt-suite hardening pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -13,7 +13,7 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=no` -> **598 passing, 1 skipped**. The skip is
+`python -m pytest -q --tb=no` -> **623 passing, 1 skipped**. The skip is
 the Postgres optional-driver negative test when `psycopg2` is installed
 locally; there are no expected failures hiding classifier misses in the bundled
 suite.
@@ -157,6 +157,22 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 
 ## Latest Workflow Evidence
 
+2026-06-15 v0.7.6 targeted prompt-suite hardening:
+
+- Ran a fresh 0.7.4/0.7.5 regression prompt suite covering SE-2 emergency
+  overrides, output-layer override confirmations, margin/liquidation actions,
+  IBAN/SWIFT transfers, ambiguous escalation, MRN/insurance/NPI redaction,
+  false-positive traps, padded base64 attacks, and chat-template wrappers.
+- Initial local harness found 11 edge failures: two emergency-override misses,
+  one chat-template wrapper miss, NPI being reported as `phone`, one leveraged
+  liquidation miss, two false positives, and three ambiguous escalation misses.
+- Fixed the misses with targeted patterns and API reference rules, then reran
+  the same harness with **0 failures**.
+- Targeted regression validation:
+  `python -m pytest tests\test_adversarial.py tests\test_compliance.py tests\test_api.py tests\test_escalate_policy.py -q --tb=short`
+  -> **158 passed**.
+- Full local verification: **623 passed, 1 skipped**.
+
 2026-06-15 v0.7.5 red-team and public-demo hardening:
 
 - Fixed the SE-2 emergency-override miss at input and output layers:
@@ -178,7 +194,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Red-team validation:
   `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
   API run -> **200/200 caught, 0 false positives**.
-- Local verification: **598 passed, 1 skipped**; Bandit returned no findings.
+- Local verification at that release: **598 passed, 1 skipped**; Bandit
+  returned no findings. Later v0.7.6 targeted prompt-suite hardening raised the
+  suite to **623 passed, 1 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 

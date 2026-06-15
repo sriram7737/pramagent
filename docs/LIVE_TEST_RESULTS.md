@@ -63,12 +63,18 @@ python -m pytest -q --tb=no
 Result:
 
 ```text
-598 passed, 1 skipped
+623 passed, 1 skipped
 ```
 
-Current package regression note: after the v0.7.5 demo/red-team hardening pass,
-the full local suite passed with `598 passed, 1 skipped`. The skip is the
-Postgres optional-driver negative test when `psycopg2` is installed locally.
+Current package regression note: after the v0.7.6 targeted prompt-suite
+hardening pass, the full local suite passed with `623 passed, 1 skipped`. The
+skip is the Postgres optional-driver negative test when `psycopg2` is installed
+locally.
+
+The fresh targeted prompt suite passed with `0` failures after remediation
+across emergency override, output override, margin/liquidation, IBAN/SWIFT,
+ambiguous escalation, PHI, false-positive, padded base64, and chat-template
+wrapper cases.
 
 ## Active Security Prompt Remediation
 
@@ -100,8 +106,8 @@ Summary:
 - Classifier/API regression validation:
   `tests/test_api.py::test_run_blocks_weapon_construction_via_safety_classifier tests/test_classifier.py`
   -> `73 passed`.
-- Full validation: `python -m pytest tests/ -q --tb=no` ->
-  `598 passed, 1 skipped`.
+- Full validation after v0.7.6 targeted prompt-suite hardening:
+  `python -m pytest tests/ -q --tb=no` -> `623 passed, 1 skipped`.
 
 ## Clean Environment Checks
 

@@ -314,6 +314,36 @@ def build_default_armor() -> Pramagent:
         safety=SafetyLayer(rules=[
             Rule("block_account_dump", Verdict.BLOCK, pattern=r"dump .*accounts?"),
             Rule("escalate_transfer", Verdict.ESCALATE, pattern=r"transfer \$?\d+"),
+            Rule(
+                "escalate_ambiguous_payment",
+                Verdict.ESCALATE,
+                pattern=(
+                    r"\b(transfer|wire|send|move)\s+(?:some\s+)?funds\b|"
+                    r"\b(process|approve|initiate|authorize)\s+(?:a\s+)?payment\b"
+                ),
+                detail="ambiguous payment action requires human approval",
+            ),
+            Rule(
+                "escalate_broad_account_access",
+                Verdict.ESCALATE,
+                pattern=(
+                    r"\b(retrieve|pull|export|review|access)\b[\s\S]{0,80}"
+                    r"\b(account|user|customer)\s+(information|data|records?)\b"
+                    r"[\s\S]{0,100}\b(broad|quarterly\s+audit|compliance\s+team|audit)\b"
+                ),
+                detail="broad account-data access requires human approval",
+            ),
+            Rule(
+                "escalate_production_credentials",
+                Verdict.ESCALATE,
+                pattern=(
+                    r"\b(make|apply|perform)\s+(?:some\s+)?changes?\b[\s\S]{0,80}"
+                    r"\b(production\s+)?(access\s+)?(credentials?|api\s+keys?|secrets?)\b|"
+                    r"\b(semi-authori[sz]ed|probably\s+okay)\b[\s\S]{0,120}"
+                    r"\b(production\s+)?(access\s+)?(credentials?|api\s+keys?|secrets?)\b"
+                ),
+                detail="uncertain production-credential changes require human approval",
+            ),
         ], classifier=safety_clf),
         reliability=ReliabilityLayer(max_concurrent=20, timeout_s=15.0),
         hitl=HITLLayer(
@@ -448,7 +478,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.7.4",
+        version="0.7.6",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )
@@ -645,8 +675,13 @@ def create_app(armor: Optional[Pramagent] = None,
             # plain response.
             r"\b(approve|authori[sz]e|confirm|execute|proceed\s+with|process)\b"
             r"[\s\S]{0,80}\b(margin\s+call|liquidat(?:e|ion|ing)|"
-            r"close\s+(?:out\s+)?(?:all\s+)?positions?|sell\s+(?:off\s+)?(?:all\s+)?positions?)\b",
-            r"\bliquidat(?:e|ion|ing)\b[\s\S]{0,40}\bpositions?\b",
+            r"close\s+(?:out\s+)?(?:all\s+)?(?:leveraged\s+|open\s+)?positions?|"
+            r"sell\s+(?:off\s+)?(?:all\s+)?positions?)\b",
+            r"\b(execute|approve|authori[sz]e|confirm|proceed|order|pre-authori[sz]ed)\b"
+            r"[\s\S]{0,80}\bliquidat(?:e|ion|ing)\b[\s\S]{0,80}\b(positions?|holdings)\b",
+            r"\b(?:need\s+to|must|should|please)?\s*(?:close|liquidate)\s+"
+            r"(?:out\s+)?(?:all\s+)?(?:leveraged\s+|open\s+)?positions?\b"
+            r"[\s\S]{0,140}\b(authori[sz]ed|proceed|confirm|immediately|risk\s+committee)\b",
             r"\bmargin\s+call\b[\s\S]{0,80}\b(approve|authori[sz]e|liquidat|proceed|sell|close)\b",
             # International / cross-border transfers (SEC-2026-06-15 F-2): an
             # IBAN or SWIFT/BIC value alongside a move verb must gate like ACH.
