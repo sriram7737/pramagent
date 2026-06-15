@@ -12,7 +12,7 @@ pramagent validate       # checks config + Redis/Postgres connectivity
 ## Local without Docker (dev)
 ```bash
 pip install -e ".[dev,api,redis,postgres,otel,encrypted]"
-python -m pytest -q  # 547 passing, 1 optional-environment skip
+python -m pytest -q  # 572 passing, 1 optional-environment skip
 uvicorn pramagent.api.app:app --port 8080
 ```
 
@@ -150,6 +150,49 @@ approver = CompositeApprover(
 ```
 
 Use a scoped ServiceNow API user/token and store it in your secret manager.
+
+## Public NVIDIA NIM live demo
+Pramagent can serve a single-file browser demo at `GET /demo` and a public
+runner at `POST /demo/run`. This is disabled by default.
+
+```bash
+pip install "pramagent[api]"
+PRAMAGENT_DEMO_ENABLED=true \
+PRAMAGENT_DEMO_RATE_LIMIT=10 \
+PRAMAGENT_ALLOW_MEMORY_STORE=1 \
+uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
+```
+
+The public demo asks each visitor for their own NVIDIA NIM `nvapi-*` key and
+passes it only to the current `NvidiaProvider` request. The key is never stored
+in traces, audit payloads, usage records, or logs. Demo runs use isolated
+in-memory trace/audit stores so one visitor cannot fetch another visitor's
+trace.
+
+The demo allow-list intentionally contains only currently hosted NVIDIA Build
+free-endpoint model IDs. If a benign prompt returns a ReliabilityLayer
+`provider HTTP 404` safe default, first check whether the selected NVIDIA model
+has been deprecated or removed from the hosted endpoint.
+
+For Railway, the repository includes a `Procfile`:
+
+```text
+web: uvicorn pramagent.api.app:app --host 0.0.0.0 --port $PORT
+```
+
+Recommended Railway variables for the demo service:
+
+```bash
+PRAMAGENT_DEMO_ENABLED=true
+PRAMAGENT_DEMO_RATE_LIMIT=10
+PRAMAGENT_ALLOW_MEMORY_STORE=1
+PRAMAGENT_JWT_SECRET=<generated secret, 32+ bytes>
+PRAMAGENT_SIGNING_KEY=<generated secret>
+```
+
+Do not set a shared server-side `NVIDIA_API_KEY` for the public demo unless you
+also add billing controls and abuse monitoring. The safer public posture is
+visitor-supplied keys plus the per-IP demo throttle.
 
 ## Optional Ethereum/Sepolia anchoring
 Install the optional dependency:

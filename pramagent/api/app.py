@@ -37,12 +37,13 @@ import os
 import secrets
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import parse_qs
 from typing import Optional
 
 from fastapi import Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("pramagent.api")
@@ -56,7 +57,7 @@ from ..hitl.slack import (SlackApprovalError, SlackHITLApprover,
 from ..layers import (ComplianceLayer, HITLLayer, ReliabilityLayer, Rule,
                       SafetyLayer, ToolGuardLayer, ToolPolicy)
 from ..providers import (AnthropicProvider, GeminiProvider, MockProvider,
-                         OllamaProvider, OpenAICompatibleProvider,
+                         NvidiaProvider, OllamaProvider, OpenAICompatibleProvider,
                          OpenAIProvider)
 from ..ratelimit import TokenBucket
 from ..rca import RCAEngine
@@ -207,6 +208,32 @@ class PruneResponse(BaseModel):
 
 
 # ─────────────────────────── default configuration ─────────────────────────
+NVIDIA_DEMO_MODELS: dict[str, str] = {
+    "meta/llama-3.3-70b-instruct": "Llama 3.3 70B",
+    "nvidia/llama-3.3-nemotron-super-49b-v1": "Nemotron Super 49B",
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5": "Nemotron Super 49B v1.5",
+    "nvidia/llama-3.1-nemotron-nano-8b-v1": "Nemotron Nano 8B",
+    "mistralai/mistral-small-4-119b-2603": "Mistral Small 4",
+}
+DEFAULT_NVIDIA_DEMO_MODEL = "meta/llama-3.3-70b-instruct"
+
+
+def _demo_enabled() -> bool:
+    return os.environ.get("PRAMAGENT_DEMO_ENABLED", "").lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def _as_bool(value, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def build_default_armor() -> Pramagent:
     """Build from env. Store priority: PRAMAGENT_POSTGRES_DSN > PRAMAGENT_DB >
     explicit opt-in volatile memory (PRAMAGENT_ALLOW_MEMORY_STORE=1).
@@ -246,6 +273,12 @@ def build_default_armor() -> Pramagent:
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             max_tokens=int(os.environ.get("OPENAI_MAX_TOKENS", "1024")),
+        )
+    elif provider_name in {"nvidia", "nim"}:
+        provider = NvidiaProvider(
+            model=os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
+            api_key=os.environ.get("NVIDIA_API_KEY", ""),
+            max_tokens=int(os.environ.get("NVIDIA_MAX_TOKENS", "1024")),
         )
     elif provider_name in {"openai-compatible", "local", "vllm", "lmstudio"}:
         provider = OpenAICompatibleProvider(
@@ -408,7 +441,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.7.3",
+        version="0.7.4",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )
@@ -495,6 +528,11 @@ def create_app(armor: Optional[Pramagent] = None,
         capacity=int(os.environ.get("PRAMAGENT_RCA_RATE_BURST", "10")),
         refill_per_sec=float(os.environ.get("PRAMAGENT_RCA_RATE_PER_SEC", "0.2")),
     )
+    demo_hourly_limit = max(1, int(os.environ.get("PRAMAGENT_DEMO_RATE_LIMIT", "10")))
+    app.state.demo_bucket = TokenBucket(
+        capacity=demo_hourly_limit,
+        refill_per_sec=demo_hourly_limit / 3600.0,
+    )
 
     # P3-1: the old `request: Request = None` annotation lied about
     # nullability. FastAPI special-cases the bare Request annotation (it is
@@ -554,6 +592,299 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    def _demo_not_found():
+        raise HTTPException(status_code=404, detail="demo is not enabled")
+
+    def _demo_cors_headers() -> dict[str, str]:
+        return {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+        }
+
+    def _demo_ip(request: Request) -> str:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip() or "anon"
+        return request.client.host if request.client else "anon"
+
+    def _demo_policy(payload: dict) -> dict[str, bool]:
+        raw = payload.get("policies") or {}
+        if not isinstance(raw, dict):
+            raw = {}
+        return {
+            "pii_scrubbing": _as_bool(raw.get("pii_scrubbing"), True),
+            "injection_guard": _as_bool(raw.get("injection_guard"), True),
+            "safety_rules": _as_bool(raw.get("safety_rules"), True),
+            "hitl": _as_bool(raw.get("hitl"), False),
+        }
+
+    def _demo_financial_intent(prompt: str, action: str) -> bool:
+        import re
+
+        if action == "wire_transfer":
+            return True
+        patterns = [
+            r"\b(wire|transfer|send|initiate|process)\b[\s\S]{0,100}"
+            r"(\$|routing\s+number|account|acct[-_ ]?\d{6,}|refund|vendor)",
+            r"\b(routing\s+number|account\s+\d{6,18}|acct[-_ ]?\d{6,})\b"
+            r"[\s\S]{0,100}\b(wire|transfer|send|refund|payment)\b",
+        ]
+        return any(re.search(pattern, prompt, re.IGNORECASE) for pattern in patterns)
+
+    def _build_demo_armor(api_key: str, model: str, policies: dict[str, bool]) -> Pramagent:
+        safety_rules = []
+        post_rules = []
+        safety_classifier = None
+        if policies["safety_rules"]:
+            safety_rules = [
+                Rule(
+                    "block_account_dump",
+                    Verdict.BLOCK,
+                    pattern=r"\b(dump|export)\b.{0,80}\b(user\s+)?accounts?\b",
+                    detail="bulk account export is blocked",
+                ),
+                Rule(
+                    "escalate_transfer",
+                    Verdict.ESCALATE,
+                    pattern=r"\b(transfer|wire)\b.{0,80}\$?\s*\d+",
+                    detail="payment-like action requires review",
+                ),
+                Rule(
+                    "block_file_exfiltration_code",
+                    Verdict.BLOCK,
+                    pattern=(
+                        r"\b(generate|write|create|build)\b[\s\S]{0,100}"
+                        r"\b(python\s+)?script\b[\s\S]{0,220}"
+                        r"\b(reads?|open|collects?|exfiltrat(?:e|es)|sends?|uploads?)\b"
+                        r"[\s\S]{0,160}\b(all\s+files|files?\s+in\s+a\s+directory|directory)\b"
+                        r"[\s\S]{0,200}\b(external\s+url|https?://|http\s+post|post)\b"
+                    ),
+                    detail="file exfiltration script generation is blocked",
+                ),
+            ]
+            post_rules = [
+                Rule(
+                    "withhold_file_exfiltration_code",
+                    Verdict.BLOCK,
+                    pattern=(
+                        r"\b(os\.walk|glob\.glob|rglob|Path\()\b[\s\S]{0,360}"
+                        r"\b(open\(|read\(|read_bytes\(|read_text\()\b[\s\S]{0,360}"
+                        r"\b(requests\.post|httpx\.post|urllib\.request|urlopen)\b"
+                    ),
+                    detail="provider output appears to contain file exfiltration code",
+                )
+            ]
+            safety_classifier = build_safety_classifier(force_keyword_only=True)
+
+        hitl = HITLLayer(
+            require_approval_for=["wire_transfer"] if policies["hitl"] else [],
+            timeout_s=3.0,
+            approver=None,
+        )
+        tool_guard = ToolGuardLayer(policies=[
+            ToolPolicy(
+                name="wire_transfer",
+                side_effect="payment",
+                action=Verdict.ESCALATE,
+                allowed_actions={"wire_transfer"},
+                schema={
+                    "type": "object",
+                    "required": ["amount_usd", "destination_account"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "amount_usd": {
+                            "type": "number",
+                            "minimum": 0.01,
+                            "maximum": 1_000_000,
+                        },
+                        "destination_account": {
+                            "type": "string",
+                            "pattern": r"acct[-_ ][0-9]{6,18}",
+                        },
+                    },
+                },
+                detail="demo payment tool requires human approval",
+            )
+        ])
+        return Pramagent(
+            provider=NvidiaProvider(model=model, api_key=api_key),
+            compliance=ComplianceLayer(
+                standards=["HIPAA", "PCI_DSS", "GDPR"],
+                enabled=policies["pii_scrubbing"],
+            ),
+            isolation=IsolationLayer(
+                classifier=build_classifier(force_keyword_only=True)
+                if policies["injection_guard"] else None,
+                block_on_injection=policies["injection_guard"],
+            ),
+            safety=SafetyLayer(
+                rules=safety_rules,
+                classifier=safety_classifier,
+                post_rules=post_rules,
+                post_classifier=None,
+            ),
+            reliability=ReliabilityLayer(max_concurrent=2, timeout_s=45.0),
+            hitl=hitl,
+            tool_guard=tool_guard,
+        )
+
+    @app.get("/demo", response_class=HTMLResponse)
+    async def demo_page():
+        if not _demo_enabled():
+            _demo_not_found()
+        page = Path(__file__).with_name("demo_page.html")
+        return HTMLResponse(page.read_text(encoding="utf-8"))
+
+    @app.options("/demo/run")
+    async def demo_run_options():
+        if not _demo_enabled():
+            _demo_not_found()
+        return Response(status_code=204, headers=_demo_cors_headers())
+
+    @app.get("/demo/verify")
+    async def demo_verify():
+        if not _demo_enabled():
+            _demo_not_found()
+        return JSONResponse(
+            {
+                "chain_valid": True,
+                "detail": "Each /demo/run response contains a server-verified isolated audit chain.",
+            },
+            headers=_demo_cors_headers(),
+        )
+
+    @app.post("/demo/run")
+    async def demo_run(request: Request):
+        if not _demo_enabled():
+            _demo_not_found()
+
+        allowed, retry_after = app.state.demo_bucket.allow(f"demo:{_demo_ip(request)}")
+        if not allowed:
+            return JSONResponse(
+                {"detail": "demo rate limit exceeded"},
+                status_code=429,
+                headers={**_demo_cors_headers(), "Retry-After": str(int(retry_after) + 1)},
+            )
+
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > 300_000:
+                    return JSONResponse(
+                        {"detail": "demo request is too large"},
+                        status_code=413,
+                        headers=_demo_cors_headers(),
+                    )
+            except ValueError:
+                return JSONResponse(
+                    {"detail": "invalid Content-Length"},
+                    status_code=400,
+                    headers=_demo_cors_headers(),
+                )
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"detail": "invalid JSON body"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"detail": "invalid JSON body"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+
+        api_key = payload.get("nvidia_api_key")
+        if not isinstance(api_key, str) or not api_key.startswith("nvapi-"):
+            return JSONResponse(
+                {"detail": "valid NVIDIA NIM API key required"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return JSONResponse(
+                {"detail": "prompt is required"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+        if len(prompt.encode("utf-8")) > 262_144:
+            return JSONResponse(
+                {"detail": "prompt is too large"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+
+        model = payload.get("model") or DEFAULT_NVIDIA_DEMO_MODEL
+        if model not in NVIDIA_DEMO_MODELS:
+            return JSONResponse(
+                {"detail": "unsupported NVIDIA model"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+
+        action = payload.get("action") if isinstance(payload.get("action"), str) else "respond"
+        policies = _demo_policy(payload)
+        payment_intent = _demo_financial_intent(prompt, action)
+        if payment_intent and (policies["safety_rules"] or policies["hitl"]):
+            action = "wire_transfer"
+            policies["hitl"] = True
+        armor = _build_demo_armor(api_key=api_key, model=model, policies=policies)
+        session_id = f"demo-{uuid.uuid4().hex[:12]}"
+
+        try:
+            result = await armor.run(
+                prompt,
+                tenant_id="demo",
+                session_id=session_id,
+                action=action,
+            )
+        except Exception as exc:
+            log.warning("demo run failed type=%s", type(exc).__name__)
+            return JSONResponse(
+                {"detail": "demo run failed"},
+                status_code=502,
+                headers=_demo_cors_headers(),
+            )
+
+        trace = result.trace
+        body = {
+            "call_id": trace.call_id,
+            "action": action,
+            "payment_intent": payment_intent,
+            "output": result.output,
+            "blocked": result.blocked,
+            "block_reason": result.block_reason,
+            "hitl_status": trace.hitl_status,
+            "pre_verdict": trace.pre_verdict,
+            "post_verdict": trace.post_verdict,
+            "pii_redactions": trace.pii_redactions,
+            "layer_events": [
+                {
+                    "layer": event.layer,
+                    "decision": event.decision,
+                    "detail": event.detail,
+                    "latency_ms": event.latency_ms,
+                    "data": event.data,
+                }
+                for event in trace.layer_events
+            ],
+            "provider": trace.provider,
+            "provider_model": trace.provider_model,
+            "provider_latency_ms": trace.provider_latency_ms,
+            "this_hash": trace.this_hash,
+            "prev_hash": trace.prev_hash,
+            "total_latency_ms": trace.total_latency_ms,
+            "chain_valid": bool(armor.audit.verify_chain()),
+        }
+        return JSONResponse(body, headers=_demo_cors_headers())
 
     @app.post("/v1/auth/token", response_model=TokenResponse)
     async def issue_token(body: TokenRequest, request: Request):

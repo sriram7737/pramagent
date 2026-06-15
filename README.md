@@ -72,6 +72,15 @@ from pramagent.providers import OpenAIProvider
 armor = Pramagent(provider=OpenAIProvider(model="gpt-4o-mini"))
 ```
 
+Run against NVIDIA NIM with an `nvapi-*` key:
+
+```python
+from pramagent import Pramagent
+from pramagent.providers import NvidiaProvider
+
+armor = Pramagent(provider=NvidiaProvider(model="meta/llama-3.3-70b-instruct"))
+```
+
 ## API And Dashboard Install
 
 ```bash
@@ -105,6 +114,25 @@ Open:
 - API docs: `http://localhost:8080/docs`
 - Dashboard: `http://localhost:8501`
 
+## Public Live Demo
+
+The API can serve a single-page NVIDIA NIM demo at `/demo`. It is disabled by
+default and is meant for public evaluation, not production traffic.
+
+```bash
+PRAMAGENT_DEMO_ENABLED=true
+PRAMAGENT_DEMO_RATE_LIMIT=10
+PRAMAGENT_ALLOW_MEMORY_STORE=1
+uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
+```
+
+The demo asks the visitor for their own `nvapi-*` key on each run. Pramagent
+uses that key only for the current provider call; it is not written to traces,
+logs, stores, usage records, or the hash-chain payload. Each demo run uses an
+isolated in-memory trace store and returns the output, trust-layer events,
+redactions, HITL state, latency, `this_hash`, `prev_hash`, and local chain
+verification.
+
 Run the release sanity checks:
 
 ```bash
@@ -113,7 +141,7 @@ pramagent redteam --json --attacks 100
 pramagent redteam --json --dynamic --attacks 200 --seed 999
 ```
 
-Current local result: `558 passed, 1 skipped`.
+Current local result: `572 passed, 1 skipped`.
 
 ## ToolGuard Example
 

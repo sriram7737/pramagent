@@ -13,7 +13,7 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=short` -> **558 passing, 1 skipped**. The skip is
+`python -m pytest -q --tb=no` -> **572 passing, 1 skipped**. The skip is
 the Postgres optional-driver negative test when `psycopg2` is installed
 locally; there are no expected failures hiding classifier misses in the bundled
 suite.
@@ -44,7 +44,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 ## Status table
 
 ### Implemented (works today, covered by tests)
-- Provider adapters (Mock, OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible) + fallback chain
+- Provider adapters (Mock, OpenAI, Anthropic, Gemini, Ollama, NVIDIA NIM,
+  OpenAI-compatible) + fallback chain
 - Curated deterministic rule corpora under `pramagent.rules`: jailbreaks,
   OWASP LLM risks, injection payloads, fictional-wrapper bypasses, PHI, and
   financial PII. Current total: 129 importable `Rule` objects.
@@ -90,8 +91,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - OpenTelemetry per-layer spans (Compliance, Isolation, Safety, ToolGuard,
   Provider, HITL) + W3C trace-context propagation
 - FastAPI sidecar (auth, CORS, security headers, structured logging, RCA +
-  retention + GDPR-erasure endpoints, `/v1/usage` quota snapshots, and
-  `/v1/usage/ledger` ledger evidence)
+  retention + GDPR-erasure endpoints, `/v1/usage` quota snapshots,
+  `/v1/usage/ledger` ledger evidence, and a gated public `/demo` page for
+  NVIDIA NIM smoke demos)
 - Dashboard usage page, Redis-backed dashboard rate limiting with local
   fallback, no-store security headers, session revocation, optional SQL users
   with generated high-entropy dashboard keys, bcrypt key hashes, phone/email
@@ -104,6 +106,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Small concurrency smoke test for trace uniqueness and hash-chain integrity
 - CI security scanning with Bandit, Semgrep, and authenticated OWASP ZAP
   OpenAPI scan
+- Public NVIDIA NIM demo mode is disabled by default, rate-limited per IP, and
+  uses a visitor-supplied `nvapi-*` key only for the current request. Demo
+  traces are isolated in memory and are not persisted.
 
 ### MVP / needs hardening
 - Usage quotas: enforced before expensive routes and integrated with rate
@@ -145,9 +150,42 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - 200-500 call run with full production side effects such as real email sends
   or third-party scraper providers. Current heavy run executes real read-only
   fetches only.
+- Hosted public demo traffic at meaningful scale. The `/demo` flow has route
+  tests and local smoke coverage, but no published Railway uptime/load evidence
+  yet.
 - Pilot-user production deployments
 
 ## Latest Workflow Evidence
+
+2026-06-15 public demo hardening after live NVIDIA checks:
+
+- Fixed payment-like prompts that were only receiving `SafetyLayer.pre =
+  escalate` but not visibly reaching HITL. The demo now detects payment intent,
+  runs the provider, then idles at HITL with `[action not executed -
+  awaiting/declined human approval]`.
+- Removed broad post-output classifier use from the demo path; benign answers
+  about LLM-agent risks no longer get silently replaced by
+  `[output withheld by safety rule]`.
+- Added deterministic pre- and post-safety coverage for file-exfiltration code
+  generation requests.
+- Confirmed contextual routing-number behavior: `021000021` is redacted when
+  nearby text contains `routing`, while bare 9-digit values remain unredacted.
+- Regression coverage added for these exact demo failure classes. Local
+  verification: **572 passed, 1 skipped**; Bandit returned no findings.
+
+2026-06-15 public NVIDIA NIM live-demo build:
+
+- Added `NvidiaProvider` for NVIDIA NIM's OpenAI-compatible endpoint.
+- Added gated `/demo`, `/demo/run`, and `/demo/verify` routes. The demo is
+  disabled by default with `PRAMAGENT_DEMO_ENABLED=false`, throttled by
+  `PRAMAGENT_DEMO_RATE_LIMIT`, and uses isolated in-memory traces per run.
+- Demo model allow-list excludes deprecated NVIDIA Build free-endpoint IDs that
+  return provider `404` safe defaults on otherwise-benign prompts.
+- The browser demo asks visitors for their own `nvapi-*` key. Route tests
+  verify invalid keys are not echoed, PII is scrubbed before the provider sees
+  the prompt, injection/HITL cases do not call the provider, and the per-IP
+  demo throttle returns `429`.
+- Local verification: **568 passed, 1 skipped**; Bandit returned no findings.
 
 2026-06-11 v0.7.3 security remediation:
 

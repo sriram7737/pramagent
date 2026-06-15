@@ -24,6 +24,7 @@ from .layers import (ComplianceLayer, HITLLayer, IsolationLayer,
                      ToolDecision, ToolGuardLayer, ToolPolicy)
 from .providers import (AnthropicProvider, BaseProvider, FallbackProvider,
                         GeminiProvider, MockProvider, OllamaProvider,
+                        NvidiaProvider,
                         OpenAICompatibleProvider, OpenAIProvider)
 from .store import MemoryStore, SQLiteStore
 from .auth import APIKeyRegistry, JWTManager, PostgresAPIKeyRegistry
@@ -44,7 +45,7 @@ from .usage import (
     WebhookUsageSink,
 )
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 __all__ = [
     "Pramagent",
     "AgentResponse",
@@ -87,6 +88,7 @@ __all__ = [
     "AnthropicProvider",
     "OpenAIProvider",
     "OpenAICompatibleProvider",
+    "NvidiaProvider",
     "GeminiProvider",
     "OllamaProvider",
     "FallbackProvider",

@@ -231,6 +231,35 @@ class OpenAIProvider(OpenAICompatibleProvider):
         )
 
 
+class NvidiaProvider(OpenAICompatibleProvider):
+    """NVIDIA NIM adapter using its OpenAI-compatible chat API.
+
+    Users can get an ``nvapi-...`` key from https://build.nvidia.com. The key is
+    supplied per request in the public demo flow and is never read from logs or
+    persisted traces by this provider.
+    """
+    name = "nvidia"
+    BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+    def __init__(
+        self,
+        model: str = "meta/llama-3.3-70b-instruct",
+        *,
+        api_key: str = "",
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+        timeout_s: float = 60.0,
+    ):
+        super().__init__(
+            model=model,
+            base_url=self.BASE_URL,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_s=timeout_s,
+        )
+
+
 class GeminiProvider(BaseProvider):
     """Google Gemini adapter using the public generateContent REST endpoint."""
     name = "gemini"

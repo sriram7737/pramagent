@@ -4,7 +4,8 @@ import urllib.error
 
 import pytest
 
-from pramagent.providers import (GeminiProvider, OpenAICompatibleProvider,
+from pramagent.providers import (GeminiProvider, NvidiaProvider,
+                                 OpenAICompatibleProvider,
                                  OpenAIProvider)
 
 
@@ -140,6 +141,39 @@ def test_openai_provider_uses_openai_defaults(monkeypatch):
     assert provider.base_url == "https://api.openai.com/v1"
     assert provider.model == "gpt-test"
     assert provider.api_key == "sk-test"
+
+
+@pytest.mark.asyncio
+async def test_nvidia_provider_uses_nim_openai_compatible_endpoint(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(req, timeout):
+        seen["url"] = req.full_url
+        seen["headers"] = dict(req.header_items())
+        seen["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeHTTPResponse({
+            "model": "meta/llama-3.3-70b-instruct",
+            "choices": [{"message": {"content": "hello from nim"}}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 3},
+        })
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    provider = NvidiaProvider(
+        model="meta/llama-3.3-70b-instruct",
+        api_key="nvapi-test",
+    )
+
+    result = await provider.complete("hi nvidia")
+
+    assert provider.name == "nvidia"
+    assert provider.base_url == "https://integrate.api.nvidia.com/v1"
+    assert seen["url"] == "https://integrate.api.nvidia.com/v1/chat/completions"
+    headers = {key.lower(): value for key, value in seen["headers"].items()}
+    assert headers["authorization"] == "Bearer nvapi-test"
+    assert seen["body"]["model"] == "meta/llama-3.3-70b-instruct"
+    assert seen["body"]["messages"][0]["content"] == "hi nvidia"
+    assert result.text == "hello from nim"
+    assert result.model == "meta/llama-3.3-70b-instruct"
 
 
 @pytest.mark.asyncio
