@@ -57,6 +57,7 @@ from ..hitl.slack import (SlackApprovalError, SlackHITLApprover,
                           slack_decision_response, verify_slack_signature)
 from ..layers import (ComplianceLayer, HITLLayer, ReliabilityLayer, Rule,
                       SafetyLayer, ToolGuardLayer, ToolPolicy)
+from ..layers.llm_judge import OutputJudgeLayer
 from ..providers import (AnthropicProvider, GeminiProvider, MockProvider,
                          NvidiaProvider, OllamaProvider, OpenAICompatibleProvider,
                          OpenAIProvider)
@@ -321,6 +322,17 @@ def build_default_armor() -> Pramagent:
     iso_clf = get_shared_classifier(force_keyword_only=kw_only)
     safety_clf = get_shared_safety_classifier(force_keyword_only=kw_only)
 
+    # Optional LLM-as-judge on the model OUTPUT, reusing the configured
+    # provider. Off by default (it adds a second model call per request);
+    # PRAMAGENT_OUTPUT_JUDGE=1 enables it. Fail-closed on judge error/timeout.
+    output_judge = None
+    if os.environ.get("PRAMAGENT_OUTPUT_JUDGE", "").lower() in {"1", "true", "yes", "on"}:
+        output_judge = OutputJudgeLayer(
+            provider=provider,
+            timeout_s=float(os.environ.get("PRAMAGENT_OUTPUT_JUDGE_TIMEOUT_S", "15.0")),
+            withhold_on_error=True,
+        )
+
     return Pramagent(
         provider=provider,
         isolation=IsolationLayer(classifier=iso_clf, block_on_injection=True),
@@ -372,6 +384,7 @@ def build_default_armor() -> Pramagent:
         # fail-safe. Output escalations stay "log" (record only). Deployments
         # that want a different posture pass their own escalate_policy.
         escalate_policy={"pre": "hitl"},
+        output_judge=output_judge,
         audit=audit,
         store=store,
     )
@@ -677,6 +690,12 @@ def create_app(armor: Optional[Pramagent] = None,
             "injection_guard": _as_bool(raw.get("injection_guard"), True),
             "safety_rules": _as_bool(raw.get("safety_rules"), True),
             "hitl": _as_bool(raw.get("hitl"), False),
+            # LLM-as-judge on the model OUTPUT. Catches semantic failures the
+            # deterministic rules miss (working malware, bypass walkthroughs,
+            # confirmed destructive actions, leaked internals). On by default —
+            # it is the answer to "is the OUTPUT safe?". Costs one extra NIM
+            # call per run (uses the visitor's key) and is fail-closed.
+            "output_judge": _as_bool(raw.get("output_judge"), True),
         }
 
     def _demo_financial_intent(prompt: str, action: str) -> bool:
@@ -808,6 +827,15 @@ def create_app(armor: Optional[Pramagent] = None,
                 detail="demo payment tool requires human approval",
             )
         ])
+        # LLM-as-judge on the OUTPUT, using the visitor's key on the same model.
+        # Fail-closed: a judge error/timeout/ambiguous verdict withholds output.
+        output_judge = None
+        if policies.get("output_judge"):
+            output_judge = OutputJudgeLayer(
+                provider=NvidiaProvider(model=model, api_key=api_key),
+                timeout_s=20.0,
+                withhold_on_error=True,
+            )
         return Pramagent(
             provider=NvidiaProvider(model=model, api_key=api_key),
             compliance=ComplianceLayer(
@@ -829,6 +857,7 @@ def create_app(armor: Optional[Pramagent] = None,
             reliability=ReliabilityLayer(max_concurrent=2, timeout_s=45.0),
             hitl=hitl,
             tool_guard=tool_guard,
+            output_judge=output_judge,
         )
 
     @app.get("/demo", response_class=HTMLResponse)
@@ -955,6 +984,11 @@ def create_app(armor: Optional[Pramagent] = None,
             )
 
         trace = result.trace
+        output_judge_status = next(
+            (event.decision for event in trace.layer_events
+             if event.layer == "OutputJudgeLayer"),
+            None,
+        )
         body = {
             "call_id": trace.call_id,
             "action": action,
@@ -962,6 +996,7 @@ def create_app(armor: Optional[Pramagent] = None,
             "output": result.output,
             "blocked": result.blocked,
             "block_reason": result.block_reason,
+            "output_judge_status": output_judge_status,
             "hitl_status": trace.hitl_status,
             "pre_verdict": trace.pre_verdict,
             "post_verdict": trace.post_verdict,

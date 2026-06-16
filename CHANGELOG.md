@@ -1,6 +1,52 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Wired the LLM-as-judge output layer into the deployments.** The
+  `OutputJudgeLayer` (a second model that evaluates every output before it
+  reaches the caller — the "is the OUTPUT safe?" check) already existed and was
+  wired into `core.run()`, but no deployment configured it, so semantic output
+  failures a regex cannot describe (a working keylogger, a bypass walkthrough, a
+  confirmed data-wipe) reached the caller. It is now **on by default in the
+  public demo** (`output_judge` policy toggle; one extra NIM call on the
+  visitor's key) and **opt-in for the reference `/v1/run`**
+  (`PRAMAGENT_OUTPUT_JUDGE=1`, reusing the configured provider). Fail-closed: a
+  judge error/timeout/ambiguous verdict withholds the output. Added the first
+  test coverage for the layer (`tests/test_output_judge.py`) plus a demo
+  end-to-end test proving a keylogger that *evades* the file-exfil rule is
+  withheld by the judge.
+
+### Note
+
+- The judge is itself an LLM — it can be wrong and can in principle be targeted
+  by adversarial output. It is strong defense-in-depth, not a guarantee; the
+  deterministic input rules and output rules remain the first filters, and the
+  HITL gate still governs consequential actions.
+
+### Verified
+
+- `python -m pytest -q` -> `657 passed, 2 skipped`.
+- `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> `200/200 caught`, `0` false positives.
+
 ## v0.7.7 - 2026-06-16
+
+### Added
+
+- Wired the **semantic embedding classifier** as the language-agnostic
+  secondary injection layer (the scalable fix for the multilingual gap).
+  `get_shared_classifier()` / `get_shared_safety_classifier()` cache the model
+  process-wide so it loads at most once — required because the public demo
+  builds a fresh pipeline per request. Both the reference `/v1/run` deployment
+  (`PRAMAGENT_CLASSIFIER=embedding`) and the demo (`PRAMAGENT_DEMO_CLASSIFIER=embedding`)
+  opt in; the default stays on the zero-dependency keyword path. Added
+  `warm_shared_classifiers()` (+ `PRAMAGENT_WARM_CLASSIFIER=1`) to pre-load at
+  startup, and Hindi/Russian/Arabic/Portuguese plus multilingual
+  override-confirmation exemplars so the model has anchors for the languages
+  red-team proved bypass the keyword path. Requires `pramagent[ml]`; degrades
+  gracefully to keyword when absent.
 
 ### Fixed
 

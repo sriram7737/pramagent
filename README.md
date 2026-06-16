@@ -97,7 +97,18 @@ verdicts, provider metadata, PII redactions, HITL status, and `this_hash` /
 `IsolationLayer` scans inputs before the model sees them. It covers known
 instruction overrides, chat-template wrapper attacks, authority framing,
 base64/hex/unicode-escape encoded payloads, and targeted multilingual override
-phrases. This is defense-in-depth, not proof of prompt-injection immunity.
+phrases. For language-agnostic coverage, install `pramagent[ml]` and set
+`PRAMAGENT_CLASSIFIER=embedding` to enable the semantic embedding classifier as
+a cached secondary layer (it degrades to the keyword path when not installed).
+This is defense-in-depth, not proof of prompt-injection immunity.
+
+**How do I stop unsafe model output from reaching users?**  
+`OutputJudgeLayer` runs an LLM-as-judge on every output before it returns — the
+"is the OUTPUT safe?" check that regex cannot give. It catches semantic failures
+deterministic rules miss (working malware, bypass walkthroughs, confirmed
+destructive actions, leaked internals). On by default in the public demo, opt-in
+for `/v1/run` (`PRAMAGENT_OUTPUT_JUDGE=1`). It is fail-closed, but it is itself a
+model — strong defense-in-depth, not a guarantee.
 
 **How do I stop unsafe tool calls from an AI agent?**  
 Use `ToolGuardLayer` with `ToolPolicy`. Pramagent validates JSON Schema,

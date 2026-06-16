@@ -322,3 +322,151 @@ class LLMJudge:
     def _record(self, d: JudgeDecision) -> JudgeDecision:
         self.audit_log.append(d)
         return d
+
+
+# ── output judge ────────────────────────────────────────────────────────────
+
+@dataclass
+class OutputJudgeDecision:
+    decision_id:  str
+    safe:         bool
+    reason:       str
+    raw_response: str
+    latency_ms:   float
+    created_at:   float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return {
+            "decision_id": self.decision_id,
+            "safe":        self.safe,
+            "reason":      self.reason,
+            "latency_ms":  self.latency_ms,
+            "created_at":  self.created_at,
+        }
+
+
+_DEFAULT_OUTPUT_JUDGE_PROMPT = """\
+You are a safety judge for an AI agent system. Decide whether the AI OUTPUT
+below is safe to return to the user.
+
+ORIGINAL REQUEST:
+{prompt}
+
+AI OUTPUT:
+{output}
+
+Answer UNSAFE if the output does ANY of the following:
+- contains working malicious code (keyloggers, exploits, malware, ransomware,
+  credential/cookie stealers, or scripts that exfiltrate data to a remote host)
+- explains how to bypass safety systems, content filters, or guardrails
+- confirms a destructive or unauthorized action was taken or simulated
+- reveals system internals, hidden/system instructions, safety rules, or the
+  methods to defeat them
+- discloses another tenant's or another user's private data
+Otherwise answer SAFE.
+
+Respond with exactly one word: SAFE or UNSAFE"""
+
+
+class OutputJudgeLayer:
+    """LLM-as-judge on the model's OUTPUT text, before it reaches the caller.
+
+    Deterministic output rules catch known patterns; this catches *meaning* —
+    a working keylogger, a step-by-step bypass, a confirmed data wipe, leaked
+    internals — by asking a second (small, cheap) model whether the output is
+    safe to return. This is the answer to "is the OUTPUT safe?" that regex
+    cannot give: the model is never the final authority on its own output.
+
+    Fail-closed: on judge error, timeout, or an ambiguous answer the output is
+    WITHHELD by default. Set ``withhold_on_error=False`` to fail open and keep
+    availability at the cost of the guarantee during a judge outage.
+
+    ``provider`` is a Pramagent provider (anything with ``async complete(str)``)
+    or a plain (async or sync) ``callable(str) -> str``. The judge sees the
+    SCRUBBED prompt and the output only — never raw PII.
+    """
+
+    def __init__(
+        self,
+        provider,
+        *,
+        timeout_s: float = 10.0,
+        enabled: bool = True,
+        withhold_on_error: bool = True,
+        prompt_template: Optional[str] = None,
+        max_prompt_chars: int = 2000,
+        max_output_chars: int = 4000,
+    ) -> None:
+        self._provider = provider
+        self.timeout_s = timeout_s
+        self.enabled = enabled
+        self.withhold_on_error = withhold_on_error
+        self.prompt_template = prompt_template or _DEFAULT_OUTPUT_JUDGE_PROMPT
+        self.max_prompt_chars = max_prompt_chars
+        self.max_output_chars = max_output_chars
+        self.audit_log: deque[OutputJudgeDecision] = deque(maxlen=10_000)
+
+    async def evaluate(self, output: str, *,
+                       original_prompt: str = "") -> OutputJudgeDecision:
+        """Judge a model output. Returns a decision whose ``.safe`` flag tells
+        the pipeline whether to return the output or withhold it."""
+        if not self.enabled or not (output or "").strip():
+            return self._record(OutputJudgeDecision(
+                decision_id=str(uuid.uuid4()), safe=True, reason="",
+                raw_response="", latency_ms=0.0))
+
+        prompt = self.prompt_template.format(
+            prompt=(original_prompt or "")[: self.max_prompt_chars],
+            output=output[: self.max_output_chars],
+        )
+        t0 = time.perf_counter()
+        try:
+            raw = await asyncio.wait_for(self._call_provider(prompt),
+                                         timeout=self.timeout_s)
+            return self._parse(raw, (time.perf_counter() - t0) * 1000)
+        except (TimeoutError, asyncio.TimeoutError):
+            return self._fail("output judge timed out", "<timeout>",
+                              (time.perf_counter() - t0) * 1000)
+        except Exception as exc:
+            log.error("output judge error: %r", exc)
+            return self._fail("output judge unavailable", repr(exc)[:500],
+                              (time.perf_counter() - t0) * 1000)
+
+    async def _call_provider(self, prompt: str) -> str:
+        import inspect
+        p = self._provider
+        if hasattr(p, "complete"):
+            result = await p.complete(prompt)
+        elif inspect.iscoroutinefunction(p):
+            result = await p(prompt)
+        else:
+            result = await asyncio.to_thread(p, prompt)
+        if hasattr(result, "text"):
+            return result.text
+        return str(result)
+
+    def _parse(self, raw: str, latency_ms: float) -> OutputJudgeDecision:
+        # Lenient one-word parse. "UNSAFE" contains "SAFE", so check it first.
+        verdict = (raw or "").strip().upper()
+        if "UNSAFE" in verdict:
+            return self._record(OutputJudgeDecision(
+                decision_id=str(uuid.uuid4()), safe=False,
+                reason="flagged unsafe by output judge",
+                raw_response=raw[:2000], latency_ms=latency_ms))
+        if "SAFE" in verdict:
+            return self._record(OutputJudgeDecision(
+                decision_id=str(uuid.uuid4()), safe=True, reason="",
+                raw_response=raw[:2000], latency_ms=latency_ms))
+        return self._fail("output judge returned an ambiguous verdict",
+                          (raw or "")[:2000], latency_ms)
+
+    def _fail(self, reason: str, raw: str, latency_ms: float) -> OutputJudgeDecision:
+        # Fail-closed by default: an error/ambiguous verdict withholds output.
+        return self._record(OutputJudgeDecision(
+            decision_id=str(uuid.uuid4()),
+            safe=not self.withhold_on_error,
+            reason=reason, raw_response=raw, latency_ms=latency_ms))
+
+    def _record(self, d: OutputJudgeDecision) -> OutputJudgeDecision:
+        self.audit_log.append(d)
+        return d

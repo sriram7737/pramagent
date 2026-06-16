@@ -62,6 +62,18 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   detection, Redis/back-end-backed side-effect history and session call counters,
   per-tenant/action allow-lists, decision recorded in the trace,
   **LLM-as-judge** tightening hook
+- **OutputJudgeLayer** — LLM-as-judge on the model OUTPUT, wired into the
+  pipeline between output validation and the HITL gate. This is the "is the
+  OUTPUT safe?" check that deterministic rules cannot give: it catches semantic
+  failures (working malware/keyloggers, bypass walkthroughs, confirmed
+  destructive actions, leaked internals) by asking a second model whether the
+  output is safe to return. On by default in the public demo (`output_judge`
+  policy, one extra NIM call on the visitor's key); opt-in for the reference
+  `/v1/run` (`PRAMAGENT_OUTPUT_JUDGE=1`). Fail-closed: a judge error, timeout, or
+  ambiguous verdict withholds the output. Honest limit: the judge is itself an
+  LLM — it can be wrong and can in principle be targeted by adversarial output —
+  so it is strong defense-in-depth, not a guarantee, and the deterministic
+  output rules remain the first filter.
 - Slack HITL (approve/deny, signed callbacks) **+ persistent in-memory,
   SQLite, and Postgres HITL queues, escalation chains, N-of-M quorum, full
   approval audit log, ServiceNow/PagerDuty/email/webhook adapters**
@@ -141,18 +153,25 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   multi-layer encodings) are not yet decoded — a long opaque base64/gzip blob
   with decode-and-execute framing is caught by the classifier, but arbitrary
   custom encodings can still pass the input layer.
-- **Known gap — non-English injection.** The deterministic injection heuristics
-  and the zero-dependency keyword classifier are English-first. Targeted
-  phrases for French, Spanish, German, and Hindi instruction-override are now
+- **Non-English injection — keyword-first, embedding-backed.** The
+  deterministic heuristics and the zero-dependency keyword classifier are
+  English-first; targeted phrases for fr/es/de/hi instruction-override are
   matched, and language-independent override tokens (`OVERRIDE_ACCEPTED`) are
-  caught regardless of language, but this is not full multilingual coverage:
-  an instruction-override phrased in an unlisted language, or a novel phrasing
-  in a listed one, can still pass the input layer. Mitigations in place: (1)
-  the output post-check withholds dangerous confirmations regardless of input
-  language (defense-in-depth backstop); (2) the embedding classifier ships with
-  multilingual exemplars. Planned fix: wire the embedding classifier
-  (`build_classifier()` hook already present in `IsolationLayer`) as the
-  language-agnostic secondary layer instead of forcing keyword-only.
+  caught regardless of language. For language-agnostic coverage the **semantic
+  embedding classifier is now wired as the secondary layer**: install
+  `pramagent[ml]` (sentence-transformers) and opt in with
+  `PRAMAGENT_CLASSIFIER=embedding` (reference `/v1/run`) or
+  `PRAMAGENT_DEMO_CLASSIFIER=embedding` (public demo). The default stays on the
+  zero-dependency keyword path so no deployment silently pays the model-load
+  cost. The model is process-cached
+  (`get_shared_classifier`) so it loads once even though the demo builds a
+  pipeline per request, and `warm_shared_classifiers()` / `PRAMAGENT_WARM_CLASSIFIER=1`
+  pre-loads it at startup. Exemplars now include Hindi, Russian, Arabic, and
+  Portuguese plus the multilingual override-confirmation variants. Remaining
+  limits: without `pramagent[ml]` the layer degrades to keyword-only, and even
+  with embeddings a sufficiently novel phrasing can score below threshold —
+  the output post-check remains the defense-in-depth backstop, and third-party
+  multilingual red-team sets are still required before high-stakes claims.
 - Multi-process scaling — Redis backend exists and ToolGuard chain state can be
   shared across workers; still not load-tested at 50+ tenant / 10k+ daily-call
   scale

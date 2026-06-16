@@ -61,6 +61,7 @@ class Pramagent:
         consent=None,
         consent_purpose: str = "service_provision",
         escalate_policy=None,
+        output_judge=None,
     ):
         """Create a Pramagent orchestrator.
 
@@ -97,6 +98,10 @@ class Pramagent:
         # stage. Default ("log", "log") records the verdict without gating —
         # see EscalatePolicy. Accepts a str, dict, or EscalatePolicy.
         self.escalate_policy = EscalatePolicy.from_config(escalate_policy)
+        # Optional LLM-as-judge on the model OUTPUT (OutputJudgeLayer). None =
+        # disabled (zero overhead). When set, every output that clears the
+        # deterministic checks is evaluated semantically before it is returned.
+        self.output_judge = output_judge
 
     def validate_tool(
         self,
@@ -423,6 +428,24 @@ class Pramagent:
                  "ok" if ov.ok else "withheld", ov.reason, t0)
             if not ov.ok:
                 output = "[output withheld by tool output validation]"
+
+            # 5d) Output judge — optional LLM-as-judge on the model output.
+            # Semantic check that catches what deterministic rules cannot:
+            # working malware, bypass explanations, confirmed destructive
+            # actions, leaked internals. Skipped when the output was already
+            # withheld by an earlier gate (no point judging a placeholder).
+            output_clean = (post_verdict != Verdict.BLOCK) and ov.ok
+            if (self.output_judge is not None
+                    and getattr(self.output_judge, "enabled", True)
+                    and output_clean):
+                t0 = time.perf_counter()
+                with trace_layer("OutputJudgeLayer") as span:
+                    jd = await self.output_judge.evaluate(output, original_prompt=clean)
+                    span.set_attribute("output_judge.safe", jd.safe)
+                mark("OutputJudgeLayer", "safe" if jd.safe else "withheld",
+                     jd.reason or "ok", t0)
+                if not jd.safe:
+                    output = "[output withheld by output judge]"
 
             # 6) HITL. A consequential action label gates here. ESCALATE
             # verdicts are handled separately by escalate_policy (steps 3a/5a)

