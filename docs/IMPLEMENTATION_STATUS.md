@@ -315,13 +315,15 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Added `NvidiaProvider` for NVIDIA NIM's OpenAI-compatible endpoint.
 - Added gated `/demo`, `/demo/run`, and `/demo/verify` routes. The demo is
   disabled by default with `PRAMAGENT_DEMO_ENABLED=false`, throttled by
-  `PRAMAGENT_DEMO_RATE_LIMIT`, and uses isolated in-memory traces per run.
+  `PRAMAGENT_DEMO_RATE_LIMIT` per client IP plus hashed visitor NVIDIA key,
+  and uses isolated in-memory traces per run.
 - Demo model allow-list excludes deprecated NVIDIA Build free-endpoint IDs that
   return provider `404` safe defaults on otherwise-benign prompts.
 - The browser demo asks visitors for their own `nvapi-*` key. Route tests
   verify invalid keys are not echoed, PII is scrubbed before the provider sees
-  the prompt, injection/HITL cases do not call the provider, and the per-IP
-  demo throttle returns `429`.
+  the prompt, injection/HITL cases do not call the provider, provider failures
+  return explicit `DEGRADED` details, and the per-IP/per-key demo throttle
+  returns `429` without storing plaintext keys.
 - Local verification: **568 passed, 1 skipped**; Bandit returned no findings.
 
 2026-06-11 v0.7.3 security remediation:

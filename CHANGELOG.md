@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Public demo now defaults to `mistralai/mistral-small-4-119b-2603`, the NIM
+  model that has been stable in live tests, and surfaces upstream provider
+  failures as explicit `DEGRADED` detail instead of leaving visitors to infer
+  the cause from the trace table.
+- Demo rate limiting is now scoped by client IP plus a short in-memory SHA-256
+  hash of the visitor's NVIDIA key. Plaintext keys are still never persisted,
+  logged, traced, or used as raw dictionary keys.
+
+### Added
+
+- Added `examples/gemini_trust_layer.py`, a runnable Gemini trust-layer recipe
+  for Google Dev Library submission and Google-tech SEO/discovery.
+- Added `docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md` and
+  `docs/COOKBOOK_SUBMISSIONS.md` to track the Google Dev Library, Anthropic
+  Claude Cookbook, and OpenAI Cookbook submission path.
+
 ## v0.8.0 - 2026-06-16
 
 ### Added

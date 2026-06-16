@@ -326,11 +326,11 @@
       <div>
         <label for="model">Model</label>
         <select id="model">
+          <option value="mistralai/mistral-small-4-119b-2603" selected>Mistral Small 4</option>
           <option value="meta/llama-3.3-70b-instruct">Llama 3.3 70B</option>
           <option value="nvidia/llama-3.3-nemotron-super-49b-v1">Nemotron Super 49B</option>
           <option value="nvidia/llama-3.3-nemotron-super-49b-v1.5">Nemotron Super 49B v1.5</option>
           <option value="nvidia/llama-3.1-nemotron-nano-8b-v1">Nemotron Nano 8B</option>
-          <option value="mistralai/mistral-small-4-119b-2603">Mistral Small 4</option>
         </select>
       </div>
     </section>
@@ -518,7 +518,12 @@
       $("results").classList.add("visible");
       $("verdictBadge").className = `status ${klass}`;
       $("verdictBadge").textContent = label;
-      $("output").textContent = data.blocked ? (data.output || data.block_reason || "Blocked") : (data.output || "");
+      if (data.block_reason === "provider error") {
+        const detail = data.provider_error_detail ? `\n\nProvider detail: ${data.provider_error_detail}` : "";
+        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${detail}\n\nTry a different NVIDIA model or verify that this key has access to the selected NIM endpoint.`;
+      } else {
+        $("output").textContent = data.blocked ? (data.output || data.block_reason || "Blocked") : (data.output || "");
+      }
       $("redactions").textContent = data.pii_redactions && data.pii_redactions.length
         ? `PII redacted: ${[...new Set(data.pii_redactions)].join(", ")}`
         : "";

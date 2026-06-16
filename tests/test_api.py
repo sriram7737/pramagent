@@ -4,7 +4,8 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from pramagent.api.app import NVIDIA_DEMO_MODELS, create_app  # noqa: E402
+from pramagent.api.app import (DEFAULT_NVIDIA_DEMO_MODEL, NVIDIA_DEMO_MODELS,  # noqa: E402
+                               create_app)
 from pramagent.api.app import build_default_armor  # noqa: E402
 from pramagent import Pramagent, Verdict  # noqa: E402
 from pramagent.auth import APIKeyRegistry  # noqa: E402
@@ -132,6 +133,19 @@ def test_demo_model_menu_excludes_deprecated_nvidia_ids(monkeypatch):
         assert stale_id not in resp.text
 
 
+def test_demo_defaults_to_working_nvidia_model(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+
+    resp = local_client.get("/demo")
+
+    assert DEFAULT_NVIDIA_DEMO_MODEL == "mistralai/mistral-small-4-119b-2603"
+    assert (
+        '<option value="mistralai/mistral-small-4-119b-2603" selected>'
+        in resp.text
+    )
+
+
 def test_demo_rejects_bad_nvidia_key_without_echo(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     local_client = TestClient(create_app())
@@ -200,6 +214,36 @@ def test_demo_pii_scrubs_before_nvidia_provider(monkeypatch):
     assert "123-45-6789" not in seen["prompt"]
     assert "nvapi-test-secret" not in resp.text
     assert seen["key"] == "nvapi-test-secret"
+
+
+def test_demo_provider_failure_returns_degraded_detail(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+
+    async def fake_complete(self, prompt, **kwargs):
+        raise RuntimeError("provider HTTP 404: 404 page not found")
+
+    monkeypatch.setattr(NvidiaProvider, "complete", fake_complete)
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/run",
+        json={
+            "nvidia_api_key": "nvapi-test-secret",
+            "prompt": "Summarize safe deployment logging practices.",
+        },
+    )
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["blocked"] is True
+    assert body["block_reason"] == "provider error"
+    assert body["provider_error_detail"] == "provider HTTP 404: 404 page not found"
+    assert body["output"] == "[safe default: unable to complete]"
+    assert any(
+        event["layer"] == "ReliabilityLayer"
+        and event["decision"] == "degraded"
+        for event in body["layer_events"]
+    )
 
 
 def test_demo_routing_number_redacts_with_context_and_hits_hitl(monkeypatch):
@@ -763,11 +807,16 @@ def test_demo_rate_limit(monkeypatch):
 
     first = local_client.post("/demo/run", json=payload)
     second = local_client.post("/demo/run", json=payload)
+    third = local_client.post(
+        "/demo/run",
+        json={"nvidia_api_key": "nvapi-fresh-secret", "prompt": "hello"},
+    )
 
     assert first.status_code == 200
     assert second.status_code == 429
-    assert second.json()["detail"] == "demo rate limit exceeded"
+    assert second.json()["detail"] == "demo rate limit exceeded for this IP and NVIDIA key"
     assert "Retry-After" in second.headers
+    assert third.status_code == 200
 
 
 def test_ready_is_o1_and_discloses_nothing(client):
