@@ -510,11 +510,22 @@ def create_app(armor: Optional[Pramagent] = None,
     ]
     if "*" in allowed_origins:
         log.warning("PRAMAGENT_CORS_ORIGINS contains '*'; use explicit origins outside local development")
+    # When demo mode is enabled the demo page is served from a browser and
+    # issues cross-origin requests to /demo/run.  The demo endpoints set their
+    # own fine-grained CORS headers (Access-Control-Allow-Origin: *), but
+    # Starlette's CORSMiddleware intercepts OPTIONS preflight requests before
+    # the route handler runs and rejects them when allow_origins is empty.
+    # Adding "*" here lets the middleware pass demo preflights through so the
+    # handler can respond with the correct 204 + CORS headers.  The wildcard
+    # is scoped to demo mode only; production deployments that do not set
+    # PRAMAGENT_DEMO_ENABLED are unaffected.
+    if _demo_enabled() and "*" not in allowed_origins:
+        allowed_origins = list(allowed_origins) + ["*"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials="*" not in allowed_origins,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id", "Retry-After"],
     )
@@ -841,7 +852,15 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.options("/demo/run")
     async def demo_run_options():
         if not _demo_enabled():
-            _demo_not_found()
+            # Return 405 Method Not Allowed (not 404) so CORS preflight
+            # callers get a meaningful status rather than a misleading "not
+            # found".  The Allow header advertises the methods that *would*
+            # be available if demo mode were enabled.
+            raise HTTPException(
+                status_code=405,
+                detail="demo is not enabled",
+                headers={"Allow": "POST, OPTIONS"},
+            )
         return Response(status_code=204, headers=_demo_cors_headers())
 
     @app.get("/demo/verify")
