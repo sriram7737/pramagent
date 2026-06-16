@@ -1,4 +1,4 @@
-# ── Stage 1: build deps ──────────────────────────────────────────────────────
+# Stage 1: build deps
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
@@ -9,16 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-COPY pramagent/ pramagent/
-COPY README.md ./
-COPY CHANGELOG.md ./
+COPY . ./
 
 # Install with all optional extras
 RUN pip install --no-cache-dir --prefix=/install \
     ".[api,redis,postgres]"
 
-# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+# Stage 2: runtime
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
@@ -46,8 +43,8 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:${PRAMAGENT_PORT}/health || exit 1
+    CMD curl -f http://localhost:${PORT:-${PRAMAGENT_PORT}}/health || exit 1
 
 # --timeout-graceful-shutdown drains in-flight requests on SIGTERM before
 # the lifespan shutdown closes the stores (P2-15)
-CMD ["sh", "-c", "python -m uvicorn pramagent.api.app:app --host ${PRAMAGENT_HOST} --port ${PRAMAGENT_PORT} --log-level ${PRAMAGENT_LOG_LEVEL} --timeout-graceful-shutdown 30"]
+CMD ["sh", "-c", "python -m uvicorn pramagent.api.app:app --host ${PRAMAGENT_HOST} --port ${PORT:-${PRAMAGENT_PORT}} --log-level ${PRAMAGENT_LOG_LEVEL} --timeout-graceful-shutdown 30"]

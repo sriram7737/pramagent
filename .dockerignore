@@ -1,0 +1,32 @@
+.git
+.github
+.claude
+.pramagent
+.pytest_cache
+__pycache__
+*.py[cod]
+
+# local secrets / state
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+test-results
+
+# local build artifacts
+build
+dist
+*.egg-info
+pramagent-[0-9]*
+*.whl
+*.tar.gz
+
+# local marketing working files not needed inside the API image
+assets
+*.docx
