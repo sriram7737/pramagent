@@ -39,7 +39,7 @@ from .providers import BaseProvider, MockProvider
 from .store import MemoryStore
 from .telemetry import trace_layer, span_from_headers
 from .types import (AgentResponse, EscalatePolicy, HITLStatus, LayerEvent,
-                    TraceEvent, Verdict)
+                    Provenance, TraceEvent, Verdict)
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +144,7 @@ class Pramagent:
         tool_arguments=None,
         trace_headers: Optional[dict] = None,
         subject_id: Optional[str] = None,
+        provenance: Provenance = Provenance.USER,
     ) -> AgentResponse:
         """Run one agent call through the full trust pipeline.
 
@@ -236,7 +237,8 @@ class Pramagent:
             with trace_layer("IsolationLayer", attributes={"scope": scope}) as span:
                 try:
                     iso_meta = await self.isolation.evaluate_input(
-                        clean, tenant_id=tenant_id, session_id=session_id)
+                        clean, tenant_id=tenant_id, session_id=session_id,
+                        provenance=provenance)
                     span.set_attribute("input.bytes", iso_meta["input_bytes"])
                     span.set_attribute("injection_hits", len(iso_meta["injection_hits"]))
                     mark("IsolationLayer", "ok", scope, t0,

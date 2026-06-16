@@ -1,58 +1,56 @@
 """
 pramagent.classifier
 ====================
-Semantic injection classifier using sentence-transformers + cosine similarity.
+Multi-layer prompt-injection detection with structured, auditable verdicts.
 
-Why embeddings over regex?
---------------------------
-Regex heuristics catch known patterns but miss paraphrases, translated attacks,
-and novel phrasing. A sentence embedding model projects text into a semantic
-space where "disregard your guidelines" and "ignore all prior rules" land near
-each other regardless of exact wording.
+Architecture (v0.8.0)
+---------------------
+Detection is layered from cheapest to most accurate:
 
-This module ships two classifier classes:
+  1. **Keyword pre-filter** (zero dependencies, µs) — regex heuristics catch
+     known override patterns, role hijacking, exfiltration, and delimiter
+     injection. Fast enough to run on every request.
 
-EmbeddingInjectionClassifier  (requires: pip install sentence-transformers)
-    Loads a small, fast embedding model (default: all-MiniLM-L6-v2, ~22 MB).
-    Computes cosine similarity against a curated set of injection exemplars.
-    Returns True (malicious) if similarity to any exemplar exceeds threshold.
-    Falls back gracefully to False (pass) if the model fails to load.
+  2. **Embedding similarity** (requires: sentence-transformers, ~14 ms/call) —
+     projects the input into semantic space and computes cosine similarity
+     against a curated injection exemplar corpus. Catches paraphrases and
+     multilingual variants that keywords miss.
 
-KeywordFallbackClassifier  (zero dependencies)
-    Lightweight fallback. Extends the regex heuristic set with fuzzy token
-    matching. Used when sentence-transformers is not installed, or as a
-    pre-filter before the embedding check to save inference cost.
+  3. **DeBERTa fine-tuned classifier** (requires: transformers, ~25 ms/call) —
+     a purpose-trained prompt-injection model (protectai/deberta-v3-base-
+     prompt-injection-v2) that scores "is this text attempting to manipulate
+     the assistant?" without relying on exemplar proximity. Catches attack
+     families structurally unlike the exemplar set.
 
-Composing with IsolationLayer
-------------------------------
-    from pramagent.classifier import build_classifier
-    from pramagent.layers import IsolationLayer
+The ``EnsembleInjectionClassifier`` cascades all three: keyword fires
+immediately (cheapest), then embedding, then DeBERTa (most accurate).
+The highest-confidence detection wins.
 
-    iso = IsolationLayer(
-        classifier=build_classifier(),   # auto-detects sentence-transformers
-        block_on_injection=True,
-    )
+Structured verdicts
+-------------------
+Every classifier returns an ``InjectionVerdict`` instead of a bare bool.
+The verdict carries: detection layer, score, matched exemplar/pattern,
+and layer-specific metadata. ``bool(verdict)`` delegates to ``.flagged``
+for backward compatibility.
 
-The classifier callable must have signature: (text: str) -> bool
-True = injection suspected.
+Content-policy vs. injection
+-----------------------------
+Injection detection ("is untrusted text trying to override instructions?")
+and content-policy enforcement ("is the request itself disallowed?") are
+measured separately. ``_SAFETY_BLOCK_KEYWORDS`` is content-policy; it is
+not mixed into injection metrics. ``build_safety_classifier`` calls both.
 
-Exemplar curation
------------------
-The exemplar set covers:
-  - Classic instruction override ("ignore previous instructions")
-  - Role hijacking ("you are now DAN")
-  - Persona jailbreaks ("act as an uncensored AI")
-  - Exfiltration ("print all your context", "dump system prompt")
-  - Encoded/obfuscated payloads ("decode and execute")
-  - Delimiter injection (chat-template breaks)
-  - Indirect injection via tool output ("the result says: ignore safety")
-  - Multilingual variants (common EU + CJK languages)
-
-Threshold guidance
+Text normalization
 ------------------
-threshold=0.75  Conservative (fewer FPs, misses subtle paraphrases)
-threshold=0.65  Balanced (recommended default)
-threshold=0.55  Aggressive (catches more, higher FP rate)
+Before classification, input is NFKC-normalized with zero-width characters,
+Unicode format chars, and common leetspeak stripped. This closes homoglyph
+and interleaving bypass vectors without mutating the user-facing text.
+
+Fail-closed
+-----------
+On classifier error (model load failure, inference exception), the verdict
+is ``flagged=True`` (fail-closed). A security control must never silently
+return "safe" when it cannot assess the input.
 
 Run ``python -m pramagent.classifier`` to evaluate on built-in test vectors.
 """
@@ -63,9 +61,77 @@ import binascii
 import logging
 import re
 import threading
-from typing import Callable, Optional
+import unicodedata
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
+
+
+# ── structured verdict ────────────────────────────────────────────────────────
+
+@dataclass
+class InjectionVerdict:
+    """Structured result from any injection classifier.
+
+    ``bool(verdict)`` returns ``.flagged`` for backward compatibility with
+    code that does ``if classifier(text):``.
+    """
+    flagged: bool
+    score: float = 0.0                    # max similarity / model probability
+    threshold: Optional[float] = None      # decision threshold for score-based layers
+    layer: str = "unknown"                # "keyword" | "embedding" | "deberta" | "ensemble" | "error"
+    matched_exemplar: Optional[str] = None
+    matched_pattern: Optional[str] = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return self.flagged
+
+
+# ── text normalization ────────────────────────────────────────────────────────
+
+# Zero-width and invisible Unicode characters that attackers use to evade
+# keyword matching without visibly changing the text.
+_INVISIBLE_CHARS = re.compile(
+    "[\u200b\u200c\u200d\u2060\ufeff\u00ad"
+    "\u200e\u200f"           # LTR / RTL marks
+    "\u202a-\u202e"          # bidi embedding/override
+    "\u2066-\u2069"          # bidi isolate
+    "\u00a0"                 # non-breaking space → regular space handled below
+    "]"
+)
+
+# Common leetspeak substitutions. Conservative: only unambiguous replacements.
+_LEET_MAP = str.maketrans({
+    "0": "o", "1": "l", "3": "e", "4": "a", "5": "s",
+    "7": "t", "@": "a", "$": "s",
+})
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for classifier scanning.
+
+    Applied before keyword and embedding classification to close bypass vectors:
+    - NFKC unicode normalization (collapses homoglyphs: Cyrillic 'а' → Latin 'a')
+    - Strip zero-width / invisible Unicode characters
+    - Collapse whitespace
+    - Lowercase leetspeak substitutions
+
+    The original text is NEVER mutated; this only feeds the classifier.
+    """
+    # NFKC: compatibility decomposition + canonical composition.
+    # Maps fullwidth, superscript, Cyrillic lookalikes to their base forms.
+    out = unicodedata.normalize("NFKC", text)
+    # Strip invisible characters
+    out = _INVISIBLE_CHARS.sub("", out)
+    # Strip remaining Unicode format characters (category Cf)
+    out = "".join(ch for ch in out if unicodedata.category(ch) != "Cf")
+    # Collapse whitespace
+    out = re.sub(r"\s+", " ", out)
+    # Leetspeak (on a lowercased copy for matching only)
+    out = out.translate(_LEET_MAP)
+    return out
 
 # ── injection exemplar corpus ─────────────────────────────────────────────────
 
@@ -241,8 +307,8 @@ _FALLBACK_KEYWORDS = [
     r".{0,140}\b(recommend|advise|instruct|ask|tell)\b.{0,80}\b(shar(?:e|es|ing)|send(?:s|ing)?|upload(?:s|ing)?|provid(?:e|es|ing)|disclos(?:e|es|ing)|return(?:s|ing)?)\b"
     r".{0,120}\b(sensitive\s+data|passwords?|personal\s+information|credentials?|secrets?|private\s+data)\b",
     # Encoded or transformed payloads.
-    r"\b(decode|execute|run|interpret)\b.{0,40}\b(base64|hex|rot13|payload)\b",
-    r"\b(base64|hex|rot13)\b.{0,60}\b(execute|run|follow|instructions?)\b",
+    r"\b(decode|execute|run|interpret)\b.{0,40}\b(base6[4a]|hex|rot(13|le)|payload)\b",
+    r"\b(base6[4a]|hex|rot(13|le))\b.{0,60}\b(execute|run|follow|instructions?)\b",
     r"\b(encoded\s+message|payload)\b.{0,80}\b(follow|execute|run|instructions?)\b",
     # Delimiter and chat-template breaks.
     r"(```\s*end\s+of\s+prompt|<\|im_end\|>|---\s*end\s+system|</system>)",
@@ -261,7 +327,7 @@ _B64_TOKEN = re.compile(
 _B64_CONTEXT_RX = re.compile(
     r"\b(hidden\s+note|tool\s+output|api\s+response\s+metadata|retrieved\s+document|"
     r"begin\s+tool\s+result|file\s+footer|audit\s+log\s+comment|system\s+transcript\s+fragment|"
-    r"follow\s+this\s+note|base64\s+(payload|instructions?))\b",
+    r"follow\s+this\s+note|base6[4a]\s+(payload|instructions?))\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -363,26 +429,58 @@ _SAFETY_BLOCK_KEYWORDS = [
 _SAFETY_BLOCK_RX = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in _SAFETY_BLOCK_KEYWORDS]
 
 
-def _safety_keyword_flagged(text: str) -> bool:
+def content_policy_flagged(text: str) -> bool:
+    """Content-policy enforcement (weapons, drugs, malware).
+
+    This is intentionally SEPARATE from injection detection. Injection asks
+    'is untrusted text trying to override instructions?'; content-policy asks
+    'is the request itself disallowed?'  Keeping them distinct means injection
+    metrics are not polluted by content-policy FPs and vice versa.
+    """
     return any(rx.search(text) for rx in _SAFETY_BLOCK_RX)
+
+
+# Backward-compatible alias (used internally until all call sites migrate)
+_safety_keyword_flagged = content_policy_flagged
 
 
 class KeywordFallbackClassifier:
     """Zero-dependency keyword classifier. Extends the IsolationLayer heuristics
-    with more patterns. Use as a pre-filter or standalone fallback."""
+    with more patterns. Use as a pre-filter or standalone fallback.
 
-    def __call__(self, text: str) -> bool:
+    Returns InjectionVerdict (v0.8.0). ``bool(verdict)`` is backward-compatible.
+    """
+
+    def __call__(self, text: str) -> InjectionVerdict:
         scan_text, opaque_payload = _augment_encoded_text(text)
-        return (
-            opaque_payload
-            or any(rx.search(scan_text) for rx in _FALLBACK_RX)
-        )
+        normalized = _normalize_text(scan_text)
+
+        if opaque_payload:
+            return InjectionVerdict(
+                flagged=True, score=1.0, threshold=1.0, layer="keyword",
+                matched_pattern="opaque_encoded_payload",
+                details={"reason": "opaque base64 token in indirect-injection context"},
+            )
+
+        for i, rx in enumerate(_FALLBACK_RX):
+            m = rx.search(normalized)
+            if m:
+                return InjectionVerdict(
+                    flagged=True, score=1.0, threshold=1.0, layer="keyword",
+                    matched_pattern=f"fallback_rx_{i}",
+                    details={"matched_text": m.group()[:120]},
+                )
+
+        return InjectionVerdict(flagged=False, score=0.0, threshold=1.0, layer="keyword")
 
 
 # ── embedding classifier ──────────────────────────────────────────────────────
 
 class EmbeddingInjectionClassifier:
     """Semantic injection classifier using sentence-transformers.
+
+    Returns InjectionVerdict (v0.8.0) with score, matched exemplar, and layer.
+    Fail-closed: on model error without a keyword prefilter, returns flagged=True.
 
     Parameters
     ----------
@@ -396,8 +494,8 @@ class EmbeddingInjectionClassifier:
     exemplars : list[str]
         Injection exemplar corpus. Defaults to INJECTION_EXEMPLARS.
     use_keyword_prefilter : bool
-        If True, run the keyword fallback first. If it fires, return True
-        immediately (saves embedding inference cost).
+        If True, run the keyword fallback first. If it fires, return immediately
+        (saves embedding inference cost).
     """
 
     def __init__(
@@ -438,31 +536,58 @@ class EmbeddingInjectionClassifier:
             self._load_error = str(exc)
             log.error("Failed to load embedding model %s: %s", self.model_name, exc)
 
-    def __call__(self, text: str) -> bool:
+    def __call__(self, text: str) -> InjectionVerdict:
         # Pre-filter: fast keyword check before expensive embedding
-        if self._prefilter and self._prefilter(text):
-            return True
+        if self._prefilter:
+            kw_verdict = self._prefilter(text)
+            if kw_verdict.flagged:
+                return kw_verdict
+
+        normalized = _normalize_text(text)
 
         # Embedding similarity
         if self._model is None or self._exemplar_embeddings is None:
-            # Model unavailable — fall back to keyword only
-            return self._prefilter(text) if self._prefilter else False
+            if self._prefilter:
+                # Model unavailable but prefilter ran clean — return clean
+                return InjectionVerdict(flagged=False, score=0.0, layer="keyword",
+                                        threshold=1.0,
+                                        details={"degraded": True, "reason": self._load_error})
+            # FAIL CLOSED: no prefilter AND no model — cannot assess safety
+            log.warning("Injection classifier fail-closed: model unavailable, no prefilter")
+            return InjectionVerdict(
+                flagged=True, score=0.0, threshold=self.threshold, layer="error",
+                details={"reason": f"model unavailable, fail-closed: {self._load_error}"},
+            )
 
         try:
-            vec = self._model.encode([text], normalize_embeddings=True, show_progress_bar=False)
+            vec = self._model.encode([normalized], normalize_embeddings=True, show_progress_bar=False)
             sims = (self._exemplar_embeddings @ vec.T).flatten()
             max_sim = float(sims.max())
             if max_sim >= self.threshold:
                 idx = int(sims.argmax())
+                matched = self.exemplars[idx]
                 log.debug(
                     "Injection detected: sim=%.3f exemplar=%r",
-                    max_sim, self.exemplars[idx][:60],
+                    max_sim, matched[:60],
                 )
-                return True
-            return False
+                return InjectionVerdict(
+                    flagged=True, score=max_sim, threshold=self.threshold, layer="embedding",
+                    matched_exemplar=matched,
+                    details={"exemplar_index": idx},
+                )
+            return InjectionVerdict(flagged=False, score=max_sim, threshold=self.threshold, layer="embedding")
         except Exception as exc:
-            log.warning("Embedding inference failed: %s; falling back to keywords", exc)
-            return self._prefilter(text) if self._prefilter else False
+            log.warning("Embedding inference failed: %s; fail-closed", exc)
+            # FAIL CLOSED: inference error — flag as suspicious
+            if self._prefilter:
+                # Prefilter already ran clean above, so this is a degraded-mode pass
+                return InjectionVerdict(flagged=False, score=0.0, layer="keyword",
+                                        threshold=1.0,
+                                        details={"degraded": True, "inference_error": str(exc)})
+            return InjectionVerdict(
+                flagged=True, score=0.0, threshold=self.threshold, layer="error",
+                details={"reason": f"inference failed, fail-closed: {exc}"},
+            )
 
     def top_matches(self, text: str, n: int = 3) -> list[dict]:
         """Return the top-N exemplar matches with scores. Useful for debugging."""
@@ -487,6 +612,173 @@ class EmbeddingInjectionClassifier:
         return self._load_error
 
 
+# ── DeBERTa fine-tuned classifier ─────────────────────────────────────────────
+
+class DeBERTaInjectionClassifier:
+    """Fine-tuned prompt-injection classifier using a DeBERTa model.
+
+    Uses ``protectai/deberta-v3-base-prompt-injection-v2`` by default, a model
+    specifically trained to distinguish injection attempts from legitimate prompts.
+    Unlike the embedding classifier which relies on exemplar proximity, this model
+    learns structural patterns of injection attempts.
+
+    Requires: ``pip install transformers torch``  (part of ``pramagent[ml]``).
+
+    Fail-closed: on model load failure or inference error, returns flagged=True.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "protectai/deberta-v3-base-prompt-injection-v2",
+        threshold: float = 0.5,
+    ) -> None:
+        self.model_name = model_name
+        self.threshold = threshold
+        self._pipeline = None
+        self._load_error: Optional[str] = None
+        self._load_model()
+
+    def _load_model(self) -> None:
+        try:
+            from transformers import pipeline as hf_pipeline  # type: ignore
+            self._pipeline = hf_pipeline(
+                "text-classification",
+                model=self.model_name,
+                truncation=True,
+                max_length=512,
+            )
+            log.info("DeBERTaInjectionClassifier loaded %s", self.model_name)
+        except ImportError:
+            self._load_error = "transformers not installed"
+            log.warning(
+                "transformers not installed; DeBERTaInjectionClassifier unavailable"
+            )
+        except Exception as exc:
+            self._load_error = str(exc)
+            log.error("Failed to load DeBERTa model %s: %s", self.model_name, exc)
+
+    def __call__(self, text: str) -> InjectionVerdict:
+        normalized = _normalize_text(text)
+
+        if self._pipeline is None:
+            log.warning("DeBERTa classifier fail-closed: model unavailable")
+            return InjectionVerdict(
+                flagged=True, score=0.0, threshold=self.threshold, layer="error",
+                details={"reason": f"DeBERTa model unavailable: {self._load_error}"},
+            )
+
+        try:
+            # The model returns [{"label": "INJECTION"/"SAFE", "score": float}]
+            result = self._pipeline(normalized[:512])[0]
+            label = result["label"].upper()
+            score = float(result["score"])
+
+            # The model may use different label conventions
+            is_injection = label in ("INJECTION", "LABEL_1", "1")
+            effective_score = score if is_injection else (1.0 - score)
+
+            if effective_score >= self.threshold:
+                return InjectionVerdict(
+                    flagged=True, score=effective_score, threshold=self.threshold, layer="deberta",
+                    details={"raw_label": result["label"], "raw_score": score},
+                )
+            return InjectionVerdict(
+                flagged=False, score=effective_score, threshold=self.threshold, layer="deberta",
+                details={"raw_label": result["label"], "raw_score": score},
+            )
+        except Exception as exc:
+            log.warning("DeBERTa inference failed: %s; fail-closed", exc)
+            return InjectionVerdict(
+                flagged=True, score=0.0, threshold=self.threshold, layer="error",
+                details={"reason": f"DeBERTa inference failed: {exc}"},
+            )
+
+    @property
+    def model_loaded(self) -> bool:
+        return self._pipeline is not None
+
+    @property
+    def load_error(self) -> Optional[str]:
+        return self._load_error
+
+
+class EnsembleInjectionClassifier:
+    """Cascading ensemble: keyword (fast) → embedding (medium) → DeBERTa (accurate).
+
+    Each layer runs in order; the first detection wins (short-circuit).
+    If no layer flags the input, the highest-score non-flagged verdict is returned
+    (so the caller can see how close the input was to the threshold).
+
+    Returns InjectionVerdict with layer="ensemble" and details showing per-layer scores.
+    """
+
+    def __init__(
+        self,
+        keyword: Optional[KeywordFallbackClassifier] = None,
+        embedding: Optional[EmbeddingInjectionClassifier] = None,
+        deberta: Optional[DeBERTaInjectionClassifier] = None,
+    ) -> None:
+        self._keyword = keyword or KeywordFallbackClassifier()
+        self._embedding = embedding
+        self._deberta = deberta
+
+    def __call__(self, text: str) -> InjectionVerdict:
+        layer_results: dict[str, dict] = {}
+
+        # Layer 1: Keyword (cheapest)
+        kw = self._keyword(text)
+        layer_results["keyword"] = {
+            "flagged": kw.flagged,
+            "score": kw.score,
+            "threshold": kw.threshold,
+        }
+        if kw.flagged:
+            kw.details["ensemble_layers"] = layer_results
+            return kw
+
+        # Layer 2: Embedding similarity
+        if self._embedding is not None:
+            # Skip the keyword prefilter inside embedding since we already ran it
+            emb = self._embedding(text)
+            layer_results["embedding"] = {
+                "flagged": emb.flagged,
+                "score": emb.score,
+                "threshold": emb.threshold,
+            }
+            if emb.flagged:
+                emb.details["ensemble_layers"] = layer_results
+                return emb
+
+        # Layer 3: DeBERTa (most accurate, most expensive)
+        if self._deberta is not None:
+            deb = self._deberta(text)
+            layer_results["deberta"] = {
+                "flagged": deb.flagged,
+                "score": deb.score,
+                "threshold": deb.threshold,
+            }
+            if deb.flagged:
+                deb.details["ensemble_layers"] = layer_results
+                return deb
+
+        # No layer flagged — return the highest-score clean verdict
+        best_threshold = kw.threshold
+        best_score = kw.score
+        for layer in ("embedding", "deberta"):
+            result = layer_results.get(layer)
+            if result is not None and result.get("score", 0.0) >= best_score:
+                best_score = float(result.get("score", 0.0))
+                best_threshold = result.get("threshold")
+
+        return InjectionVerdict(
+            flagged=False,
+            score=best_score,
+            threshold=best_threshold,
+            layer="ensemble",
+            details={"ensemble_layers": layer_results},
+        )
+
+
 # ── factory ───────────────────────────────────────────────────────────────────
 
 def build_classifier(
@@ -494,32 +786,72 @@ def build_classifier(
     model_name: str = "all-MiniLM-L6-v2",
     threshold: float = 0.65,
     force_keyword_only: bool = False,
-) -> Callable[[str], bool]:
-    """Build the best available classifier.
+    use_deberta: bool = False,
+    deberta_model: str = "protectai/deberta-v3-base-prompt-injection-v2",
+    deberta_threshold: float = 0.5,
+) -> Callable[[str], InjectionVerdict]:
+    """Build the best available injection classifier.
 
-    Returns EmbeddingInjectionClassifier if sentence-transformers is installed,
-    otherwise KeywordFallbackClassifier.
+    Returns an ``EnsembleInjectionClassifier`` when ``use_deberta=True`` and
+    the required libraries are installed. Otherwise returns
+    ``EmbeddingInjectionClassifier`` (if sentence-transformers is available)
+    or ``KeywordFallbackClassifier`` (zero-dependency fallback).
+
+    All classifiers return ``InjectionVerdict`` (v0.8.0). ``bool(verdict)``
+    is backward-compatible for code doing ``if classifier(text):``.
 
     Parameters
     ----------
     force_keyword_only : bool
-        Skip embedding model even if sentence-transformers is available.
-        Useful in resource-constrained environments or during testing.
+        Skip all ML models even if available. Useful for testing.
+    use_deberta : bool
+        Enable the DeBERTa fine-tuned classifier as the third ensemble layer.
+        Requires ``transformers`` (part of ``pramagent[ml]``).
     """
     if force_keyword_only:
         log.info("Using keyword-only injection classifier (forced)")
         return KeywordFallbackClassifier()
+
+    embedding_clf = None
+    deberta_clf = None
+
+    # Try to load embedding classifier
     try:
         import sentence_transformers  # noqa: F401
-        clf = EmbeddingInjectionClassifier(model_name=model_name, threshold=threshold)
-        if clf.model_loaded:
-            return clf
-        # Model load failed — use keyword fallback
-        log.warning("Falling back to keyword classifier (model load error: %s)", clf.load_error)
-        return KeywordFallbackClassifier()
+        emb = EmbeddingInjectionClassifier(
+            model_name=model_name, threshold=threshold,
+            use_keyword_prefilter=False,  # ensemble handles its own keyword layer
+        )
+        if emb.model_loaded:
+            embedding_clf = emb
+        else:
+            log.warning("Embedding model failed to load: %s", emb.load_error)
     except ImportError:
-        log.info("sentence-transformers not installed; using keyword classifier")
-        return KeywordFallbackClassifier()
+        log.info("sentence-transformers not installed; embedding layer unavailable")
+
+    # Try to load DeBERTa classifier. If explicitly requested, keep the layer
+    # even when the model cannot load; DeBERTaInjectionClassifier itself
+    # returns a fail-closed verdict on call. Silently dropping the layer would
+    # make an operator's "use_deberta=True" degrade open.
+    if use_deberta:
+        deb = DeBERTaInjectionClassifier(
+            model_name=deberta_model, threshold=deberta_threshold,
+        )
+        deberta_clf = deb
+        if not deb.model_loaded:
+            log.warning("DeBERTa model failed to load: %s", deb.load_error)
+
+    # If we have any ML model, build the ensemble
+    if embedding_clf is not None or deberta_clf is not None:
+        return EnsembleInjectionClassifier(
+            keyword=KeywordFallbackClassifier(),
+            embedding=embedding_clf,
+            deberta=deberta_clf,
+        )
+
+    # Pure keyword fallback
+    log.info("Using keyword-only injection classifier")
+    return KeywordFallbackClassifier()
 
 
 # ── shared (cached) classifiers ─────────────────────────────────────────────
@@ -532,7 +864,7 @@ def build_classifier(
 # FastAPI may build armors concurrently.
 
 _shared_lock = threading.RLock()
-_shared_classifiers: dict[tuple, Callable[[str], bool]] = {}
+_shared_classifiers: dict[tuple, Callable[[str], InjectionVerdict]] = {}
 _shared_safety_classifiers: dict[tuple, Callable] = {}
 
 
@@ -541,9 +873,11 @@ def get_shared_classifier(
     model_name: str = "all-MiniLM-L6-v2",
     threshold: float = 0.65,
     force_keyword_only: bool = False,
-) -> Callable[[str], bool]:
+    use_deberta: bool = False,
+) -> Callable[[str], InjectionVerdict]:
     """Cached injection classifier — see module note. Safe to call per request."""
-    key = ("kw" if force_keyword_only else "emb", model_name, threshold)
+    mode = "kw" if force_keyword_only else ("deb" if use_deberta else "emb")
+    key = (mode, model_name, threshold)
     clf = _shared_classifiers.get(key)
     if clf is not None:
         return clf
@@ -551,7 +885,8 @@ def get_shared_classifier(
         clf = _shared_classifiers.get(key)
         if clf is None:
             clf = build_classifier(model_name=model_name, threshold=threshold,
-                                   force_keyword_only=force_keyword_only)
+                                   force_keyword_only=force_keyword_only,
+                                   use_deberta=use_deberta)
             _shared_classifiers[key] = clf
         return clf
 
@@ -585,14 +920,16 @@ def get_shared_safety_classifier(
         return cached
 
 
-def warm_shared_classifiers(*, force_keyword_only: bool = False) -> bool:
+def warm_shared_classifiers(*, force_keyword_only: bool = False, use_deberta: bool = False) -> bool:
     """Eagerly build the shared classifiers so the first request does not pay
     the embedding-model load cost. Best-effort: returns True if an embedding
     model is loaded, False if it fell back to keyword. Safe to call at startup."""
-    clf = get_shared_classifier(force_keyword_only=force_keyword_only)
+    clf = get_shared_classifier(force_keyword_only=force_keyword_only, use_deberta=use_deberta)
     get_shared_safety_classifier(force_keyword_only=force_keyword_only)
-    loaded = isinstance(clf, EmbeddingInjectionClassifier) and clf.model_loaded
-    log.info("shared classifiers warmed (embedding_model_loaded=%s)", loaded)
+    loaded = (
+        isinstance(clf, EmbeddingInjectionClassifier) and clf.model_loaded
+    ) or isinstance(clf, EnsembleInjectionClassifier)
+    log.info("shared classifiers warmed (ml_model_loaded=%s)", loaded)
     return loaded
 
 
@@ -656,10 +993,13 @@ def build_safety_classifier(
 ):
     """Build a classifier callable for SafetyLayer.
 
-    SafetyLayer expects ``(text) -> Verdict`` (not ``-> bool`` like IsolationLayer).
+    SafetyLayer expects ``(text) -> Verdict`` (not ``-> InjectionVerdict``).
     This wraps build_classifier() so a flagged input becomes Verdict.BLOCK and a
-    clean input becomes Verdict.ALLOW. The deterministic rule engine still runs
-    and retains final veto authority.
+    clean input becomes Verdict.ALLOW. Content-policy (weapons, drugs, malware)
+    is checked separately from injection — both trigger BLOCK but are measured
+    with distinct trace labels.
+
+    The deterministic rule engine still runs and retains final veto authority.
     """
     from .types import Verdict
     base = get_shared_classifier(
@@ -668,6 +1008,6 @@ def build_safety_classifier(
     )
 
     def _classify(text: str) -> "Verdict":
-        return Verdict.BLOCK if base(text) or _safety_keyword_flagged(text) else Verdict.ALLOW
+        return Verdict.BLOCK if base(text) or content_policy_flagged(text) else Verdict.ALLOW
 
     return _classify

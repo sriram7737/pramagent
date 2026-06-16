@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-16 v0.7.8 output-judge public-demo hardening pass._
+_Last updated after the 2026-06-16 v0.8.0 prompt-injection classifier hardening pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -13,7 +13,7 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=short` -> **657 passing, 2 skipped**. The skipped
+`python -m pytest -q --tb=short` -> **661 passing, 2 skipped**. The skipped
 tests are optional-environment checks; there are no expected failures hiding
 classifier or output-judge misses in the bundled suite.
 
@@ -56,6 +56,11 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Isolation heuristics + size caps + tenant/session-scoped memory, including
   decoded-base64 scanning, authority-framing patterns, and indirection-wrapper
   patterns
+- Structured prompt-injection classifier verdicts (`InjectionVerdict`) with
+  layer, score, threshold, matched exemplar/pattern, and traceable details;
+  optional cached embedding and DeBERTa ensemble layers under `pramagent[ml]`;
+  and provenance-aware stricter evaluation for tool output and retrieved
+  content (`Provenance.TOOL_OUTPUT` / `Provenance.RETRIEVED`).
 - **ToolGuardLayer** — Draft 2020-12 JSON Schema validation via `jsonschema`,
   arg-injection scan, output exfil scan, side-effect taxonomy, dangerous-chain
   detection, Redis/back-end-backed side-effect history and session call counters,
@@ -112,6 +117,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   and session-authenticated browser forms
 - Built-in red-team benchmark CLI with static and dynamic mutation modes
   (`python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`)
+- Held-out prompt-injection benchmark fixtures for Lakera PINT-style and
+  TensorTrust-style attacks so classifier regressions are not measured only
+  against Pramagent's own exemplar corpus.
 - Public red-team result/methodology doc and load-test runbook
 - Syntax-health test that compiles every Python source file before release
 - Small concurrency smoke test for trace uniqueness and hash-chain integrity
@@ -142,9 +150,10 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   not complete.
 - Prompt-injection defense: the bundled deterministic corpora and seeded
   dynamic mutation smoke tests now include base64, translation-wrapper, and
-  authority-framing regressions, but the embedding classifier is optional
-  (needs `sentence-transformers`); third-party and novel red-team sets are
-  still required before high-stakes claims
+  authority-framing regressions. v0.8.0 adds structured classifier verdicts,
+  held-out Lakera PINT-style / TensorTrust-style fixtures, source provenance,
+  and optional `pramagent[ml]` embedding + DeBERTa layers. Third-party and novel
+  red-team sets are still required before high-stakes claims.
 - **Encoded payloads: covered for base64, hex, and `\uXXXX` unicode escapes**
   (`SEC-2026-06-15-02`). The IsolationLayer decodes these runs and scans the
   decoded text, so an encoded "ignore all previous instructions" is caught.
@@ -152,25 +161,20 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   multi-layer encodings) are not yet decoded — a long opaque base64/gzip blob
   with decode-and-execute framing is caught by the classifier, but arbitrary
   custom encodings can still pass the input layer.
-- **Non-English injection — keyword-first, embedding-backed.** The
+- **Non-English injection: keyword-first, embedding/DeBERTa-backed.** The
   deterministic heuristics and the zero-dependency keyword classifier are
   English-first; targeted phrases for fr/es/de/hi instruction-override are
   matched, and language-independent override tokens (`OVERRIDE_ACCEPTED`) are
-  caught regardless of language. For language-agnostic coverage the **semantic
-  embedding classifier is now wired as the secondary layer**: install
-  `pramagent[ml]` (sentence-transformers) and opt in with
-  `PRAMAGENT_CLASSIFIER=embedding` (reference `/v1/run`) or
-  `PRAMAGENT_DEMO_CLASSIFIER=embedding` (public demo). The default stays on the
-  zero-dependency keyword path so no deployment silently pays the model-load
-  cost. The model is process-cached
+  caught regardless of language. For language-agnostic coverage install
+  `pramagent[ml]` and opt in with `PRAMAGENT_CLASSIFIER=embedding` or the
+  DeBERTa-enabled classifier path. The model is process-cached
   (`get_shared_classifier`) so it loads once even though the demo builds a
-  pipeline per request, and `warm_shared_classifiers()` / `PRAMAGENT_WARM_CLASSIFIER=1`
-  pre-loads it at startup. Exemplars now include Hindi, Russian, Arabic, and
-  Portuguese plus the multilingual override-confirmation variants. Remaining
-  limits: without `pramagent[ml]` the layer degrades to keyword-only, and even
-  with embeddings a sufficiently novel phrasing can score below threshold —
-  the output post-check remains the defense-in-depth backstop, and third-party
-  multilingual red-team sets are still required before high-stakes claims.
+  pipeline per request, and `warm_shared_classifiers()` /
+  `PRAMAGENT_WARM_CLASSIFIER=1` pre-loads it at startup. Remaining limits:
+  without `pramagent[ml]` the layer degrades to keyword-only, and even with ML a
+  sufficiently novel phrasing can score below threshold. Output post-checks,
+  provenance constraints, and third-party multilingual red-team sets remain
+  necessary before high-stakes claims.
 - Multi-process scaling — Redis backend exists and ToolGuard chain state can be
   shared across workers; still not load-tested at 50+ tenant / 10k+ daily-call
   scale
@@ -193,6 +197,22 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Pilot-user production deployments
 
 ## Latest Workflow Evidence
+
+2026-06-16 v0.8.0 prompt-injection classifier hardening:
+
+- Added structured `InjectionVerdict` results with score, threshold, firing
+  layer, matched exemplar/pattern, and traceable details instead of a bare bool.
+- Added optional DeBERTa prompt-injection classification through `pramagent[ml]`
+  and tightened explicit DeBERTa mode to fail closed if the model is requested
+  but cannot load.
+- Added `Provenance` labels (`SYSTEM`, `USER`, `TOOL_OUTPUT`, `RETRIEVED`) and
+  stricter thresholding for untrusted tool-output/retrieved content.
+- Added Lakera PINT-style and TensorTrust-style held-out fixtures to reduce
+  circular evaluation against Pramagent's own exemplar corpus.
+- Full local verification: **661 passed, 2 skipped**.
+- Dynamic red-team gate:
+  `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> **200/200 caught, 0 false positives**.
 
 2026-06-16 v0.7.8 output-judge public-demo hardening:
 
@@ -270,7 +290,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   returned no findings. Later v0.7.6 targeted prompt-suite hardening raised the
   suite to **623 passed, 1 skipped**; v0.7.7 encoded-payload and multilingual
   hardening raised it to **640 passed, 2 skipped**; v0.7.8 output-judge
-  hardening raised it to **657 passed, 2 skipped**.
+  hardening raised it to **657 passed, 2 skipped**; v0.8.0 classifier
+  hardening raised it to **661 passed, 2 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 

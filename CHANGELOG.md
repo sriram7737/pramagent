@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.8.0 - 2026-06-16
+
+### Added
+
+- **Structured prompt-injection verdicts.** Injection classifiers now return
+  `InjectionVerdict` with `flagged`, `score`, `threshold`, `layer`,
+  `matched_exemplar`, `matched_pattern`, and details instead of collapsing
+  security signal into a bare boolean. `bool(verdict)` remains backward
+  compatible.
+- **DeBERTa prompt-injection classifier path.** `pramagent[ml]` now includes
+  the optional `protectai/deberta-v3-base-prompt-injection-v2` classifier via
+  `transformers`, usable as a purpose-trained layer in the ensemble.
+- **Provenance-aware isolation policy.** Calls can label input provenance as
+  `SYSTEM`, `USER`, `TOOL_OUTPUT`, or `RETRIEVED`; tool output and retrieved
+  content use a stricter effective classifier threshold and fail closed when
+  suspicious, even when normal user-input detection is configured to record.
+- **Held-out benchmark fixtures.** Added Lakera PINT-style and TensorTrust-style
+  held-out benchmark data plus tests so the injection layer is no longer
+  evaluated only against its own exemplar corpus.
+
+### Changed
+
+- Normalization now strips zero-width/control characters, applies NFKC, handles
+  basic leetspeak, and scans decoded payloads before normalized classification.
+- Content-policy keywords are separated from prompt-injection detection in the
+  classifier path so audit metrics can distinguish "unsafe content" from
+  "instruction override attempt."
+- Explicit DeBERTa mode now degrades **closed**: if an operator enables it and
+  the model cannot load, the layer remains in the ensemble and returns an
+  error verdict instead of silently dropping the requested security control.
+
+### Verified
+
+- `python -m pytest -q --tb=short` -> `661 passed, 2 skipped`.
+- `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> `200/200 caught`, `0` false positives.
+
 ## v0.7.8 - 2026-06-16
 
 ### Added

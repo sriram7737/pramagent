@@ -26,3 +26,4 @@ include docs/INDEXING_AND_DISCOVERY.md
 include docs/SECURITY_SCAN_REPORT_2026-06-07.md
 include docs/TECHNICAL_MARKETING_POST.md
 recursive-include docs *.png
+recursive-include tests/data *.json

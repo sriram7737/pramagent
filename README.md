@@ -97,10 +97,10 @@ verdicts, provider metadata, PII redactions, HITL status, and `this_hash` /
 `IsolationLayer` scans inputs before the model sees them. It covers known
 instruction overrides, chat-template wrapper attacks, authority framing,
 base64/hex/unicode-escape encoded payloads, and targeted multilingual override
-phrases. For language-agnostic coverage, install `pramagent[ml]` and set
-`PRAMAGENT_CLASSIFIER=embedding` to enable the semantic embedding classifier as
-a cached secondary layer (it degrades to the keyword path when not installed).
-This is defense-in-depth, not proof of prompt-injection immunity.
+phrases. v0.8.0 adds structured classifier verdicts, held-out PINT/TensorTrust
+style fixtures, provenance-aware stricter scanning for tool output and
+retrieved content, and optional `pramagent[ml]` embedding/DeBERTa layers. This
+is defense-in-depth, not proof of prompt-injection immunity.
 
 **How do I stop unsafe model output from reaching users?**  
 `OutputJudgeLayer` runs an LLM-as-judge on every output before it returns — the
@@ -448,8 +448,10 @@ The reusable reviewer prompt for this is in
 
 - Prompt-injection defense is not complete. The bundled static corpus and
   seeded dynamic mutation smoke tests now include base64, translation-wrapper,
-  and authority-framing regressions, but the embedding classifier is optional
-  and the project still needs larger third-party red-team sets.
+  and authority-framing regressions. v0.8.0 adds structured verdicts,
+  provenance-aware stricter scanning, held-out PINT/TensorTrust-style fixtures,
+  and optional `pramagent[ml]` embedding/DeBERTa layers, but the project still
+  needs larger third-party red-team sets and external assessment.
 - ToolGuard is a hard policy gate outside the model, but it is not a sandbox.
 - ToolGuard chain detection and per-session call limits are per-process unless
   a shared Redis backend is configured (`PRAMAGENT_TOOL_GUARD_REDIS_URL` or

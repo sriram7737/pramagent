@@ -30,6 +30,8 @@ import binascii
 import re
 from typing import Callable, Optional
 
+from ..types import Provenance
+
 
 class IsolationViolation(Exception):
     """Raised when a request crosses tenant or session boundaries."""
@@ -246,15 +248,19 @@ class IsolationLayer:
         max_input_bytes: int = 64 * 1024,
         max_output_bytes: int = 64 * 1024,
         block_on_injection: bool = True,
-        classifier: Optional[Callable[[str], bool]] = None,
+        classifier: Optional[Callable] = None,
         backend=None,
         memory_ttl_s: int = 3600,
+        untrusted_threshold_multiplier: float = 0.85,
     ) -> None:
         self.max_input_bytes = max_input_bytes
         self.max_output_bytes = max_output_bytes
         self.block_on_injection = block_on_injection
         self.classifier = classifier
         self.memory_ttl_s = memory_ttl_s
+        # For untrusted provenance (tool_output, retrieved), the classifier
+        # threshold is multiplied by this factor to be more aggressive.
+        self.untrusted_threshold_multiplier = untrusted_threshold_multiplier
         if backend is None:
             from ..backends import InProcessBackend
             backend = InProcessBackend()
@@ -350,8 +356,17 @@ class IsolationLayer:
         return text
 
     async def evaluate_input(self, text: str, *, tenant_id: str,
-                             session_id: str) -> dict:
-        """Run all checks on an inbound prompt. Raises on hard violations."""
+                             session_id: str,
+                             provenance: Provenance = Provenance.USER) -> dict:
+        """Run all checks on an inbound prompt. Raises on hard violations.
+
+        Parameters
+        ----------
+        provenance : Provenance
+            Source trust level. TOOL_OUTPUT and RETRIEVED trigger more
+            aggressive scanning (lower effective threshold) because they
+            are the primary vector for indirect prompt injection.
+        """
         self.check_input_size(text)
 
         # Heuristics and the optional classifier both scan the augmented text
@@ -359,20 +374,110 @@ class IsolationLayer:
         # bypass.
         scan_text = self._augment_decoded(text)
         hits = self.scan_for_injection(scan_text)
-        classifier_verdict: Optional[bool] = None
-        if self.classifier is not None:
-            classifier_verdict = bool(self.classifier(scan_text))
 
-        suspected = bool(hits) or (classifier_verdict is True)
-        if suspected and self.block_on_injection:
+        # Classifier path — extracts structured verdict when available
+        classifier_flagged: Optional[bool] = None
+        classifier_meta: dict = {}
+        if self.classifier is not None:
+            raw_verdict = self.classifier(scan_text)
+            # Support both InjectionVerdict (structured) and plain bool
+            if hasattr(raw_verdict, "flagged"):
+                classifier_flagged = raw_verdict.flagged
+                threshold = getattr(raw_verdict, "threshold", None)
+                classifier_meta = {
+                    "layer": getattr(raw_verdict, "layer", "unknown"),
+                    "score": getattr(raw_verdict, "score", 0.0),
+                    "threshold": threshold,
+                    "matched_exemplar": getattr(raw_verdict, "matched_exemplar", None),
+                    "matched_pattern": getattr(raw_verdict, "matched_pattern", None),
+                }
+                # For untrusted provenance, apply stricter evaluation:
+                # if the score is close to threshold but below it, flag anyway
+                if (not classifier_flagged
+                        and provenance in (Provenance.TOOL_OUTPUT, Provenance.RETRIEVED)
+                        and hasattr(raw_verdict, "score")):
+                    threshold_hit = self._passes_untrusted_threshold(raw_verdict)
+                    if threshold_hit is not None:
+                        classifier_flagged = True
+                        classifier_meta.update({
+                            "provenance_escalated": True,
+                            "provenance_threshold_multiplier": self.untrusted_threshold_multiplier,
+                            **threshold_hit,
+                        })
+            else:
+                classifier_flagged = bool(raw_verdict)
+
+        suspected = bool(hits) or (classifier_flagged is True)
+
+        # For untrusted provenance, always enforce blocking even if
+        # block_on_injection is False
+        should_block = self.block_on_injection or provenance in (
+            Provenance.TOOL_OUTPUT, Provenance.RETRIEVED
+        )
+
+        if suspected and should_block:
             reasons = [h["pattern_id"] for h in hits]
-            if classifier_verdict:
-                reasons.append("classifier")
+            if classifier_flagged:
+                layer_info = classifier_meta.get("layer", "classifier")
+                score_info = classifier_meta.get("score", 0.0)
+                reasons.append(f"classifier({layer_info}:score={score_info:.2f})")
             raise InjectionSuspected(",".join(reasons) or "classifier")
 
         return {
             "scope": f"{tenant_id}:{session_id}",
+            "provenance": provenance.value,
             "injection_hits": hits,
-            "classifier_flagged": classifier_verdict,
+            "classifier_flagged": classifier_flagged,
+            "classifier_meta": classifier_meta,
             "input_bytes": len(text.encode("utf-8")),
         }
+
+    def _passes_untrusted_threshold(self, verdict: object) -> Optional[dict]:
+        """Return metadata when an untrusted-source score crosses a stricter threshold.
+
+        Score-based classifiers carry their own decision threshold. For tool
+        output and retrieved text, Pramagent lowers that threshold instead of
+        comparing to a hard-coded score. Ensemble verdicts may include per-layer
+        scores in ``details["ensemble_layers"]``; those are checked too so a
+        near-miss in one layer is still visible to provenance policy.
+        """
+
+        def check(score: object, threshold: object, layer: str) -> Optional[dict]:
+            if score is None or threshold is None:
+                return None
+            try:
+                score_f = float(score)
+                threshold_f = float(threshold)
+            except (TypeError, ValueError):
+                return None
+            if threshold_f <= 0.0:
+                return None
+            effective_threshold = threshold_f * self.untrusted_threshold_multiplier
+            if score_f >= effective_threshold:
+                return {
+                    "provenance_layer": layer,
+                    "provenance_score": score_f,
+                    "provenance_effective_threshold": effective_threshold,
+                    "provenance_base_threshold": threshold_f,
+                }
+            return None
+
+        top_hit = check(
+            getattr(verdict, "score", None),
+            getattr(verdict, "threshold", None),
+            getattr(verdict, "layer", "classifier"),
+        )
+        if top_hit is not None:
+            return top_hit
+
+        details = getattr(verdict, "details", {}) or {}
+        layers = details.get("ensemble_layers", {}) if isinstance(details, dict) else {}
+        if not isinstance(layers, dict):
+            return None
+        for layer, item in layers.items():
+            if not isinstance(item, dict):
+                continue
+            hit = check(item.get("score"), item.get("threshold"), str(layer))
+            if hit is not None:
+                return hit
+        return None

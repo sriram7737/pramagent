@@ -505,7 +505,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.7.8",
+        version="0.8.0",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )

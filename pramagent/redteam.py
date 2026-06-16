@@ -10,7 +10,7 @@ claims easier to keep honest.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import random
 import re
 from typing import Callable
@@ -346,6 +346,7 @@ class RedTeamReport:
     false_positive_prompts: list[str]
     mode: str = "static"
     seed: int | None = None
+    layers_breakdown: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -360,11 +361,12 @@ class RedTeamReport:
             "false_positive_prompts": list(self.false_positive_prompts),
             "mode": self.mode,
             "seed": self.seed,
+            "layers_breakdown": dict(self.layers_breakdown),
         }
 
 
 def run_injection_benchmark(
-    classifier: Callable[[str], bool] | None = None,
+    classifier: Callable | None = None,
     *,
     force_keyword_only: bool = True,
     attacks: list[str] | None = None,
@@ -375,16 +377,52 @@ def run_injection_benchmark(
     if classifier is None:
         injection_clf = build_classifier(force_keyword_only=force_keyword_only)
         safety_clf = build_safety_classifier(force_keyword_only=force_keyword_only)
-
-        def clf(prompt: str) -> bool:
-            return injection_clf(prompt) or safety_clf(prompt) == Verdict.BLOCK
     else:
-        clf = classifier
+        injection_clf = classifier
+        safety_clf = None
+
     attack_set = attacks or DEFAULT_ATTACKS
     benign_set = benign or DEFAULT_BENIGN
 
-    bypassed = [prompt for prompt in attack_set if not clf(prompt)]
-    false_positives = [prompt for prompt in benign_set if clf(prompt)]
+    bypassed = []
+    layers_breakdown = {
+        "keyword": 0,
+        "embedding": 0,
+        "deberta": 0,
+        "safety_policy": 0,
+        "other": 0,
+    }
+
+    for prompt in attack_set:
+        # Check safety first if configured
+        if safety_clf is not None and safety_clf(prompt) == Verdict.BLOCK:
+            layers_breakdown["safety_policy"] += 1
+            continue
+
+        raw_verdict = injection_clf(prompt)
+        flagged = bool(raw_verdict) or raw_verdict == Verdict.BLOCK
+
+        if flagged:
+            if hasattr(raw_verdict, "layer"):
+                layer = raw_verdict.layer or "other"
+                layers_breakdown[layer] = layers_breakdown.get(layer, 0) + 1
+            elif raw_verdict == Verdict.BLOCK:
+                layers_breakdown["safety_policy"] += 1
+            else:
+                layers_breakdown["other"] += 1
+        else:
+            bypassed.append(prompt)
+
+    false_positives = []
+    for prompt in benign_set:
+        if safety_clf is not None and safety_clf(prompt) == Verdict.BLOCK:
+            false_positives.append(prompt)
+            continue
+
+        raw_verdict = injection_clf(prompt)
+        flagged = bool(raw_verdict) or raw_verdict == Verdict.BLOCK
+        if flagged:
+            false_positives.append(prompt)
 
     return RedTeamReport(
         attacks_total=len(attack_set),
@@ -400,4 +438,5 @@ def run_injection_benchmark(
         false_positive_prompts=false_positives,
         mode=mode,
         seed=seed,
+        layers_breakdown=layers_breakdown,
     )

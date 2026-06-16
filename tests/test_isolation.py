@@ -4,9 +4,11 @@ import asyncio
 import pytest
 
 from pramagent import Pramagent
+from pramagent.classifier import InjectionVerdict
 from pramagent.layers.isolation import (InjectionSuspected, InputTooLarge,
                                         IsolationLayer, IsolationViolation)
 from pramagent.providers import MockProvider
+from pramagent.types import Provenance
 
 
 def run(c):
@@ -86,6 +88,34 @@ def test_classifier_layered_on_top():
     with pytest.raises(InjectionSuspected):
         run(iso.evaluate_input("contains secret_pattern here",
                                tenant_id="t", session_id="s"))
+
+
+def test_untrusted_provenance_uses_classifier_threshold():
+    def near_threshold_classifier(_text):
+        return InjectionVerdict(
+            flagged=False,
+            score=0.58,
+            threshold=0.65,
+            layer="embedding",
+        )
+
+    iso = IsolationLayer(
+        block_on_injection=False,
+        classifier=near_threshold_classifier,
+        untrusted_threshold_multiplier=0.85,
+    )
+
+    meta = run(iso.evaluate_input("ordinary tool text", tenant_id="t", session_id="s"))
+    assert meta["classifier_flagged"] is False
+
+    with pytest.raises(InjectionSuspected) as exc:
+        run(iso.evaluate_input(
+            "ordinary tool text",
+            tenant_id="t",
+            session_id="s",
+            provenance=Provenance.TOOL_OUTPUT,
+        ))
+    assert "classifier(embedding:score=0.58)" in str(exc.value)
 
 
 # ── scope assertions ───────────────────────────────────────────────────

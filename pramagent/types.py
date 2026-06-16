@@ -22,6 +22,25 @@ class Verdict(str, Enum):
     REDACT = "redact"        # proceed but with content removed
 
 
+class Provenance(str, Enum):
+    """Source provenance for input content.
+
+    The strongest defense against indirect prompt injection is structural: tag
+    every piece of content by source and hold untrusted sources to stricter
+    classifier thresholds.
+
+    SYSTEM    — system prompt / developer instructions. Fully trusted; not
+                scanned for injection (the developer wrote it).
+    USER      — direct user input. Semi-trusted; scanned at normal threshold.
+    TOOL_OUTPUT — tool / API return. Untrusted; scanned at lower threshold.
+    RETRIEVED — RAG / search result. Untrusted; scanned at lower threshold.
+    """
+    SYSTEM = "system"
+    USER = "user"
+    TOOL_OUTPUT = "tool_output"
+    RETRIEVED = "retrieved"
+
+
 class HITLStatus(str, Enum):
     """Status of a human-in-the-loop decision."""
     NOT_REQUIRED = "not_required"   # action was low-risk; no approval needed
