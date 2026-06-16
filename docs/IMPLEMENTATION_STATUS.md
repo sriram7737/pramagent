@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-16 v0.7.7 encoded-payload and multilingual hardening pass._
+_Last updated after the 2026-06-16 v0.7.8 output-judge public-demo hardening pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -13,10 +13,9 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=no` -> **623 passing, 1 skipped**. The skip is
-the Postgres optional-driver negative test when `psycopg2` is installed
-locally; there are no expected failures hiding classifier misses in the bundled
-suite.
+`python -m pytest -q --tb=short` -> **657 passing, 2 skipped**. The skipped
+tests are optional-environment checks; there are no expected failures hiding
+classifier or output-judge misses in the bundled suite.
 
 Additional release harnesses:
 
@@ -195,6 +194,23 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 
 ## Latest Workflow Evidence
 
+2026-06-16 v0.7.8 output-judge public-demo hardening:
+
+- Wired the existing `OutputJudgeLayer` into the public `/demo` deployment and
+  added a visible **Output Judge** policy toggle. The layer asks a second model
+  whether the generated output is safe to return, catching semantic failures
+  such as working keyloggers, bypass walkthroughs, confirmed destructive
+  actions, leaked internals, and cross-tenant disclosures.
+- Added `output_judge_status` to `/demo/run` responses so the UI reports
+  judge-withheld output as `BLOCKED` instead of visually allowing a withheld
+  response.
+- Kept reference `/v1/run` conservative: output judging is opt-in through
+  `PRAMAGENT_OUTPUT_JUDGE=1`.
+- Full local verification: **657 passed, 2 skipped**.
+- Dynamic red-team gate:
+  `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> **200/200 caught, 0 false positives**.
+
 2026-06-16 v0.7.7 encoded-payload and multilingual hardening:
 
 - Fixed hex and `\uXXXX` unicode-escape wrapped injection prompts that decoded
@@ -253,7 +269,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Local verification at that release: **598 passed, 1 skipped**; Bandit
   returned no findings. Later v0.7.6 targeted prompt-suite hardening raised the
   suite to **623 passed, 1 skipped**; v0.7.7 encoded-payload and multilingual
-  hardening raised it to **640 passed, 2 skipped**.
+  hardening raised it to **640 passed, 2 skipped**; v0.7.8 output-judge
+  hardening raised it to **657 passed, 2 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 

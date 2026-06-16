@@ -91,7 +91,7 @@ Use this only on a page you control, not inside the GitHub README.
     "human in the loop",
     "audit trail"
   ],
-  "softwareVersion": "0.7.7",
+  "softwareVersion": "0.7.8",
   "license": "https://www.apache.org/licenses/LICENSE-2.0"
 }
 </script>
