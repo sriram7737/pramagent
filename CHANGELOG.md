@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.7.7 - 2026-06-16
+
+### Fixed
+
+- Fixed `SEC-2026-06-15-02` (red-team GAP 1/2 — encoded-payload injection):
+  the IsolationLayer now decodes **hex** and **`\uXXXX` unicode-escape** runs in
+  addition to base64, appending the decoded text for scanning. A hex- or
+  unicode-wrapped "ignore all previous instructions" is now caught by the
+  existing `instruction_override` heuristic instead of passing through to the
+  model. Decode-and-scan only flags a payload when its *decoded* form matches a
+  heuristic, so legitimate hex/base64 data (hashes, ids, gzip frames) is not
+  over-blocked.
+- Added an `override_confirmation_token` input heuristic: a prompt asking the
+  model to emit `OVERRIDE_ACCEPTED` (or `FILTERS DISABLED`, `UNRESTRICTED MODE
+  ON`) is now blocked at the input layer regardless of the surrounding
+  language. This closes the input side of red-team GAP 3/4 (Spanish/German
+  jailbreaks) — the literal token is the language-independent signal.
+- Added `encoded_payload_framing` (decode-and-act framing) and targeted
+  non-English instruction-override phrases (fr/es/de/hi) to the isolation
+  heuristics.
+
+### Note
+
+- Red-team GAP 3/4 (`OVERRIDE_ACCEPTED` reaching the user in es/de) was **not a
+  code regression**: the `withhold_filter_override_confirmation` output rule
+  added in v0.7.5 catches it and its test passes. The observed behaviour was a
+  stale public-demo deployment running a pre-fix build. Action: redeploy.
+- Non-English injection coverage is still **targeted, not complete** — see
+  `docs/IMPLEMENTATION_STATUS.md`. The output post-check is the backstop; the
+  scalable fix is wiring the embedding classifier (hook already present).
+
+### Verified
+
+- `python -m pytest -q` -> `640 passed, 2 skipped`.
+- `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> `200/200 caught`, `0` false positives.
+- Confirmed hex/unicode payloads decode-and-block while a 64-char hex checksum,
+  a UUID, and benign engineering prompts do not trigger isolation.
+
 ## v0.7.6 - 2026-06-15
 
 ### Fixed

@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-15 v0.7.6 targeted prompt-suite hardening pass._
+_Last updated after the 2026-06-16 v0.7.7 encoded-payload and multilingual hardening pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -134,6 +134,25 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   authority-framing regressions, but the embedding classifier is optional
   (needs `sentence-transformers`); third-party and novel red-team sets are
   still required before high-stakes claims
+- **Encoded payloads: covered for base64, hex, and `\uXXXX` unicode escapes**
+  (`SEC-2026-06-15-02`). The IsolationLayer decodes these runs and scans the
+  decoded text, so an encoded "ignore all previous instructions" is caught.
+  Other encodings (rot13, decimal/octal escapes, full gzip frames, nested
+  multi-layer encodings) are not yet decoded — a long opaque base64/gzip blob
+  with decode-and-execute framing is caught by the classifier, but arbitrary
+  custom encodings can still pass the input layer.
+- **Known gap — non-English injection.** The deterministic injection heuristics
+  and the zero-dependency keyword classifier are English-first. Targeted
+  phrases for French, Spanish, German, and Hindi instruction-override are now
+  matched, and language-independent override tokens (`OVERRIDE_ACCEPTED`) are
+  caught regardless of language, but this is not full multilingual coverage:
+  an instruction-override phrased in an unlisted language, or a novel phrasing
+  in a listed one, can still pass the input layer. Mitigations in place: (1)
+  the output post-check withholds dangerous confirmations regardless of input
+  language (defense-in-depth backstop); (2) the embedding classifier ships with
+  multilingual exemplars. Planned fix: wire the embedding classifier
+  (`build_classifier()` hook already present in `IsolationLayer`) as the
+  language-agnostic secondary layer instead of forcing keyword-only.
 - Multi-process scaling — Redis backend exists and ToolGuard chain state can be
   shared across workers; still not load-tested at 50+ tenant / 10k+ daily-call
   scale
@@ -157,6 +176,24 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 
 ## Latest Workflow Evidence
 
+2026-06-16 v0.7.7 encoded-payload and multilingual hardening:
+
+- Fixed hex and `\uXXXX` unicode-escape wrapped injection prompts that decoded
+  to "ignore all previous instructions". The IsolationLayer now decodes and
+  scans those forms before the provider is called.
+- Added targeted multilingual instruction-override patterns and a
+  language-independent `OVERRIDE_ACCEPTED` / filters-disabled token heuristic.
+  This closes the observed Spanish/German public-demo miss once the demo is
+  redeployed.
+- Added shared classifier caching so embedding mode can be enabled without
+  reloading the model for every FastAPI demo request. Default runtime remains
+  the zero-dependency keyword path unless `PRAMAGENT_CLASSIFIER=embedding` or
+  `PRAMAGENT_DEMO_CLASSIFIER=embedding` is set.
+- Full local verification: **640 passed, 2 skipped**.
+- Dynamic red-team gate:
+  `python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`
+  -> **200/200 caught, 0 false positives**.
+
 2026-06-15 v0.7.6 targeted prompt-suite hardening:
 
 - Ran a fresh 0.7.4/0.7.5 regression prompt suite covering SE-2 emergency
@@ -171,7 +208,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Targeted regression validation:
   `python -m pytest tests\test_adversarial.py tests\test_compliance.py tests\test_api.py tests\test_escalate_policy.py -q --tb=short`
   -> **158 passed**.
-- Full local verification: **623 passed, 1 skipped**.
+- Full local verification at that release: **623 passed, 1 skipped**.
 
 2026-06-15 v0.7.5 red-team and public-demo hardening:
 
@@ -196,7 +233,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   API run -> **200/200 caught, 0 false positives**.
 - Local verification at that release: **598 passed, 1 skipped**; Bandit
   returned no findings. Later v0.7.6 targeted prompt-suite hardening raised the
-  suite to **623 passed, 1 skipped**.
+  suite to **623 passed, 1 skipped**; v0.7.7 encoded-payload and multilingual
+  hardening raised it to **640 passed, 2 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 

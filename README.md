@@ -81,6 +81,43 @@ from pramagent.providers import NvidiaProvider
 armor = Pramagent(provider=NvidiaProvider(model="meta/llama-3.3-70b-instruct"))
 ```
 
+## Frequently Asked Questions
+
+**How do I add safety guardrails to an LLM agent?**  
+Install Pramagent and wrap your agent call with the trust stack. Pramagent
+enforces deterministic policy outside the model, so the LLM cannot override the
+tool policy, HITL gate, or audit chain by changing its own text output.
+
+**How do I audit AI agent decisions in production?**  
+Every Pramagent call produces a hash-chained `TraceEvent` with layer decisions,
+verdicts, provider metadata, PII redactions, HITL status, and `this_hash` /
+`prev_hash`. The local chain can be verified and optionally anchored externally.
+
+**How do I prevent prompt injection in a Python LLM agent?**  
+`IsolationLayer` scans inputs before the model sees them. It covers known
+instruction overrides, chat-template wrapper attacks, authority framing,
+base64/hex/unicode-escape encoded payloads, and targeted multilingual override
+phrases. This is defense-in-depth, not proof of prompt-injection immunity.
+
+**How do I stop unsafe tool calls from an AI agent?**  
+Use `ToolGuardLayer` with `ToolPolicy`. Pramagent validates JSON Schema,
+tenant/action allow-lists, side-effect class, call frequency, argument
+injection, and dangerous chains before any side effect can execute.
+
+**How do I add human approval to AI agent actions?**  
+Use `HITLLayer` or a ToolGuard policy with `Verdict.ESCALATE`. Silence is never
+consent: if approval does not arrive, the action remains unexecuted.
+
+**Does Pramagent work with OpenAI, Anthropic, Gemini, Ollama, and local models?**  
+Yes. Pramagent ships provider adapters for OpenAI, Anthropic, Gemini, Ollama,
+NVIDIA NIM, and OpenAI-compatible local endpoints, plus a deterministic mock
+provider for tests.
+
+**Is Pramagent compliant with SOC 2, HIPAA, or the EU AI Act?**  
+No. Pramagent includes compliance evidence mapping and tamper-evident logging
+features that can support an assessment, but it has not passed SOC 2, HIPAA, EU
+AI Act conformity assessment, or an external penetration test.
+
 ## API And Dashboard Install
 
 ```bash
@@ -141,10 +178,11 @@ python -m pramagent.cli redteam --json --attacks 100
 python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
-Current local result: `623 passed, 1 skipped`. The latest targeted prompt
+Current local result: `640 passed, 2 skipped`. The latest targeted prompt
 suite also passed with `0` failures across emergency override, output override,
 margin/liquidation, IBAN/SWIFT, ambiguous escalation, PHI, false-positive,
-base64, and chat-template-wrapper cases.
+base64, hex, unicode-escape, multilingual override-token, and
+chat-template-wrapper cases.
 
 ## ToolGuard Example
 

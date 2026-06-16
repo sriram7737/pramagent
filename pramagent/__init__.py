@@ -46,7 +46,7 @@ from .usage import (
     WebhookUsageSink,
 )
 
-__version__ = "0.7.6"
+__version__ = "0.7.7"
 __all__ = [
     "Pramagent",
     "AgentResponse",
@@ -97,7 +97,9 @@ __all__ = [
     "__version__",
 ]
 from .classifier import (
-    build_classifier, EmbeddingInjectionClassifier, KeywordFallbackClassifier,
+    build_classifier, build_safety_classifier,
+    get_shared_classifier, get_shared_safety_classifier, warm_shared_classifiers,
+    EmbeddingInjectionClassifier, KeywordFallbackClassifier,
     INJECTION_EXEMPLARS, BENIGN_EXEMPLARS,
 )
 
@@ -118,6 +120,15 @@ from .queue import (
 )
 
 __all__ += [
+    "build_classifier",
+    "build_safety_classifier",
+    "get_shared_classifier",
+    "get_shared_safety_classifier",
+    "warm_shared_classifiers",
+    "EmbeddingInjectionClassifier",
+    "KeywordFallbackClassifier",
+    "INJECTION_EXEMPLARS",
+    "BENIGN_EXEMPLARS",
     "ComplianceReporter",
     "ConsentRegistry",
     "RetentionPolicy",

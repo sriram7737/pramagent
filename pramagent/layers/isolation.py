@@ -138,6 +138,29 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
          r"guardrails?|safeguards?|safety\s+(filters?|checks?|controls?|guidelines?))\b",
          re.IGNORECASE),
      "request to disable safety/content controls"),
+    # ── SEC-2026-06-15-02: encoded-payload framing + override tokens ─────────
+    # The decoded forms of base64/hex/unicode payloads are appended by
+    # _augment_decoded and scanned by every heuristic above, so an encoded
+    # "ignore all previous instructions" is caught by instruction_override.
+    # These two add coverage for the *framing* (so the intent is flagged even
+    # if a payload fails to decode) and for the language-independent override
+    # token a translated jailbreak asks the model to emit.
+    ("encoded_payload_framing",
+     re.compile(
+         r"\b(hex|unicode|base64|rot13|gzip|binary|ascii)[\s\-+]*"
+         r"(encoded|encod(?:ing)?|payload|string|sequence|blob)\b"
+         r"[\s\S]{0,80}\b(decode|decipher|interpret|unescape|execute|action|"
+         r"run|process|apply)\b|"
+         r"\b(decode|decipher|interpret|unescape)\b[\s\S]{0,40}"
+         r"\b(hex|unicode|base64|rot13|gzip)\b",
+         re.IGNORECASE),
+     "framing that asks the model to decode and act on an encoded payload"),
+    ("override_confirmation_token",
+     re.compile(
+         r"\bOVERRIDE[_\s]?(ACCEPTED|OK|CONFIRMED|GRANTED|ENABLED)\b|"
+         r"\b(FILTERS?\s+DISABLED|UNRESTRICTED\s+MODE\s+(ON|ACTIVE|ACTIVATED))\b",
+         re.IGNORECASE),
+     "prompt asks the model to emit an override-confirmation token"),
 ]
 
 # ── SEC-2026-06-11-02: authority framing + indirection wrappers ────────────
@@ -171,8 +194,35 @@ _INJECTION_PATTERNS += [
     for p in INDIRECTION_PATTERNS
 ]
 
-# Base64-looking runs worth decode-and-scanning (20+ chars of b64 alphabet).
+# ── SEC-2026-06-15-02: targeted non-English instruction-override phrases ─────
+# Red-team proved fr/es/de/hi "ignore all previous instructions" variants slip
+# past the English-first heuristics AND the keyword classifier (the demo forces
+# keyword-only, so the multilingual embedding exemplars never load). This is
+# targeted coverage for the proven languages, NOT full multilingual support —
+# the scalable fix is wiring the embedding classifier. See
+# docs/IMPLEMENTATION_STATUS.md; the output post-check is the backstop.
+MULTILINGUAL_OVERRIDE_PATTERNS: list[str] = [
+    r"ignor(?:ez|er)\s+toutes\s+les\s+instructions\s+pr[ée]c[ée]dentes",      # fr
+    r"ignor(?:a|ar)\s+todas\s+las\s+instrucciones\s+(?:anteriores|previas)",  # es
+    r"ignoriere?\s+alle\s+(?:vorherigen|bisherigen)\s+anweisungen",           # de
+    r"(asistente|assistant)\s+sin\s+restricciones",                          # es
+    r"\b(uneingeschr[äa]nkt|wartungsmodus)\b",                                # de
+    r"पिछले\s+निर्देश",                                                       # hi: previous instructions
+    r"निर्देश(?:ों)?\s+को\s+अनदेखा",                                          # hi: ignore instructions
+    r"असीमित\s+AI",                                                          # hi: unlimited AI
+]
+
+_INJECTION_PATTERNS += [
+    ("multilingual_override", re.compile(p, re.IGNORECASE),
+     "non-English instruction-override phrase")
+    for p in MULTILINGUAL_OVERRIDE_PATTERNS
+]
+
+# Encoded runs worth decode-and-scanning. base64 (20+ b64 chars), hex (8+ byte
+# pairs, whitespace allowed between them), and \uXXXX escape runs (4+).
 _B64_TOKEN = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
+_HEX_RUN = re.compile(r"(?:[0-9a-fA-F]{2}\s*){8,}")
+_UNICODE_ESCAPE_RUN = re.compile(r"(?:\\u[0-9a-fA-F]{4}){4,}")
 
 
 class IsolationLayer:
@@ -254,16 +304,22 @@ class IsolationLayer:
                 hits.append({"pattern_id": pid, "detail": detail})
         return hits
 
-    def _decode_b64_tokens(self, text: str) -> str:
-        """Extract and decode base64 tokens, append decoded text for scanning.
+    def _augment_decoded(self, text: str) -> str:
+        """Decode base64 / hex / ``\\uXXXX`` runs and append the decoded text so
+        every heuristic and the classifier also see the decoded form.
 
-        SEC-2026-06-11-02: a base64-encoded payload sails past plain-text
-        heuristics ("SWdub3JlIGFsbCBydWxlcw==" is "Ignore all rules"). Decoded
-        tokens that look like real text (printable, more than 8 chars) are
-        appended so every existing heuristic also sees the decoded form.
-        Tokens that fail to decode or decode to binary noise are ignored.
+        Encoding an attack is therefore not a bypass: "SWdub3Jl..." (base64),
+        "69676e6f7265..." (hex), and "\\u0069\\u0067..." (unicode escapes) all
+        decode to "ignore ..." and are then caught by instruction_override
+        (SEC-2026-06-11-02 base64; SEC-2026-06-15-02 hex + unicode).
+
+        Only printable decodes longer than 8 chars are appended. Binary noise —
+        hashes, ids, gzip frames — decodes to non-text and is dropped, so this
+        does NOT over-block legitimate hex/base64 data: a payload is only ever
+        flagged when its *decoded* form itself matches an injection heuristic.
         """
         extras: list[str] = []
+
         for match in _B64_TOKEN.finditer(text):
             try:
                 decoded = base64.b64decode(match.group(), validate=True).decode("utf-8")
@@ -271,6 +327,24 @@ class IsolationLayer:
                 continue
             if decoded.isprintable() and len(decoded) > 8:
                 extras.append(decoded)
+
+        for match in _HEX_RUN.finditer(text):
+            blob = re.sub(r"\s+", "", match.group())
+            if len(blob) % 2:
+                blob = blob[:-1]
+            try:
+                decoded = bytes.fromhex(blob).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if decoded.isprintable() and len(decoded) > 8:
+                extras.append(decoded)
+
+        for match in _UNICODE_ESCAPE_RUN.finditer(text):
+            decoded = re.sub(r"\\u([0-9a-fA-F]{4})",
+                             lambda m: chr(int(m.group(1), 16)), match.group())
+            if decoded.isprintable() and len(decoded) > 8:
+                extras.append(decoded)
+
         if extras:
             return text + " [DECODED: " + " | ".join(extras) + "]"
         return text
@@ -281,8 +355,9 @@ class IsolationLayer:
         self.check_input_size(text)
 
         # Heuristics and the optional classifier both scan the augmented text
-        # (original + decoded base64 tokens) so encoding is not a bypass.
-        scan_text = self._decode_b64_tokens(text)
+        # (original + decoded base64/hex/unicode tokens) so encoding is not a
+        # bypass.
+        scan_text = self._augment_decoded(text)
         hits = self.scan_for_injection(scan_text)
         classifier_verdict: Optional[bool] = None
         if self.classifier is not None:

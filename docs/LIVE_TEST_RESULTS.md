@@ -1,6 +1,6 @@
 # Live Test Results
 
-Last refreshed: 2026-06-15
+Last refreshed: 2026-06-16
 
 These are release-validation smoke tests using real external services. They are
 not a penetration test, a scale test, or a compliance certification.
@@ -63,18 +63,19 @@ python -m pytest -q --tb=no
 Result:
 
 ```text
-623 passed, 1 skipped
+640 passed, 2 skipped
 ```
 
-Current package regression note: after the v0.7.6 targeted prompt-suite
-hardening pass, the full local suite passed with `623 passed, 1 skipped`. The
-skip is the Postgres optional-driver negative test when `psycopg2` is installed
-locally.
+Current package regression note: after the v0.7.7 encoded-payload and
+multilingual hardening pass, the full local suite passed with
+`640 passed, 2 skipped`. The skips are optional-path tests that are not part of
+the default dependency set.
 
 The fresh targeted prompt suite passed with `0` failures after remediation
 across emergency override, output override, margin/liquidation, IBAN/SWIFT,
-ambiguous escalation, PHI, false-positive, padded base64, and chat-template
-wrapper cases.
+ambiguous escalation, PHI, false-positive, padded base64, hex,
+unicode-escape, targeted multilingual override-token, and chat-template wrapper
+cases.
 
 ## Active Security Prompt Remediation
 
@@ -106,8 +107,8 @@ Summary:
 - Classifier/API regression validation:
   `tests/test_api.py::test_run_blocks_weapon_construction_via_safety_classifier tests/test_classifier.py`
   -> `73 passed`.
-- Full validation after v0.7.6 targeted prompt-suite hardening:
-  `python -m pytest tests/ -q --tb=no` -> `623 passed, 1 skipped`.
+- Full validation after v0.7.7 encoded-payload and multilingual hardening:
+  `python -m pytest tests/ -q --tb=no` -> `640 passed, 2 skipped`.
 
 ## Clean Environment Checks
 

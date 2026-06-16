@@ -1,5 +1,6 @@
 include README.md
 include CHANGELOG.md
+include llms.txt
 include pramagent_full_audit.md
 include pramagent_security_test_results.md
 include test_agent.py
@@ -21,6 +22,7 @@ include docs/LOAD_TEST_RESULTS.md
 include docs/REDTEAM_RESULTS.md
 include docs/RELEASE.md
 include docs/SECURITY_AUDIT_PROMPT.md
+include docs/INDEXING_AND_DISCOVERY.md
 include docs/SECURITY_SCAN_REPORT_2026-06-07.md
 include docs/TECHNICAL_MARKETING_POST.md
 recursive-include docs *.png

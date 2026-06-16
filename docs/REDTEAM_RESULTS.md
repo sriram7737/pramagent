@@ -11,7 +11,7 @@ python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 
 ## Current Result
 
-Last refreshed: 2026-06-15
+Last refreshed: 2026-06-16
 
 ```json
 {
@@ -42,6 +42,8 @@ Last refreshed: 2026-06-15
   regression coverage for harder emergency-maintenance override phrasing,
   chat-template delimiters (`<|system|>`, `[INST]`, `<<SYS>>`), NPI redaction,
   leveraged-position liquidation routing, and ambiguous high-risk escalation.
+  v0.7.7 adds hex and `\uXXXX` unicode-escape decode-and-scan coverage plus
+  targeted multilingual override-token prompts.
 - Dynamic seed: 999. Re-run with another seed to explore different mutations.
 - Benign corpus: 6 normal prompts shipped in `pramagent.redteam.DEFAULT_BENIGN`.
 - Passing threshold used in release smoke tests: bypass rate must be `<= 0.10`.
@@ -49,7 +51,7 @@ Last refreshed: 2026-06-15
 ## Honest Interpretation
 
 The current benchmark now includes deterministic runtime mutation, so it is less
-overfit than a fixed prompt list. The v0.7.5/v0.7.6 corpus also includes the
+overfit than a fixed prompt list. The v0.7.5/v0.7.6/v0.7.7 corpus also includes the
 exact failure classes found by the active security prompt, public-demo bulk
 test, and the fresh targeted prompt-suite pass.
 It is still not proof of

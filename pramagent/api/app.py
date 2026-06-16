@@ -49,7 +49,8 @@ from pydantic import BaseModel, Field
 log = logging.getLogger("pramagent.api")
 
 from ..auth import APIKeyRegistry, JWTManager, load_registry_from_env
-from ..classifier import build_classifier, build_safety_classifier
+from ..classifier import (build_classifier, build_safety_classifier,
+                         get_shared_classifier, get_shared_safety_classifier)
 from ..core import Pramagent
 from ..layers import IsolationLayer
 from ..hitl.slack import (SlackApprovalError, SlackHITLApprover,
@@ -224,6 +225,16 @@ def _demo_enabled() -> bool:
     }
 
 
+def _demo_classifier_keyword_only() -> bool:
+    """Demo classifier mode via PRAMAGENT_DEMO_CLASSIFIER: keyword|embedding.
+
+    Default "keyword" uses the zero-dependency path. Set "embedding" only when
+    pramagent[ml] is installed and the deployment accepts the model-load cost.
+    The classifier is process-cached, so the model loads at most once even
+    though the demo builds a fresh pipeline per request."""
+    return os.environ.get("PRAMAGENT_DEMO_CLASSIFIER", "keyword").strip().lower() != "embedding"
+
+
 def _as_bool(value, default: bool) -> bool:
     if value is None:
         return default
@@ -303,9 +314,12 @@ def build_default_armor() -> Pramagent:
     # Default prompt-injection defense: embedding classifier when
     # sentence-transformers is installed, else graceful keyword fallback.
     # Wired into BOTH IsolationLayer (input scoping) and SafetyLayer (verdicts).
-    kw_only = os.environ.get("PRAMAGENT_CLASSIFIER", "auto").lower() == "keyword"
-    iso_clf = build_classifier(force_keyword_only=kw_only)
-    safety_clf = build_safety_classifier(force_keyword_only=kw_only)
+    # Shared (cached) classifiers. Default is the zero-dependency keyword path;
+    # PRAMAGENT_CLASSIFIER=embedding opts into sentence-transformers when
+    # pramagent[ml] is installed.
+    kw_only = os.environ.get("PRAMAGENT_CLASSIFIER", "keyword").lower() != "embedding"
+    iso_clf = get_shared_classifier(force_keyword_only=kw_only)
+    safety_clf = get_shared_safety_classifier(force_keyword_only=kw_only)
 
     return Pramagent(
         provider=provider,
@@ -478,7 +492,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.7.6",
+        version="0.7.7",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )
@@ -536,6 +550,13 @@ def create_app(armor: Optional[Pramagent] = None,
         return response
 
     app.state.armor = armor or build_default_armor()
+    # Optional: eagerly load the shared embedding classifier at startup so the
+    # first request does not pay the model-load cost. Off by default because the
+    # model may need a network fetch on a cold image.
+    if os.environ.get("PRAMAGENT_WARM_CLASSIFIER", "").lower() in {"1", "true", "yes", "on"}:
+        from ..classifier import warm_shared_classifiers
+        warm_shared_classifiers(
+            force_keyword_only=os.environ.get("PRAMAGENT_CLASSIFIER", "keyword").lower() != "embedding")
     app.state.registry = registry if registry is not None else load_registry_from_env()
     app.state.slack_hitl = getattr(app.state.armor.hitl, "approver", None)
     app.state.tool_guard_backend = build_tool_guard_backend_from_env()
@@ -754,7 +775,8 @@ def create_app(armor: Optional[Pramagent] = None,
                     detail="provider output confirms a fake override / disabled safety controls",
                 ),
             ]
-            safety_classifier = build_safety_classifier(force_keyword_only=True)
+            safety_classifier = get_shared_safety_classifier(
+                force_keyword_only=_demo_classifier_keyword_only())
 
         hitl = HITLLayer(
             require_approval_for=["wire_transfer"] if policies["hitl"] else [],
@@ -793,7 +815,8 @@ def create_app(armor: Optional[Pramagent] = None,
                 enabled=policies["pii_scrubbing"],
             ),
             isolation=IsolationLayer(
-                classifier=build_classifier(force_keyword_only=True)
+                classifier=get_shared_classifier(
+                    force_keyword_only=_demo_classifier_keyword_only())
                 if policies["injection_guard"] else None,
                 block_on_injection=policies["injection_guard"],
             ),
