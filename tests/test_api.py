@@ -87,7 +87,7 @@ def test_demo_cors_preflight_enabled(monkeypatch):
         },
     )
 
-    assert resp.status_code == 200
+    assert resp.status_code == 204
     assert resp.headers["access-control-allow-origin"] == "*"
     assert "POST" in resp.headers["access-control-allow-methods"]
 

@@ -515,6 +515,14 @@ def create_app(armor: Optional[Pramagent] = None,
             endpoint=os.environ.get("PRAMAGENT_OTEL_ENDPOINT") or None,
         )
 
+    def _demo_cors_headers() -> dict[str, str]:
+        return {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+        }
+
     # ── CORS ──────────────────────────────────────────────────────────────
     allowed_origins = [
         o.strip()
@@ -523,12 +531,6 @@ def create_app(armor: Optional[Pramagent] = None,
     ]
     if "*" in allowed_origins:
         log.warning("PRAMAGENT_CORS_ORIGINS contains '*'; use explicit origins outside local development")
-    # The browser demo posts directly to /demo/run. Its routes return their own
-    # demo-scoped CORS headers, but Starlette handles CORS preflight before
-    # route handlers. In demo mode only, allow wildcard preflights at middleware
-    # level so Railway-hosted demo traffic reaches the demo endpoints.
-    if _demo_enabled() and "*" not in allowed_origins:
-        allowed_origins = [*allowed_origins, "*"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
@@ -543,6 +545,19 @@ def create_app(armor: Optional[Pramagent] = None,
     async def security_and_logging(request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         t0 = time.perf_counter()
+        if (
+            request.method == "OPTIONS"
+            and request.url.path == "/demo/run"
+            and _demo_enabled()
+        ):
+            response = Response(status_code=204, headers=_demo_cors_headers())
+            response.headers["X-Request-Id"] = request_id
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+            return response
         try:
             response: Response = await call_next(request)
         except Exception as exc:
@@ -672,14 +687,6 @@ def create_app(armor: Optional[Pramagent] = None,
 
     def _demo_not_found():
         raise HTTPException(status_code=404, detail="demo is not enabled")
-
-    def _demo_cors_headers() -> dict[str, str]:
-        return {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Max-Age": "600",
-        }
 
     def _demo_ip(request: Request) -> str:
         forwarded = request.headers.get("X-Forwarded-For", "")
