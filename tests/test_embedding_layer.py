@@ -11,7 +11,6 @@ A real end-to-end check is included but skipped unless the model is installed.
 from __future__ import annotations
 
 import os
-import numpy as np
 import pytest
 
 import pramagent.classifier as classifier_module
@@ -89,20 +88,50 @@ def test_warm_returns_false_when_builder_falls_back_to_keyword(monkeypatch):
 # prefilter misses, without requiring the real model. The fake encoder returns a
 # controlled vector so cosine vs threshold is deterministic.
 
+class _FakeScores:
+    def __init__(self, values):
+        self.values = list(values)
+
+    def flatten(self):
+        return self
+
+    def max(self):
+        return max(self.values)
+
+    def argmax(self):
+        return max(range(len(self.values)), key=self.values.__getitem__)
+
+
+class _FakeMatrix:
+    def __init__(self, rows):
+        self.rows = [tuple(row) for row in rows]
+
+    @property
+    def T(self):
+        return self
+
+    def __matmul__(self, other):
+        vector = other.rows[0]
+        return _FakeScores([
+            sum(a * b for a, b in zip(row, vector))
+            for row in self.rows
+        ])
+
+
 class _FakeSentenceModel:
     """Minimal stand-in for SentenceTransformer.encode. Maps text -> a unit
     vector along the 'injection' axis when it contains a Hindi override token,
     else along the 'benign' axis."""
 
-    _INJECTION_AXIS = np.array([1.0, 0.0])
-    _BENIGN_AXIS = np.array([0.0, 1.0])
+    _INJECTION_AXIS = (1.0, 0.0)
+    _BENIGN_AXIS = (0.0, 1.0)
 
     def encode(self, texts, normalize_embeddings=True, show_progress_bar=False):
         rows = []
         for t in texts:
             axis = self._INJECTION_AXIS if "अनदेखा" in t or "निर्देश" in t else self._BENIGN_AXIS
             rows.append(axis)
-        return np.array(rows)
+        return _FakeMatrix(rows)
 
 
 def _embedding_clf_with_fake_model(threshold=0.65):
@@ -114,7 +143,7 @@ def _embedding_clf_with_fake_model(threshold=0.65):
     clf._model = _FakeSentenceModel()
     clf._load_error = None
     # exemplar embedding lies on the injection axis
-    clf._exemplar_embeddings = _FakeSentenceModel._INJECTION_AXIS.reshape(1, 2)
+    clf._exemplar_embeddings = _FakeMatrix([_FakeSentenceModel._INJECTION_AXIS])
     return clf
 
 

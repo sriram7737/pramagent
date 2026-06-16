@@ -449,7 +449,6 @@ class EmbeddingInjectionClassifier:
             return self._prefilter(text) if self._prefilter else False
 
         try:
-            import numpy as np  # type: ignore
             vec = self._model.encode([text], normalize_embeddings=True, show_progress_bar=False)
             sims = (self._exemplar_embeddings @ vec.T).flatten()
             max_sim = float(sims.max())
