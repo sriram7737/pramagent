@@ -43,7 +43,7 @@ from typing import Optional
 
 from fastapi import Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("pramagent.api")
@@ -684,6 +684,18 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        if _demo_enabled():
+            return RedirectResponse(url="/demo", status_code=307)
+        return {
+            "service": "pramagent",
+            "status": "ok",
+            "demo_enabled": False,
+            "health": "/health",
+            "docs": "/docs",
+        }
 
     def _demo_not_found():
         raise HTTPException(status_code=404, detail="demo is not enabled")

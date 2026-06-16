@@ -35,6 +35,28 @@ def test_health(client):
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
 
+def test_root_returns_api_status_when_demo_disabled(monkeypatch):
+    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+    local_client = TestClient(create_app())
+
+    r = local_client.get("/")
+
+    assert r.status_code == 200
+    assert r.json()["service"] == "pramagent"
+    assert r.json()["demo_enabled"] is False
+    assert r.json()["health"] == "/health"
+
+
+def test_root_redirects_to_demo_when_enabled(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+
+    r = local_client.get("/", follow_redirects=False)
+
+    assert r.status_code == 307
+    assert r.headers["location"] == "/demo"
+
+
 def test_api_security_headers_and_default_cors(client):
     r = client.get("/health", headers={"Origin": "https://evil.example"})
 
