@@ -523,11 +523,17 @@ def create_app(armor: Optional[Pramagent] = None,
     ]
     if "*" in allowed_origins:
         log.warning("PRAMAGENT_CORS_ORIGINS contains '*'; use explicit origins outside local development")
+    # The browser demo posts directly to /demo/run. Its routes return their own
+    # demo-scoped CORS headers, but Starlette handles CORS preflight before
+    # route handlers. In demo mode only, allow wildcard preflights at middleware
+    # level so Railway-hosted demo traffic reaches the demo endpoints.
+    if _demo_enabled() and "*" not in allowed_origins:
+        allowed_origins = [*allowed_origins, "*"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials="*" not in allowed_origins,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id", "Retry-After"],
     )
@@ -870,7 +876,11 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.options("/demo/run")
     async def demo_run_options():
         if not _demo_enabled():
-            _demo_not_found()
+            raise HTTPException(
+                status_code=405,
+                detail="demo is not enabled",
+                headers={"Allow": "POST, OPTIONS"},
+            )
         return Response(status_code=204, headers=_demo_cors_headers())
 
     @app.get("/demo/verify")

@@ -52,6 +52,17 @@ def test_demo_routes_disabled_by_default(monkeypatch):
     assert local_client.post("/demo/run", json={}).status_code == 404
 
 
+def test_demo_options_disabled_returns_method_not_allowed(monkeypatch):
+    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+    local_client = TestClient(create_app())
+
+    resp = local_client.options("/demo/run")
+
+    assert resp.status_code == 405
+    assert resp.headers["allow"] == "POST, OPTIONS"
+    assert resp.json()["detail"] == "demo is not enabled"
+
+
 def test_demo_page_enabled(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     local_client = TestClient(create_app())
@@ -61,6 +72,24 @@ def test_demo_page_enabled(monkeypatch):
     assert resp.status_code == 200
     assert "Pramagent Live Demo" in resp.text
     assert "NVIDIA NIM" in resp.text
+
+
+def test_demo_cors_preflight_enabled(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+
+    resp = local_client.options(
+        "/demo/run",
+        headers={
+            "Origin": "https://example-railway.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "POST" in resp.headers["access-control-allow-methods"]
 
 
 def test_demo_model_menu_excludes_deprecated_nvidia_ids(monkeypatch):
