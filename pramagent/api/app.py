@@ -31,6 +31,7 @@ Endpoints
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -211,13 +212,13 @@ class PruneResponse(BaseModel):
 
 # ─────────────────────────── default configuration ─────────────────────────
 NVIDIA_DEMO_MODELS: dict[str, str] = {
+    "mistralai/mistral-small-4-119b-2603": "Mistral Small 4",
     "meta/llama-3.3-70b-instruct": "Llama 3.3 70B",
     "nvidia/llama-3.3-nemotron-super-49b-v1": "Nemotron Super 49B",
     "nvidia/llama-3.3-nemotron-super-49b-v1.5": "Nemotron Super 49B v1.5",
     "nvidia/llama-3.1-nemotron-nano-8b-v1": "Nemotron Nano 8B",
-    "mistralai/mistral-small-4-119b-2603": "Mistral Small 4",
 }
-DEFAULT_NVIDIA_DEMO_MODEL = "meta/llama-3.3-70b-instruct"
+DEFAULT_NVIDIA_DEMO_MODEL = "mistralai/mistral-small-4-119b-2603"
 
 
 def _demo_enabled() -> bool:
@@ -620,7 +621,7 @@ def create_app(armor: Optional[Pramagent] = None,
         capacity=int(os.environ.get("PRAMAGENT_RCA_RATE_BURST", "10")),
         refill_per_sec=float(os.environ.get("PRAMAGENT_RCA_RATE_PER_SEC", "0.2")),
     )
-    demo_hourly_limit = max(1, int(os.environ.get("PRAMAGENT_DEMO_RATE_LIMIT", "10")))
+    demo_hourly_limit = max(1, int(os.environ.get("PRAMAGENT_DEMO_RATE_LIMIT", "60")))
     app.state.demo_bucket = TokenBucket(
         capacity=demo_hourly_limit,
         refill_per_sec=demo_hourly_limit / 3600.0,
@@ -705,6 +706,13 @@ def create_app(armor: Optional[Pramagent] = None,
         if forwarded:
             return forwarded.split(",", 1)[0].strip() or "anon"
         return request.client.host if request.client else "anon"
+
+    def _demo_rate_key(request: Request, api_key: str) -> str:
+        # Hash the visitor key before it touches the in-memory rate bucket.
+        # A new NVIDIA key gets a fresh bucket, but plaintext keys are still
+        # never logged, traced, persisted, or used as dictionary keys.
+        key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+        return f"demo:{_demo_ip(request)}:{key_hash}"
 
     def _demo_policy(payload: dict) -> dict[str, bool]:
         raw = payload.get("policies") or {}
@@ -919,14 +927,6 @@ def create_app(armor: Optional[Pramagent] = None,
         if not _demo_enabled():
             _demo_not_found()
 
-        allowed, retry_after = app.state.demo_bucket.allow(f"demo:{_demo_ip(request)}")
-        if not allowed:
-            return JSONResponse(
-                {"detail": "demo rate limit exceeded"},
-                status_code=429,
-                headers={**_demo_cors_headers(), "Retry-After": str(int(retry_after) + 1)},
-            )
-
         content_length = request.headers.get("content-length")
         if content_length:
             try:
@@ -988,6 +988,14 @@ def create_app(armor: Optional[Pramagent] = None,
                 headers=_demo_cors_headers(),
             )
 
+        allowed, retry_after = app.state.demo_bucket.allow(_demo_rate_key(request, api_key))
+        if not allowed:
+            return JSONResponse(
+                {"detail": "demo rate limit exceeded for this IP and NVIDIA key"},
+                status_code=429,
+                headers={**_demo_cors_headers(), "Retry-After": str(int(retry_after) + 1)},
+            )
+
         action = payload.get("action") if isinstance(payload.get("action"), str) else "respond"
         policies = _demo_policy(payload)
         payment_intent = _demo_financial_intent(prompt, action)
@@ -1018,6 +1026,11 @@ def create_app(armor: Optional[Pramagent] = None,
              if event.layer == "OutputJudgeLayer"),
             None,
         )
+        provider_error_detail = next(
+            (event.detail for event in trace.layer_events
+             if event.layer == "ReliabilityLayer" and event.decision == "degraded"),
+            None,
+        )
         body = {
             "call_id": trace.call_id,
             "action": action,
@@ -1025,6 +1038,7 @@ def create_app(armor: Optional[Pramagent] = None,
             "output": result.output,
             "blocked": result.blocked,
             "block_reason": result.block_reason,
+            "provider_error_detail": provider_error_detail,
             "output_judge_status": output_judge_status,
             "hitl_status": trace.hitl_status,
             "pre_verdict": trace.pre_verdict,

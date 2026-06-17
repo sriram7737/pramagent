@@ -14,6 +14,9 @@ is to publish crawlable, specific, useful content that earns links and usage.
 - Implementation status: `docs/IMPLEMENTATION_STATUS.md`
 - Live test evidence: `docs/LIVE_TEST_RESULTS.md`
 - Hardening guide: `docs/HARDENING_GUIDE.md`
+- Gemini/Google hook: `examples/gemini_trust_layer.py`
+- Google Dev Library draft: `docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md`
+- Vendor cookbook plan: `docs/COOKBOOK_SUBMISSIONS.md`
 
 ## Repository Metadata
 
@@ -91,7 +94,7 @@ Use this only on a page you control, not inside the GitHub README.
     "human in the loop",
     "audit trail"
   ],
-  "softwareVersion": "0.7.8",
+  "softwareVersion": "0.8.0",
   "license": "https://www.apache.org/licenses/LICENSE-2.0"
 }
 </script>
@@ -121,6 +124,11 @@ test results.
 - Stack Overflow answers only where Pramagent is directly relevant.
 - Curated lists via pull request, such as LLM security, AI agent, and Python
   security "awesome" lists.
+- Vendor-affiliated recipe channels:
+  - Anthropic Claude Cookbook: publish a Claude agent-loop trust-layer notebook.
+  - OpenAI Cookbook: publish a Responses API tool-validation recipe.
+  - Google Dev Library: submit the Gemini trust-layer recipe after the repo
+    contains the runnable Google-tech example.
 - Product directories only if the listing can link to the implementation-status
   page and avoid overstating maturity.
 

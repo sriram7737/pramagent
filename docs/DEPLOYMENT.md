@@ -158,7 +158,7 @@ runner at `POST /demo/run`. This is disabled by default.
 ```bash
 pip install "pramagent[api]"
 PRAMAGENT_DEMO_ENABLED=true \
-PRAMAGENT_DEMO_RATE_LIMIT=10 \
+PRAMAGENT_DEMO_RATE_LIMIT=60 \
 PRAMAGENT_ALLOW_MEMORY_STORE=1 \
 uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
 ```
@@ -168,6 +168,12 @@ passes it only to the current `NvidiaProvider` request. The key is never stored
 in traces, audit payloads, usage records, or logs. Demo runs use isolated
 in-memory trace/audit stores so one visitor cannot fetch another visitor's
 trace.
+
+Demo throttling is keyed by client IP plus a short in-memory SHA-256 hash of
+the visitor's NVIDIA key. A new provider key gets a separate bucket, but the
+plaintext key is still not persisted or logged. If the UI shows `DEGRADED`,
+the ReliabilityLayer returned a safe default because the upstream NIM request
+failed; the trace includes the provider detail.
 
 The demo allow-list intentionally contains only currently hosted NVIDIA Build
 free-endpoint model IDs. If a benign prompt returns a ReliabilityLayer
@@ -184,7 +190,7 @@ Recommended Railway variables for the demo service:
 
 ```bash
 PRAMAGENT_DEMO_ENABLED=true
-PRAMAGENT_DEMO_RATE_LIMIT=10
+PRAMAGENT_DEMO_RATE_LIMIT=60
 PRAMAGENT_ALLOW_MEMORY_STORE=1
 PRAMAGENT_JWT_SECRET=<generated secret, 32+ bytes>
 PRAMAGENT_SIGNING_KEY=<generated secret>
@@ -192,7 +198,7 @@ PRAMAGENT_SIGNING_KEY=<generated secret>
 
 Do not set a shared server-side `NVIDIA_API_KEY` for the public demo unless you
 also add billing controls and abuse monitoring. The safer public posture is
-visitor-supplied keys plus the per-IP demo throttle.
+visitor-supplied keys plus the per-IP/per-key demo throttle.
 
 ## Optional Ethereum/Sepolia anchoring
 Install the optional dependency:
@@ -255,7 +261,7 @@ kubectl create secret generic pramagent-secrets \
 helm install pramagent deploy/helm/pramagent \
   --set image.tag=0.7.8 --set otel.endpoint=http://otel-collector:4317
 ```
-Includes readiness/liveness probes, HorizontalPodAutoscaler (3–10 replicas), and
+Includes readiness/liveness probes, HorizontalPodAutoscaler (3â€“10 replicas), and
 secret-based config. Point `otel.endpoint` at any OTLP collector (Jaeger,
 Honeycomb, Datadog, Grafana Tempo) for distributed traces.
 

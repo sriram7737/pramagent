@@ -169,7 +169,7 @@ default and is meant for public evaluation, not production traffic.
 
 ```bash
 PRAMAGENT_DEMO_ENABLED=true
-PRAMAGENT_DEMO_RATE_LIMIT=10
+PRAMAGENT_DEMO_RATE_LIMIT=60
 PRAMAGENT_ALLOW_MEMORY_STORE=1
 uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
 ```
@@ -180,6 +180,13 @@ logs, stores, usage records, or the hash-chain payload. Each demo run uses an
 isolated in-memory trace store and returns the output, trust-layer events,
 redactions, HITL state, latency, `this_hash`, `prev_hash`, and local chain
 verification.
+
+The public throttle is keyed by client IP plus a short in-memory SHA-256 hash
+of the visitor's `nvapi-*` key. If a visitor switches to a different NVIDIA
+key, they get a fresh demo bucket without Pramagent storing the plaintext key.
+A `DEGRADED` demo result means the upstream model call failed and Pramagent
+returned its safe default with a trace; try another listed NIM model or verify
+that the key has access to the selected endpoint.
 
 Run the release sanity checks:
 
@@ -505,6 +512,8 @@ metrics, and per-tenant usage.
 - [Implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
 - [Live test results](https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_TEST_RESULTS.md)
 - [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
+- [Google Dev Library submission draft](https://github.com/sriram7737/pramagent/blob/main/docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md)
+- [Cookbook submission plan](https://github.com/sriram7737/pramagent/blob/main/docs/COOKBOOK_SUBMISSIONS.md)
 - [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md)
 - [More documentation](https://github.com/sriram7737/pramagent/tree/main/docs)
 
