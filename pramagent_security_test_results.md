@@ -74,7 +74,7 @@ The two Medium findings from the initial run have been remediated locally:
 | 5. PII and GDPR | PASS with S3 skip | Persisted traces and chain payloads stored redacted PII; SQLite and encrypted SQLite erasure preserved chain validity. |
 | 6. DoS and Performance | PASS after remediation | Initial exact-size long prompt exposed ComplianceLayer regex CPU DoS; commit `085c7b4` adds pre-scrub cap and bounded email scrubbing. |
 | 7. Prompt Injection | PASS after remediation | Initial base64 and soft authority/system-prompt framing probes passed deterministic filters; commit `e8392aa` adds decode-and-scan plus new patterns. The v0.7.3 release gate also hardened the red-team benchmark path for opaque base64 wrappers and safety-wrapper prompts. |
-| 8. Deployment Hardening | PASS with Gemini skip | Weak startup secrets refused; memory store requires explicit dev opt-in; Redis URL logs redacted credentials. |
+| 8. Deployment Hardening | PASS; Gemini capture harness env-gated | Weak startup secrets refused; memory store requires explicit dev opt-in; Redis URL logs redacted credentials. Gemini provider key placement is covered by provider tests; the live URL-capture harness requires `GEMINI_API_KEY` plus a capture target. |
 | 9. Regression Matrix | PASS | Corrected RCA replay tamper probe failed reproducibility; dashboard default JWT refused at lifespan startup; dependency floors present. |
 
 ## Critical Findings
@@ -389,8 +389,11 @@ T8.1 startup refuses weak secrets: PASS
 T8.2 no-store startup refusal: PASS
   no persistent store rc=1; explicit memory-store dev opt-in rc=0.
 
-T8.3 Gemini key not in URL: SKIP
-  GEMINI_API_KEY was not set.
+T8.3 Gemini key not in URL: NOT RUN in this security-prompt pass
+  This capture harness requires GEMINI_API_KEY plus an HTTP capture target.
+  Provider-level tests cover Gemini URL construction and assert the key is sent
+  in the x-goog-api-key header, not in a key= URL query parameter. The Gemini
+  cookbook/example path is the separate live-integration validation path.
 
 T8.4 Redis URL credential redaction: PASS
   log='RedisBackend connected: redis.example.internal:6379/0 (pool max=10)'
@@ -438,8 +441,11 @@ T8.4 Redis URL credential redaction: PASS
 - Postgres live chain tests were skipped because `PRAMAGENT_POSTGRES_DSN` was not
   set for an isolated test database.
 - S3 cold-archive erasure was not re-run in this active pass.
-- Gemini URL/key handling was skipped because no `GEMINI_API_KEY` and capture
-  target were configured.
+- The Gemini URL-capture harness was not run in this particular security-prompt
+  pass because no `GEMINI_API_KEY` and HTTP capture target were configured. This
+  is not a Gemini adapter failure: provider-level tests assert header-based key
+  handling, and the Gemini cookbook/example path is used for live integration
+  validation.
 - ZAP, Bandit, and Semgrep were not re-run in this pass; see
   `docs/SECURITY_SCAN_REPORT_2026-06-07.md` for the prior scan report.
 - Several tests used in-process FastAPI `TestClient` and local SQLite. This does
@@ -449,8 +455,8 @@ T8.4 Redis URL credential redaction: PASS
 
 1. Split or preserve HITL status fields so approved tool escalations are obvious
    in the top-level response.
-2. Re-run this test prompt with live Postgres, fake S3/moto, and a configured
-   Gemini capture harness.
+2. Re-run this test prompt with live Postgres, fake S3/moto, and an optional
+   configured Gemini URL-capture harness if URL-level evidence is needed.
 3. Re-run Bandit, Semgrep, and authenticated ZAP after the remediation commits
    if this report will be used as release evidence.
 4. Schedule external security assessment before any production or compliance
