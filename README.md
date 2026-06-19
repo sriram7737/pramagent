@@ -38,6 +38,10 @@ before using it in a customer-facing pilot.
 The June 11 active security prompt results are tracked in
 [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md).
 
+**Start here:** [Getting Started With Pramagent](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
+walks from install to provider setup, agent wrapping, ToolGuard, HITL, trace
+storage, dashboard/API, and real workflow demos.
+
 ## Bare Install Quickstart
 
 This works with the base package only. No Docker, API server, or provider key is
@@ -509,6 +513,7 @@ metrics, and per-tenant usage.
 
 ## Docs
 
+- [Getting started](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
 - [Implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
 - [Live test results](https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_TEST_RESULTS.md)
 - [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
