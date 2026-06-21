@@ -46,6 +46,7 @@ test-results/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 
 # Build artifacts & local working tree noise (P3-20)
 pramagent.egg-info/
