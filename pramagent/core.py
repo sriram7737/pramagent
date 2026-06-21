@@ -540,9 +540,13 @@ class Pramagent:
         # (SQLite fsync, Postgres round-trip, anchoring) — keep it off the
         # event loop (P1-1/P1-8/T1-7).
         prev_guess = getattr(self.audit, "head", "")
-        tr.this_hash, tr.anchor_tx_id = await asyncio.to_thread(
-            self.audit.append, payload)
-        tr.prev_hash = getattr(self.audit, "last_prev_hash", prev_guess)
+        append_result = await asyncio.to_thread(self.audit.append, payload)
+        tr.this_hash, tr.anchor_tx_id = append_result
+        tr.prev_hash = getattr(
+            append_result,
+            "prev_hash",
+            getattr(self.audit, "last_prev_hash", prev_guess),
+        )
         anchor_receipt = getattr(self.audit, "last_anchor", None)
         if anchor_receipt is not None:
             tr.anchor_block_number = int(getattr(anchor_receipt, "block_number", 0) or 0)

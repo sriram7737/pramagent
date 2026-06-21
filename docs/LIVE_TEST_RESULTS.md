@@ -63,12 +63,12 @@ python -m pytest -q --tb=no
 Result:
 
 ```text
-640 passed, 2 skipped
+673 passed, 2 skipped
 ```
 
-Current package regression note: after the v0.7.7 encoded-payload and
-multilingual hardening pass, the full local suite passed with
-`640 passed, 2 skipped`. The skips are optional-path tests that are not part of
+Current package regression note: after the 2026-06-21 dashboard evidence and
+metric hardening pass, the full local suite passed with
+`673 passed, 2 skipped`. The skips are optional-path tests that are not part of
 the default dependency set.
 
 The fresh targeted prompt suite passed with `0` failures after remediation
@@ -107,8 +107,8 @@ Summary:
 - Classifier/API regression validation:
   `tests/test_api.py::test_run_blocks_weapon_construction_via_safety_classifier tests/test_classifier.py`
   -> `73 passed`.
-- Full validation after v0.7.7 encoded-payload and multilingual hardening:
-  `python -m pytest tests/ -q --tb=no` -> `640 passed, 2 skipped`.
+- Full validation after the 2026-06-21 dashboard evidence and metric hardening:
+  `python -m pytest tests/ -q --tb=no` -> `673 passed, 2 skipped`.
 
 ## Clean Environment Checks
 

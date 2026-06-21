@@ -485,6 +485,84 @@ def _filter_by_tenant(items: list, ctx: AuthContext) -> list:
     return [t for t in items if t.get("tenant_id") == ctx.tenant]
 
 
+def _event_value(event, key: str, default=""):
+    if isinstance(event, dict):
+        return event.get(key, default)
+    return getattr(event, key, default)
+
+
+def _trace_hitl_wait_ms(trace: dict) -> float:
+    wait = 0.0
+    for event in trace.get("layer_events") or []:
+        if str(_event_value(event, "layer", "")).lower() == "hitllayer":
+            wait += float(_event_value(event, "latency_ms", 0) or 0)
+    return wait
+
+
+def _trace_engine_latency_ms(trace: dict) -> float:
+    if trace.get("engine_latency_ms") is not None:
+        return float(trace.get("engine_latency_ms") or 0)
+    total = float(trace.get("total_latency_ms") or 0)
+    return max(0.0, total - _trace_hitl_wait_ms(trace))
+
+
+def _decorate_trace_rows(items: list) -> list:
+    rows = []
+    for item in items:
+        trace = dict(item)
+        trace["hitl_wait_ms"] = _trace_hitl_wait_ms(trace)
+        trace["engine_latency_ms"] = _trace_engine_latency_ms(trace)
+        rows.append(trace)
+    return rows
+
+
+def _normalize_metrics(metrics: dict, traces: list | None = None) -> dict:
+    """Return dashboard-ready metrics that do not contradict persisted traces.
+
+    The sidecar's ObservabilityLayer is intentionally in-process; after an API
+    restart it can report only calls since boot, while the trace browser shows
+    persisted history. The dashboard reconciles the summary cards from the same
+    trace rows it displays so a BLOCKED trace cannot sit under a 0.0% block
+    rate.
+    """
+    data = dict(metrics or {})
+
+    if "block_rate_pct" not in data:
+        data["block_rate_pct"] = float(data.get("block_rate", 0) or 0) * 100
+
+    if traces is not None:
+        scoped = list(traces)
+        total = len(scoped)
+        blocked = sum(1 for item in scoped if item.get("blocked"))
+        hitl_holds = sum(
+            1 for item in scoped
+            if item.get("hitl_status") in {"idle", "denied", "approved"}
+        )
+        if total:
+            data["total_calls"] = total
+            data["blocked_calls"] = blocked
+            data["hitl_holds"] = hitl_holds
+            data["block_rate"] = blocked / total
+            data["block_rate_pct"] = (blocked / total) * 100
+            latencies = sorted(
+                _trace_engine_latency_ms(item)
+                for item in scoped
+            )
+            if latencies:
+                p50_index = min(int(0.50 * len(latencies)), len(latencies) - 1)
+                p95_index = min(int(0.95 * len(latencies)), len(latencies) - 1)
+                data["p50_latency_ms"] = latencies[p50_index]
+                data["p95_latency_ms"] = latencies[p95_index]
+                data["p50_engine_latency_ms"] = latencies[p50_index]
+                data["p95_engine_latency_ms"] = latencies[p95_index]
+            data["total_cost_usd"] = sum(
+                float(item.get("provider_cost_usd") or 0)
+                for item in scoped
+            )
+
+    return data
+
+
 async def _require_pending_approval_scope(request_id: str, ctx: AuthContext) -> None:
     """Authorize approve/deny against the dashboard tenant scope."""
     if ctx.tenant == "*":
@@ -752,10 +830,23 @@ async def overview(
     except Exception:
         traces = []
     items = traces if isinstance(traces, list) else traces.get("items", [])
+    scoped_traces = _decorate_trace_rows(_filter_by_tenant(items, ctx))
+    try:
+        stats_data = await _get("/traces", {"limit": 500})
+        stats_items = (
+            stats_data if isinstance(stats_data, list)
+            else stats_data.get("items", [])
+        )
+        metrics = _normalize_metrics(
+            metrics,
+            _decorate_trace_rows(_filter_by_tenant(stats_items, ctx)),
+        )
+    except Exception:
+        metrics = _normalize_metrics(metrics, scoped_traces)
     return templates.TemplateResponse(request, "overview.html", _template_context(
         ctx,
         metrics=metrics,
-        recent_traces=_filter_by_tenant(items, ctx),
+        recent_traces=scoped_traces,
         api_url=PRAMAGENT_API_URL,
     ))
 
@@ -786,9 +877,10 @@ async def trace_browser(
     except Exception as exc:
         data = {"items": [], "error": str(exc)}
     traces = data if isinstance(data, list) else data.get("items", [])
+    traces = _decorate_trace_rows(_filter_by_tenant(traces, ctx))
     return templates.TemplateResponse(request, "traces.html", _template_context(
         ctx,
-        traces=_filter_by_tenant(traces, ctx),
+        traces=traces,
         tenant_id=effective_tenant,
         session_id=session_id,
         blocked=blocked,
@@ -809,6 +901,7 @@ async def trace_detail(
     # Tenant scope check
     if not ctx.scope(trace.get("tenant_id", "")):
         raise HTTPException(status_code=403, detail="Access denied")
+    trace = _decorate_trace_rows([trace])[0]
     return templates.TemplateResponse(request, "trace_detail.html", _template_context(ctx, trace=trace))
 
 
@@ -877,6 +970,12 @@ async def metrics_page(
         data = await _get("/metrics")
     except Exception as exc:
         data = {"error": str(exc)}
+    try:
+        traces_data = await _get("/traces", {"limit": 500})
+        traces = traces_data if isinstance(traces_data, list) else traces_data.get("items", [])
+        data = _normalize_metrics(data, _decorate_trace_rows(_filter_by_tenant(traces, ctx)))
+    except Exception:
+        data = _normalize_metrics(data)
     return templates.TemplateResponse(request, "metrics.html", _template_context(ctx, metrics=data))
 
 
@@ -898,6 +997,12 @@ async def usage_page(
         metrics = await _get("/metrics")
     except Exception:
         metrics = {}
+    try:
+        traces_data = await _get("/traces", {"limit": 500, "tenant_id": effective_tenant})
+        traces = traces_data if isinstance(traces_data, list) else traces_data.get("items", [])
+        metrics = _normalize_metrics(metrics, _decorate_trace_rows(_filter_by_tenant(traces, ctx)))
+    except Exception:
+        metrics = _normalize_metrics(metrics)
     return templates.TemplateResponse(request, "usage.html", _template_context(
         ctx,
         usage=usage,
@@ -915,6 +1020,12 @@ async def metrics_fragment(
         data = await _get("/metrics")
     except Exception as exc:
         data = {"error": str(exc)}
+    try:
+        traces_data = await _get("/traces", {"limit": 500})
+        traces = traces_data if isinstance(traces_data, list) else traces_data.get("items", [])
+        data = _normalize_metrics(data, _decorate_trace_rows(_filter_by_tenant(traces, ctx)))
+    except Exception:
+        data = _normalize_metrics(data)
     return templates.TemplateResponse(request, "metrics_fragment.html", _template_context(ctx, metrics=data))
 
 

@@ -360,16 +360,34 @@ def _json_request(req: urllib.request.Request, *, timeout: float) -> dict[str, A
         allow_http_localhost=True,
         context="provider request URL",
     )
-    try:
-        # Provider URL is validated before the request is sent.
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"provider HTTP {exc.code}: {detail[:400]}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"provider request failed: {exc}") from exc
+    max_retries = 5
+    backoff = 1.0
+    for attempt in range(max_retries):
+        try:
+            # Provider URL is validated before the request is sent.
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
+                raw = resp.read().decode("utf-8")
+            break
+        except urllib.error.HTTPError as exc:
+            # Retry on rate limit (429) or transient server errors (500, 502, 503, 504)
+            if exc.code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                # Read Retry-After if present, otherwise use exponential backoff
+                retry_after = exc.headers.get("Retry-After")
+                sleep_time = backoff
+                if retry_after and retry_after.isdigit():
+                    sleep_time = max(sleep_time, float(retry_after))
+                time.sleep(sleep_time)
+                backoff *= 2.0
+                continue
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"provider HTTP {exc.code}: {detail[:400]}") from exc
+        except urllib.error.URLError as exc:
+            if attempt < max_retries - 1:
+                time.sleep(backoff)
+                backoff *= 2.0
+                continue
+            raise RuntimeError(f"provider request failed: {exc}") from exc
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:

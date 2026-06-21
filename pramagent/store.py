@@ -23,7 +23,7 @@ import sqlite3
 import threading
 from typing import Protocol, runtime_checkable
 
-from .audit import canonical_hash, redact_chain_payload
+from .audit import AuditAppendResult, canonical_hash, redact_chain_payload
 from .types import TraceEvent
 
 
@@ -265,7 +265,7 @@ class SQLiteStore:
     def head(self) -> str:
         return self._head
 
-    def append(self, payload: dict, prev_hash: str | None = None) -> tuple[str, str]:
+    def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
         """Append one chain link.
 
         `prev` is re-read from the DB inside BEGIN IMMEDIATE under the write
@@ -289,7 +289,7 @@ class SQLiteStore:
             self._conn.commit()
             self.last_prev_hash = prev
             self._head = this_hash
-            return this_hash, f"sqlite:{this_hash[:16]}"
+            return AuditAppendResult(this_hash, f"sqlite:{this_hash[:16]}", prev)
 
     def verify_chain(self) -> bool:
         with self._lock:

@@ -37,6 +37,8 @@ import time
 from dataclasses import asdict
 from typing import Any, List, Optional
 
+from .audit import AuditAppendResult
+
 log = logging.getLogger(__name__)
 
 GENESIS = "0" * 64
@@ -531,7 +533,7 @@ class PostgresStore(_PostgresBase):
         with self._head_lock:
             return self._head
 
-    def append(self, payload: dict, prev_hash: Optional[str] = None) -> tuple[str, str]:
+    def append(self, payload: dict, prev_hash: Optional[str] = None) -> AuditAppendResult:
         """Append one chain link.
 
         The hash material includes prev_hash — canonical_hash(payload, prev) —
@@ -562,7 +564,7 @@ class PostgresStore(_PostgresBase):
         with self._head_lock:
             self.last_prev_hash = prev
             self._head = this_hash
-        return this_hash, f"postgres:{this_hash[:16]}"
+        return AuditAppendResult(this_hash, f"postgres:{this_hash[:16]}", prev)
 
     def verify_chain(self) -> bool:
         """Walk rows in id order; True only when every this_hash matches

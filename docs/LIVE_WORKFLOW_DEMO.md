@@ -171,6 +171,22 @@ Capture a terminal screenshot showing:
 This screenshot is the highest-conversion visual for LinkedIn, Medium, and
 GitHub because it proves the package is runnable and not just diagramware.
 
+## Dashboard Evidence
+
+The authenticated dashboard evidence set from 2026-06-21 is tracked in
+[Demo evidence 2026-06-21](DEMO_EVIDENCE_2026-06-21.md). It includes UI
+screenshots for:
+
+- safe allowed output with a trace hash
+- PII scrubbing before the model path continues
+- prompt-injection blocking
+- destructive database-operation blocking, with `everify_db` still present
+- financial-transfer HITL hold where the action is not executed
+- overview metrics that report engine latency separately from HITL wait time
+
+Use these screenshots for marketing or reviewer walkthroughs when the goal is
+to show the running dashboard rather than the terminal-only payment script.
+
 ## Files Created Locally
 
 The default run writes:

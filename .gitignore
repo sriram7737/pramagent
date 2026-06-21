@@ -54,7 +54,7 @@ pramagent.egg-info/
 
 # Marketing / demo assets — not part of the package (root-scoped so the
 # tracked images and design document under docs/ are unaffected)
-assets/
+/assets/
 /*.png
 /*.docx
 /pramagent_review.md

@@ -340,6 +340,17 @@ def build_default_armor() -> Pramagent:
         compliance=ComplianceLayer(standards=["HIPAA", "PCI_DSS", "GDPR"]),
         safety=SafetyLayer(rules=[
             Rule("block_account_dump", Verdict.BLOCK, pattern=r"dump .*accounts?"),
+            Rule(
+                "block_destructive_database_operation",
+                Verdict.BLOCK,
+                pattern=(
+                    r"\b(drop|delete|wipe|truncate|erase|destroy)\b"
+                    r"[\s\S]{0,120}\b(database|schema|db|tables?)\b|"
+                    r"\b(database|schema|db|tables?)\b[\s\S]{0,120}"
+                    r"\b(drop|delete|wipe|truncate|erase|destroy)\b"
+                ),
+                detail="destructive database operation is blocked",
+            ),
             Rule("escalate_transfer", Verdict.ESCALATE, pattern=r"transfer \$?\d+"),
             Rule(
                 "escalate_ambiguous_payment",
@@ -671,6 +682,78 @@ def create_app(armor: Optional[Pramagent] = None,
             # do not leak existence to other tenants — return 404 not 403
             raise HTTPException(status_code=404, detail="trace not found")
 
+    def _trace_to_dict(trace) -> dict:
+        if isinstance(trace, dict):
+            data = dict(trace)
+        elif hasattr(trace, "to_dict"):
+            data = trace.to_dict()
+        else:
+            data = vars(trace)
+        return _with_dashboard_status(data)
+
+    def _with_dashboard_status(trace: dict) -> dict:
+        """Derive dashboard verdict fields from immutable TraceEvent data.
+
+        TraceEvent intentionally stores layer decisions and verdicts, while the
+        live AgentResponse carries `blocked` / `block_reason`. Older stored
+        traces therefore have no explicit blocked field. The dashboard should
+        still render the truth by deriving it from layer events at read time.
+        """
+        data = dict(trace)
+        events = data.get("layer_events") or []
+
+        def event_value(event, key: str, default=""):
+            if isinstance(event, dict):
+                return event.get(key, default)
+            return getattr(event, key, default)
+
+        blocking_event = next(
+            (
+                ev for ev in events
+                if str(event_value(ev, "decision")).lower() in {"block", "blocked"}
+            ),
+            None,
+        )
+        derived_blocked = (
+            blocking_event is not None
+            or data.get("pre_verdict") == "block"
+            or data.get("post_verdict") == "block"
+        )
+        if data.get("blocked") is None:
+            data["blocked"] = bool(derived_blocked)
+        if data.get("blocked") and not data.get("block_reason"):
+            if blocking_event is not None:
+                detail = str(event_value(blocking_event, "detail", "") or "").strip()
+                layer = str(event_value(blocking_event, "layer", "") or "layer").strip()
+                data["block_reason"] = detail or f"{layer} blocked the request"
+            elif data.get("pre_verdict") == "block":
+                data["block_reason"] = "blocked by input safety rule"
+            elif data.get("post_verdict") == "block":
+                data["block_reason"] = "blocked by output safety rule"
+        return data
+
+    def _fetch_trace_for_dashboard(trace_id: str, tenant: str):
+        """Fetch by call_id, with this_hash fallback for copied dashboard URLs."""
+        try:
+            return _fetch_trace(trace_id, tenant)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+
+        store = app.state.armor.store
+        tenant_filter = tenant if tenant else ""
+        if tenant_filter and hasattr(store, "list_by_tenant"):
+            traces = store.list_by_tenant(tenant_filter, None, 500)
+        else:
+            traces = store.list_all(500)
+        for trace in traces:
+            data = _trace_to_dict(trace)
+            if data.get("this_hash") == trace_id:
+                if tenant and data.get("tenant_id") != tenant:
+                    break
+                return trace
+        raise HTTPException(status_code=404, detail="trace not found")
+
     def _raise_quota(decision):
         retry_after = int(decision.retry_after_s) + 1 if decision.retry_after_s else 1
         raise HTTPException(
@@ -709,10 +792,28 @@ def create_app(armor: Optional[Pramagent] = None,
 
     def _demo_rate_key(request: Request, api_key: str) -> str:
         # Hash the visitor key before it touches the in-memory rate bucket.
-        # A new NVIDIA key gets a fresh bucket, but plaintext keys are still
+        # A new visitor key gets a fresh bucket, but plaintext keys are still
         # never logged, traced, persisted, or used as dictionary keys.
         key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
         return f"demo:{_demo_ip(request)}:{key_hash}"
+
+    def _looks_like_demo_api_key(api_key: object) -> bool:
+        """Cheap shape check before the demo tries a live provider call.
+
+        This is not authentication; the upstream provider still validates the
+        key. It rejects obvious placeholders and short fake ``sk-`` strings so
+        bad-key tests and demos fail before a provider error can echo context.
+        """
+        if not isinstance(api_key, str):
+            return False
+        if api_key.startswith("nvapi-"):
+            return len(api_key) >= 12
+        if api_key.startswith("sk-proj-"):
+            return len(api_key) >= 32
+        if api_key.startswith("sk-"):
+            suffix = api_key[3:]
+            return len(suffix) >= 32 and suffix.isalnum()
+        return False
 
     def _demo_policy(payload: dict) -> dict[str, bool]:
         raw = payload.get("policies") or {}
@@ -784,6 +885,23 @@ def create_app(armor: Optional[Pramagent] = None,
                     Verdict.ESCALATE,
                     pattern=r"\b(transfer|wire)\b.{0,80}\$?\s*\d+",
                     detail="payment-like action requires review",
+                ),
+                Rule(
+                    "escalate_financial_operation",
+                    Verdict.ESCALATE,
+                    pattern=(
+                        r"\b(approve|authori[sz]e|confirm|execute|proceed\s+with|process)\b"
+                        r"[\s\S]{0,80}\b(margin\s+call|liquidat(?:e|ion|ing)|"
+                        r"close\s+(?:out\s+)?(?:all\s+)?(?:leveraged\s+|open\s+)?positions?|"
+                        r"sell\s+(?:off\s+)?(?:all\s+)?positions?)\b|"
+                        r"\b(?:close|liquidate)\s+(?:out\s+)?(?:all\s+)?"
+                        r"(?:leveraged\s+|open\s+)?positions?\b"
+                        r"[\s\S]{0,140}\b(authori[sz]ed|proceed|confirm|immediately|risk\s+committee)\b|"
+                        r"\b(transfer|wire|send|remit|initiate|process|pay)\b"
+                        r"[\s\S]{0,120}\b([A-Z]{2}\d{2}[A-Z0-9]{11,30}|"
+                        r"SWIFT(?:\s+code)?|BIC)\b"
+                    ),
+                    detail="consequential financial action requires review",
                 ),
                 Rule(
                     "block_file_exfiltration_code",
@@ -860,17 +978,23 @@ def create_app(armor: Optional[Pramagent] = None,
                 detail="demo payment tool requires human approval",
             )
         ])
+        if isinstance(api_key, str) and (api_key.startswith("sk-") or api_key.startswith("sk-proj-")):
+            # If the user passed an OpenAI key, route to OpenAI's default mini model
+            provider = OpenAIProvider(model="gpt-4o-mini", api_key=api_key)
+        else:
+            provider = NvidiaProvider(model=model, api_key=api_key)
+
         # LLM-as-judge on the OUTPUT, using the visitor's key on the same model.
         # Fail-closed: a judge error/timeout/ambiguous verdict withholds output.
         output_judge = None
         if policies.get("output_judge"):
             output_judge = OutputJudgeLayer(
-                provider=NvidiaProvider(model=model, api_key=api_key),
+                provider=provider,
                 timeout_s=20.0,
                 withhold_on_error=True,
             )
         return Pramagent(
-            provider=NvidiaProvider(model=model, api_key=api_key),
+            provider=provider,
             compliance=ComplianceLayer(
                 standards=["HIPAA", "PCI_DSS", "GDPR"],
                 enabled=policies["pii_scrubbing"],
@@ -891,6 +1015,10 @@ def create_app(armor: Optional[Pramagent] = None,
             hitl=hitl,
             tool_guard=tool_guard,
             output_judge=output_judge,
+            # Mirror the reference deployment posture: when a safety rule
+            # returns ESCALATE, the action is held for human approval before
+            # the model runs.  Without this, ESCALATE verdicts are only logged.
+            escalate_policy={"pre": "hitl"},
         )
 
     @app.get("/demo", response_class=HTMLResponse)
@@ -959,9 +1087,9 @@ def create_app(armor: Optional[Pramagent] = None,
             )
 
         api_key = payload.get("nvidia_api_key")
-        if not isinstance(api_key, str) or not api_key.startswith("nvapi-"):
+        if not _looks_like_demo_api_key(api_key):
             return JSONResponse(
-                {"detail": "valid NVIDIA NIM API key required"},
+                {"detail": "valid NVIDIA NIM or OpenAI API key required"},
                 status_code=400,
                 headers=_demo_cors_headers(),
             )
@@ -1378,13 +1506,6 @@ def create_app(armor: Optional[Pramagent] = None,
         — the tenant_id query parameter cannot widen it. The tenant filter is
         pushed into SQL (idx_traces_tenant) so a busy neighbor tenant can
         never crowd a caller's rows out of the page (P1-9)."""
-        def trace_to_dict(trace):
-            if isinstance(trace, dict):
-                return trace
-            if hasattr(trace, "to_dict"):
-                return trace.to_dict()
-            return vars(trace)
-
         if tenant:
             tenant_id = tenant
 
@@ -1394,7 +1515,7 @@ def create_app(armor: Optional[Pramagent] = None,
                 store.list_by_tenant, tenant_id, session_id or None, limit)
         else:
             items = await asyncio.to_thread(store.list_all, limit)
-        items = [trace_to_dict(t) for t in items]
+        items = [_trace_to_dict(t) for t in items]
         # filters (post-filter keeps stores without list_by_tenant correct)
         if tenant_id:
             items = [t for t in items if t.get("tenant_id") == tenant_id]
@@ -1409,10 +1530,10 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.get("/traces/{trace_id}")
     async def trace_detail_unversioned(trace_id: str,
                                        tenant: str = Depends(require_tenant)):
-        result = _fetch_trace(trace_id, tenant)
+        result = _fetch_trace_for_dashboard(trace_id, tenant)
         if result is None:
             raise HTTPException(status_code=404, detail="trace not found")
-        return result.to_dict() if hasattr(result, "to_dict") else vars(result)
+        return _trace_to_dict(result)
 
     def _pending_approvals(hitl) -> list[dict]:
         pending = []

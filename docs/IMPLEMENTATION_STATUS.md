@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-16 v0.8.0 prompt-injection classifier hardening pass._
+_Last updated after the 2026-06-21 dashboard evidence and metric hardening pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -13,7 +13,7 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=short` -> **661 passing, 2 skipped**. The skipped
+`python -m pytest -q --tb=short` -> **673 passing, 2 skipped**. The skipped
 tests are optional-environment checks; there are no expected failures hiding
 classifier or output-judge misses in the bundled suite.
 
@@ -72,7 +72,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   failures (working malware/keyloggers, bypass walkthroughs, confirmed
   destructive actions, leaked internals) by asking a second model whether the
   output is safe to return. On by default in the public demo (`output_judge`
-  policy, one extra NIM call on the visitor's key); opt-in for the reference
+  policy, one extra provider call on the visitor's key); opt-in for the reference
   `/v1/run` (`PRAMAGENT_OUTPUT_JUDGE=1`). Fail-closed: a judge error, timeout, or
   ambiguous verdict withholds the output. Honest limit: the judge is itself an
   LLM — it can be wrong and can in principle be targeted by adversarial output —
@@ -109,7 +109,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - FastAPI sidecar (auth, CORS, security headers, structured logging, RCA +
   retention + GDPR-erasure endpoints, `/v1/usage` quota snapshots,
   `/v1/usage/ledger` ledger evidence, and a gated public `/demo` page for
-  NVIDIA NIM smoke demos)
+  provider smoke demos)
 - Dashboard usage page, Redis-backed dashboard rate limiting with local
   fallback, no-store security headers, session revocation, optional SQL users
   with generated high-entropy dashboard keys, bcrypt key hashes, phone/email
@@ -125,9 +125,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Small concurrency smoke test for trace uniqueness and hash-chain integrity
 - CI security scanning with Bandit, Semgrep, and authenticated OWASP ZAP
   OpenAPI scan
-- Public NVIDIA NIM demo mode is disabled by default, rate-limited per IP, and
-  uses a visitor-supplied `nvapi-*` key only for the current request. Demo
-  traces are isolated in memory and are not persisted.
+- Public provider demo mode is disabled by default, rate-limited per IP, and
+  uses a visitor-supplied `nvapi-*` NVIDIA key or `sk-*` OpenAI key only for the
+  current request. Demo traces are isolated in memory and are not persisted.
 
 ### MVP / needs hardening
 - Usage quotas: enforced before expensive routes and integrated with rate
@@ -197,6 +197,23 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Pilot-user production deployments
 
 ## Latest Workflow Evidence
+
+2026-06-21 authenticated dashboard evidence:
+
+- Added a dashboard evidence page with screenshots for safe allowed output, PII
+  scrubbing, prompt-injection blocking, destructive database-operation blocking,
+  and a financial-transfer HITL hold:
+  [Demo evidence 2026-06-21](DEMO_EVIDENCE_2026-06-21.md).
+- The destructive `everify_db` deletion prompt was blocked by the input safety
+  rule and produced trace hash
+  `7e1cfb4d526879528253eaa8c0aabbd36156920eebcf95f2d5b498c3bcaccb64`; a local
+  MySQL existence check after the run confirmed `everify_db_exists=True`.
+- The dashboard overview now reconciles block-rate cards from persisted trace
+  rows, so visible `BLOCKED` traces cannot sit below a misleading `0.0%` block
+  rate after API restarts or metric-buffer resets.
+- Dashboard latency cards now report engine latency and track HITL wait
+  separately. A human approval timeout is shown as a held action, not as a
+  120-second Pramagent engine latency.
 
 2026-06-16 v0.8.0 prompt-injection classifier hardening:
 
@@ -291,7 +308,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   suite to **623 passed, 1 skipped**; v0.7.7 encoded-payload and multilingual
   hardening raised it to **640 passed, 2 skipped**; v0.7.8 output-judge
   hardening raised it to **657 passed, 2 skipped**; v0.8.0 classifier
-  hardening raised it to **661 passed, 2 skipped**.
+  hardening raised it to **661 passed, 2 skipped**; the dashboard evidence and
+  metric hardening pass raised it to **673 passed, 2 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 
@@ -315,11 +333,11 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Added `NvidiaProvider` for NVIDIA NIM's OpenAI-compatible endpoint.
 - Added gated `/demo`, `/demo/run`, and `/demo/verify` routes. The demo is
   disabled by default with `PRAMAGENT_DEMO_ENABLED=false`, throttled by
-  `PRAMAGENT_DEMO_RATE_LIMIT` per client IP plus hashed visitor NVIDIA key,
+  `PRAMAGENT_DEMO_RATE_LIMIT` per client IP plus hashed visitor provider key,
   and uses isolated in-memory traces per run.
 - Demo model allow-list excludes deprecated NVIDIA Build free-endpoint IDs that
   return provider `404` safe defaults on otherwise-benign prompts.
-- The browser demo asks visitors for their own `nvapi-*` key. Route tests
+- The browser demo asks visitors for their own `nvapi-*` or `sk-*` key. Route tests
   verify invalid keys are not echoed, PII is scrubbed before the provider sees
   the prompt, injection/HITL cases do not call the provider, provider failures
   return explicit `DEGRADED` details, and the per-IP/per-key demo throttle

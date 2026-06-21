@@ -42,7 +42,7 @@ import os
 import sqlite3
 import threading
 
-from .audit import canonical_hash, redact_chain_payload
+from .audit import AuditAppendResult, canonical_hash, redact_chain_payload
 from .store import GENESIS
 from .types import TraceEvent
 
@@ -230,7 +230,7 @@ class EncryptedSQLiteStore:
     def head(self) -> str:
         return self._head
 
-    def append(self, payload: dict, prev_hash: str | None = None) -> tuple[str, str]:
+    def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
         """Append one chain link. `prev` is re-read from the DB inside
         BEGIN IMMEDIATE under the write lock — same fork-proof linkage
         derivation as SQLiteStore (P1-5/T2-4); the prev_hash parameter is
@@ -250,7 +250,7 @@ class EncryptedSQLiteStore:
             self._conn.commit()
             self.last_prev_hash = prev
             self._head = this_hash
-            return this_hash, f"sqlite-enc:{this_hash[:16]}"
+            return AuditAppendResult(this_hash, f"sqlite-enc:{this_hash[:16]}", prev)
 
     def verify_chain(self) -> bool:
         rows = self._conn.execute(

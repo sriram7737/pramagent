@@ -17,15 +17,15 @@
   </div>
   <div class="card">
     <div class="stat-value">{{ "%.0f"|format(m.get("p95_latency_ms", 0)) }}ms</div>
-    <div class="stat-label">p95 Latency</div>
+    <div class="stat-label">p95 Engine Latency</div>
   </div>
   <div class="card">
     <div class="stat-value">${{ "%.4f"|format(m.get("total_cost_usd", 0)) }}</div>
     <div class="stat-label">Total Cost</div>
   </div>
   <div class="card">
-    <div class="stat-value">{{ m.get("pending_hitl", 0) }}</div>
-    <div class="stat-label">Pending Approvals</div>
+    <div class="stat-value">{{ m.get("hitl_holds", m.get("pending_hitl", 0)) }}</div>
+    <div class="stat-label">HITL Holds</div>
   </div>
   <div class="card">
     <div class="stat-value" style="color:{% if m.get('circuit_open') %}#b91c1c{% else %}#15803d{% endif %}">
@@ -41,7 +41,7 @@
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>Time</th><th>Tenant</th><th>Input</th><th>Verdict</th><th>Latency</th>
+        <th>Time</th><th>Tenant</th><th>Input</th><th>Verdict</th><th>Engine Latency</th>
       </tr></thead>
       <tbody>
       {% for t in recent_traces %}
@@ -49,16 +49,22 @@
         <td class="mono">{{ t.get("created_at","") }}</td>
         <td>{{ t.get("tenant_id","") }}</td>
         <td class="truncate">
-          <a href="/traces/{{ t.get('this_hash','') }}">{{ t.get("input_text","")[:80] }}</a>
+          <a href="/traces/{{ t.get('call_id','') }}">{{ t.get("input_text","")[:80] }}</a>
         </td>
         <td>
           {% if t.get("blocked") %}
             <span class="badge badge-block">BLOCKED</span>
+          {% elif t.get("hitl_status") == "idle" %}
+            <span class="badge badge-escalate">HELD</span>
+          {% elif t.get("hitl_status") == "denied" %}
+            <span class="badge badge-block">DENIED</span>
+          {% elif t.get("hitl_status") == "approved" %}
+            <span class="badge badge-ok">APPROVED</span>
           {% else %}
             <span class="badge badge-ok">OK</span>
           {% endif %}
         </td>
-        <td>{{ "%.0f"|format(t.get("total_latency_ms",0)) }}ms</td>
+        <td>{{ "%.0f"|format(t.get("engine_latency_ms", t.get("total_latency_ms",0))) }}ms</td>
       </tr>
       {% endfor %}
       </tbody>

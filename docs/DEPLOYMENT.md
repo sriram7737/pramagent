@@ -12,7 +12,7 @@ pramagent validate       # checks config + Redis/Postgres connectivity
 ## Local without Docker (dev)
 ```bash
 pip install -e ".[dev,api,redis,postgres,otel,encrypted]"
-python -m pytest -q  # 623 passing, 1 optional-environment skip
+python -m pytest -q  # 673 passing, 2 optional-environment skips
 uvicorn pramagent.api.app:app --port 8080
 ```
 
@@ -151,7 +151,7 @@ approver = CompositeApprover(
 
 Use a scoped ServiceNow API user/token and store it in your secret manager.
 
-## Public NVIDIA NIM live demo
+## Public provider live demo
 Pramagent can serve a single-file browser demo at `GET /demo` and a public
 runner at `POST /demo/run`. This is disabled by default.
 
@@ -163,17 +163,17 @@ PRAMAGENT_ALLOW_MEMORY_STORE=1 \
 uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
 ```
 
-The public demo asks each visitor for their own NVIDIA NIM `nvapi-*` key and
-passes it only to the current `NvidiaProvider` request. The key is never stored
-in traces, audit payloads, usage records, or logs. Demo runs use isolated
-in-memory trace/audit stores so one visitor cannot fetch another visitor's
-trace.
+The public demo asks each visitor for their own provider key: `nvapi-*` for
+NVIDIA NIM models or `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`. The key is
+passed only to the current provider request. It is never stored in traces,
+audit payloads, usage records, or logs. Demo runs use isolated in-memory
+trace/audit stores so one visitor cannot fetch another visitor's trace.
 
 Demo throttling is keyed by client IP plus a short in-memory SHA-256 hash of
-the visitor's NVIDIA key. A new provider key gets a separate bucket, but the
+the visitor's provider key. A new provider key gets a separate bucket, but the
 plaintext key is still not persisted or logged. If the UI shows `DEGRADED`,
-the ReliabilityLayer returned a safe default because the upstream NIM request
-failed; the trace includes the provider detail.
+the ReliabilityLayer returned a safe default because the upstream provider
+request failed; the trace includes the provider detail.
 
 The demo allow-list intentionally contains only currently hosted NVIDIA Build
 free-endpoint model IDs. If a benign prompt returns a ReliabilityLayer
@@ -259,7 +259,7 @@ kubectl create secret generic pramagent-secrets \
   --from-literal=PRAMAGENT_API_KEY=... --from-literal=PRAMAGENT_JWT_SECRET=... \
   --from-literal=PRAMAGENT_REDIS_URL=redis://... --from-literal=PRAMAGENT_POSTGRES_DSN=postgresql://...
 helm install pramagent deploy/helm/pramagent \
-  --set image.tag=0.7.8 --set otel.endpoint=http://otel-collector:4317
+  --set image.tag=0.8.0 --set otel.endpoint=http://otel-collector:4317
 ```
 Includes readiness/liveness probes, HorizontalPodAutoscaler (3–10 replicas), and
 secret-based config. Point `otel.endpoint` at any OTLP collector (Jaeger,

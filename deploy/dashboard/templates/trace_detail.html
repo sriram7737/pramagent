@@ -3,8 +3,8 @@
 {% set t = trace %}
 <h1>Trace Detail</h1>
 <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
-  <span class="badge {% if t.get('blocked') %}badge-block{% else %}badge-ok{% endif %}">
-    {% if t.get("blocked") %}BLOCKED{% else %}ALLOWED{% endif %}
+  <span class="badge {% if t.get('blocked') or t.get('hitl_status') == 'denied' %}badge-block{% elif t.get('hitl_status') == 'idle' %}badge-escalate{% else %}badge-ok{% endif %}">
+    {% if t.get("blocked") %}BLOCKED{% elif t.get("hitl_status") == "idle" %}HELD{% elif t.get("hitl_status") == "denied" %}DENIED{% elif t.get("hitl_status") == "approved" %}APPROVED{% else %}ALLOWED{% endif %}
   </span>
   <span class="mono" style="color:#64748b">{{ t.get("this_hash","") }}</span>
 </div>
@@ -27,7 +27,10 @@
     <tr><th>Session</th><td>{{ t.get("session_id","") }}</td></tr>
     <tr><th>Provider</th><td>{{ t.get("provider","") }} / {{ t.get("provider_model","") }}</td></tr>
     <tr><th>Cost</th><td>${{ "%.6f"|format(t.get("provider_cost_usd",0)) }}</td></tr>
-    <tr><th>Total latency</th><td>{{ "%.1f"|format(t.get("total_latency_ms",0)) }} ms</td></tr>
+    <tr><th>Engine latency</th><td>{{ "%.1f"|format(t.get("engine_latency_ms", t.get("total_latency_ms",0))) }} ms</td></tr>
+    {% if t.get("hitl_wait_ms", 0) %}
+    <tr><th>HITL wait</th><td>{{ "%.1f"|format(t.get("hitl_wait_ms",0)) }} ms</td></tr>
+    {% endif %}
     <tr><th>PII redactions</th><td>{{ t.get("pii_redactions",[]) | join(", ") or "none" }}</td></tr>
     <tr><th>HITL status</th><td>{{ t.get("hitl_status","") }}</td></tr>
     {% if t.get("blocked") %}
