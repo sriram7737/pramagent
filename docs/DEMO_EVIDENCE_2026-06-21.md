@@ -49,14 +49,18 @@ deletion side effect was executed.
 - HITL idle decisions are shown as `HELD` / action not executed, distinct from
   hard `BLOCKED` requests.
 
-## Validation
+## Main Branch Validation
 
-Focused validation after the dashboard/evidence update:
+This evidence is merged to `main` in commit
+`d7f63fe Add dashboard evidence and harden metrics`.
 
 ```powershell
+python -m pytest -q --tb=short
+# 673 passed, 2 skipped
+
+python -m compileall -q pramagent deploy\dashboard tests
+# passed
+
 python -m pytest tests\test_dashboard_security.py::test_dashboard_overview_reconciles_metrics_from_trace_rows tests\test_dashboard_usage_page_is_tenant_scoped tests\test_api.py::test_dashboard_trace_routes_derive_blocked_status -q --tb=short
 # 3 passed
-
-python -m compileall -q deploy\dashboard tests\test_dashboard_security.py
-# passed
 ```
