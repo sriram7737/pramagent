@@ -75,6 +75,69 @@ def test_block_rule_stops_call():
     assert r.blocked and r.trace.pre_verdict == "block"
 
 
+def test_custom_pre_rule_exception_fails_closed():
+    def broken_rule(_text):
+        raise RuntimeError("customer rule backend down")
+
+    armor = Pramagent(
+        provider=MockProvider(),
+        safety=SafetyLayer(rules=[Rule("custom_rule", Verdict.ALLOW, fn=broken_rule)]),
+    )
+
+    r = run(armor.run("ordinary request"))
+
+    assert r.blocked is True
+    assert r.block_reason == "blocked by input safety rule"
+    assert r.trace.pre_verdict == "block"
+    fired = [rr for rr in r.trace.rules_evaluated if rr.rule_id == "custom_rule"]
+    assert fired and fired[0].fired is True
+    assert fired[0].action == Verdict.BLOCK
+    assert "RuntimeError" in fired[0].detail
+
+
+def test_custom_post_rule_exception_withholds_output():
+    def broken_rule(_text):
+        raise RuntimeError("customer post rule backend down")
+
+    armor = Pramagent(
+        provider=MockProvider(),
+        safety=SafetyLayer(rules=[], post_rules=[
+            Rule("custom_post_rule", Verdict.ALLOW, fn=broken_rule),
+        ]),
+    )
+
+    r = run(armor.run("ordinary request"))
+
+    assert r.blocked is False
+    assert r.trace.post_verdict == "block"
+    assert r.output == "[output withheld by safety rule]"
+    fired = [rr for rr in r.trace.rules_evaluated if rr.rule_id == "custom_post_rule"]
+    assert fired and fired[0].fired is True
+    assert fired[0].action == Verdict.BLOCK
+    assert fired[0].phase == "post"
+
+
+def test_safety_classifier_exception_fails_closed():
+    def broken_classifier(_text):
+        raise RuntimeError("classifier service down")
+
+    armor = Pramagent(
+        provider=MockProvider(),
+        safety=SafetyLayer(classifier=broken_classifier),
+    )
+
+    r = run(armor.run("ordinary request"))
+
+    assert r.blocked is True
+    assert r.trace.pre_verdict == "block"
+    fired = [
+        rr for rr in r.trace.rules_evaluated
+        if rr.rule_id == "classifier.pre.error"
+    ]
+    assert fired and fired[0].fired is True
+    assert fired[0].action == Verdict.BLOCK
+
+
 def test_hitl_idle_on_silence():
     async def no_answer(a, c): return None
     armor = Pramagent(

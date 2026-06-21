@@ -17,12 +17,39 @@ import hashlib
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Protocol
 
 from ..anchoring.ethereum import EthereumAnchor, EthereumAnchorReceipt
 
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AuditAppendResult:
+    """Result of an audit-chain append.
+
+    The object intentionally unpacks like the historical ``(this_hash,
+    anchor_tx_id)`` tuple for backward compatibility, while also carrying the
+    ``prev_hash`` chosen inside the backend's critical section. Core code must
+    use that atomic prev value instead of reading a mutable backend attribute
+    after concurrent writers may have advanced the chain.
+    """
+
+    this_hash: str
+    anchor_tx_id: str
+    prev_hash: str
+
+    def __iter__(self):
+        yield self.this_hash
+        yield self.anchor_tx_id
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> str:
+        return (self.this_hash, self.anchor_tx_id)[index]
 
 
 def canonical_hash(payload: dict, prev_hash: str) -> str:
@@ -63,8 +90,8 @@ def redact_chain_payload(payload: dict) -> bool:
 
 
 class AuditBackend(Protocol):
-    def append(self, payload: dict, prev_hash: str) -> tuple[str, str]:
-        """Return (this_hash, anchor_tx_id)."""
+    def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
+        """Return an append result unpackable as (this_hash, anchor_tx_id)."""
         ...
 
     def verify_chain(self) -> bool:
@@ -90,7 +117,7 @@ class HashChainBackend:
     def head(self) -> str:
         return self._head
 
-    def append(self, payload: dict, prev_hash: str | None = None) -> tuple[str, str]:
+    def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
         with self._lock:
             prev = prev_hash if prev_hash is not None else self._head
             this_hash = canonical_hash(payload, prev)
@@ -98,7 +125,7 @@ class HashChainBackend:
             self.last_prev_hash = prev
             self._head = this_hash
             # anchor_tx_id is local for HashChain; external backends return a real tx id
-            return this_hash, f"local:{this_hash[:16]}"
+            return AuditAppendResult(this_hash, f"local:{this_hash[:16]}", prev)
 
     def verify_chain(self) -> bool:
         """Recompute every hash; return False if any link is broken (tampering)."""
@@ -172,19 +199,20 @@ class EthereumBackend:
     def last_prev_hash(self) -> str:
         return self._chain.last_prev_hash
 
-    def append(self, payload: dict, prev_hash: str | None = None) -> tuple[str, str]:
-        this_hash, _ = self._chain.append(payload, prev_hash)
+    def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
+        chain_result = self._chain.append(payload, prev_hash)
+        this_hash = chain_result.this_hash
         self.last_anchor = None
         if self._anchor is None:
-            return this_hash, f"eth:local:0x{this_hash[:24]}"
+            return AuditAppendResult(this_hash, f"eth:local:0x{this_hash[:24]}", chain_result.prev_hash)
         try:
             self.last_anchor = self._anchor.anchor(this_hash)
-            return this_hash, f"eth:{self.last_anchor.tx_hash}"
+            return AuditAppendResult(this_hash, f"eth:{self.last_anchor.tx_hash}", chain_result.prev_hash)
         except Exception as exc:
             if not self.fail_open:
                 raise
             log.warning("ethereum anchoring failed open: %s", exc)
-            return this_hash, f"eth:local:0x{this_hash[:24]}"
+            return AuditAppendResult(this_hash, f"eth:local:0x{this_hash[:24]}", chain_result.prev_hash)
 
     def verify_chain(self) -> bool:
         return self._chain.verify_chain()
@@ -232,10 +260,11 @@ class HyperledgerBackend:
     def last_prev_hash(self) -> str:
         return self._chain.last_prev_hash
 
-    def append(self, payload: dict, prev_hash: str | None = None) -> tuple[str, str]:
-        this_hash, _ = self._chain.append(payload, prev_hash)
+    def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
+        chain_result = self._chain.append(payload, prev_hash)
+        this_hash = chain_result.this_hash
         tx = self._anchor(this_hash)
-        return this_hash, tx
+        return AuditAppendResult(this_hash, tx, chain_result.prev_hash)
 
     def _anchor(self, this_hash: str) -> str:
         """Submit the hash to Fabric chaincode. Returns an anchor tx id.

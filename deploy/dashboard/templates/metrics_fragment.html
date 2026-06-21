@@ -12,19 +12,19 @@
   </div>
   <div class="card">
     <div class="stat-value">{{ "%.0f"|format(m.get("p50_latency_ms",0)) }}ms</div>
-    <div class="stat-label">p50 Latency</div>
+    <div class="stat-label">p50 Engine Latency</div>
   </div>
   <div class="card">
     <div class="stat-value">{{ "%.0f"|format(m.get("p95_latency_ms",0)) }}ms</div>
-    <div class="stat-label">p95 Latency</div>
+    <div class="stat-label">p95 Engine Latency</div>
   </div>
   <div class="card">
     <div class="stat-value">${{ "%.4f"|format(m.get("total_cost_usd",0)) }}</div>
     <div class="stat-label">Total Cost</div>
   </div>
   <div class="card">
-    <div class="stat-value">{{ m.get("pending_hitl",0) }}</div>
-    <div class="stat-label">Pending HITL</div>
+    <div class="stat-value">{{ m.get("hitl_holds", m.get("pending_hitl",0)) }}</div>
+    <div class="stat-label">HITL Holds</div>
   </div>
 </div>
 {% if m.get("error") %}

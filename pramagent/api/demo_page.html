@@ -319,9 +319,9 @@
 
     <section class="panel grid setup">
       <div>
-        <label for="apiKey">NVIDIA NIM API key</label>
-        <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="nvapi-...">
-        <div class="hint">Used for this request only. Never stored. Never logged.</div>
+        <label for="apiKey">Provider API key</label>
+        <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="nvapi-... or sk-...">
+        <div class="hint">NVIDIA NIM keys use the selected model; OpenAI keys use gpt-4o-mini. Used for this request only. Never stored. Never logged.</div>
       </div>
       <div>
         <label for="model">Model</label>
@@ -539,8 +539,8 @@
       $("error").classList.remove("visible");
       $("error").textContent = "";
       const key = $("apiKey").value.trim();
-      if (!key.startsWith("nvapi-")) {
-        $("error").textContent = "Enter a valid NVIDIA NIM key starting with nvapi-.";
+      if (!(key.startsWith("nvapi-") || key.startsWith("sk-"))) {
+        $("error").textContent = "Enter a valid NVIDIA NIM key starting with nvapi- or an OpenAI key starting with sk-.";
         $("error").classList.add("visible");
         return;
       }

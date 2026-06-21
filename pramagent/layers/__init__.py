@@ -198,7 +198,21 @@ class Rule:
         if self._rx is not None:
             fired = bool(self._rx.search(text))
         elif self.fn is not None:
-            fired = bool(self.fn(text))
+            try:
+                fired = bool(self.fn(text))
+            except Exception as exc:
+                log.warning(
+                    "safety rule %s failed closed: %s",
+                    self.rule_id,
+                    exc,
+                    exc_info=True,
+                )
+                return RuleResult(
+                    rule_id=self.rule_id,
+                    fired=True,
+                    action=Verdict.BLOCK,
+                    detail=f"rule evaluation error: {type(exc).__name__}",
+                )
         return RuleResult(rule_id=self.rule_id, fired=fired,
                           action=self.action if fired else Verdict.ALLOW,
                           detail=self.detail if fired else "")
@@ -241,18 +255,56 @@ class SafetyLayer:
         *,
         phase: str = "pre",
     ) -> tuple[Verdict, list[RuleResult]]:
-        results = [r.evaluate(text) for r in rules]
-        clf = classifier(text) if classifier else None
+        results: list[RuleResult] = []
+        for r in rules:
+            try:
+                results.append(r.evaluate(text))
+            except Exception as exc:
+                # Defensive wrapper for custom Rule subclasses: a broken
+                # customer rule must fail closed, not turn the request into a
+                # 500 or silently disappear from the audit trace.
+                rule_id = getattr(r, "rule_id", "<unknown>")
+                log.warning(
+                    "safety rule %s failed closed: %s",
+                    rule_id,
+                    exc,
+                    exc_info=True,
+                )
+                results.append(RuleResult(
+                    rule_id=rule_id,
+                    fired=True,
+                    action=Verdict.BLOCK,
+                    detail=f"rule evaluation error: {type(exc).__name__}",
+                ))
+        clf = None
+        if classifier:
+            try:
+                clf = classifier(text)
+            except Exception as exc:
+                log.warning(
+                    "safety classifier failed closed during %s pass: %s",
+                    phase,
+                    exc,
+                    exc_info=True,
+                )
+                clf = Verdict.BLOCK
+                results.append(RuleResult(
+                    rule_id=f"classifier.{phase}.error",
+                    fired=True,
+                    action=Verdict.BLOCK,
+                    detail=f"safety classifier error: {type(exc).__name__}",
+                ))
         if clf is not None:
             # Record the classifier verdict as a rule result: RCA replay
             # re-derives the verdict from rules_evaluated alone, so every
             # input to the combined verdict must appear in that list.
-            results.append(RuleResult(
-                rule_id=f"classifier.{phase}",
-                fired=clf != Verdict.ALLOW,
-                action=clf if clf != Verdict.ALLOW else Verdict.ALLOW,
-                detail="safety classifier verdict" if clf != Verdict.ALLOW else "",
-            ))
+            if not any(r.rule_id == f"classifier.{phase}.error" for r in results):
+                results.append(RuleResult(
+                    rule_id=f"classifier.{phase}",
+                    fired=clf != Verdict.ALLOW,
+                    action=clf if clf != Verdict.ALLOW else Verdict.ALLOW,
+                    detail="safety classifier verdict" if clf != Verdict.ALLOW else "",
+                ))
         for r in results:
             r.phase = phase
         return self._combine(results, clf), results

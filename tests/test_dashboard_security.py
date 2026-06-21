@@ -222,6 +222,8 @@ def test_dashboard_usage_page_is_tenant_scoped(monkeypatch):
             }
         if path == "/metrics":
             return {"usage_event_sinks": 1, "usage_quota_enabled": True}
+        if path == "/traces":
+            return []
         raise AssertionError(path)
 
     monkeypatch.setattr(dashboard, "_get", fake_get)
@@ -237,12 +239,101 @@ def test_dashboard_usage_page_is_tenant_scoped(monkeypatch):
     assert "Usage Event Sinks" in response.text
 
 
+def test_dashboard_overview_reconciles_metrics_from_trace_rows(monkeypatch):
+    async def fake_get(path, params=None):
+        if path == "/metrics":
+            return {
+                "total_calls": 4,
+                "blocked_calls": 0,
+                "block_rate": 0.0,
+                "p95_latency_ms": 0,
+            }
+        if path == "/traces":
+            assert params in ({"limit": 5}, {"limit": 500})
+            return [
+                {
+                    "call_id": "call-1",
+                    "this_hash": "a" * 64,
+                    "tenant_id": "tenant_a",
+                    "session_id": "s1",
+                    "input_text": "allowed one",
+                    "blocked": False,
+                    "total_latency_ms": 10,
+                    "provider_cost_usd": 0,
+                },
+                {
+                    "call_id": "call-2",
+                    "this_hash": "b" * 64,
+                    "tenant_id": "tenant_a",
+                    "session_id": "s2",
+                    "input_text": "blocked injection",
+                    "blocked": True,
+                    "block_reason": "isolation: injection suspected",
+                    "total_latency_ms": 20,
+                    "provider_cost_usd": 0,
+                },
+                {
+                    "call_id": "call-3",
+                    "this_hash": "c" * 64,
+                    "tenant_id": "tenant_a",
+                    "session_id": "s3",
+                    "input_text": "blocked db delete",
+                    "blocked": True,
+                    "block_reason": "block_destructive_database_operation",
+                    "total_latency_ms": 30,
+                    "provider_cost_usd": 0,
+                },
+                {
+                    "call_id": "call-4",
+                    "this_hash": "d" * 64,
+                    "tenant_id": "tenant_a",
+                    "session_id": "s4",
+                    "input_text": "allowed two",
+                    "blocked": False,
+                    "hitl_status": "idle",
+                    "total_latency_ms": 120040,
+                    "layer_events": [
+                        {
+                            "layer": "ReliabilityLayer",
+                            "decision": "completed",
+                            "latency_ms": 40,
+                        },
+                        {
+                            "layer": "HITLLayer",
+                            "decision": "idle",
+                            "latency_ms": 120000,
+                        },
+                    ],
+                    "provider_cost_usd": 0,
+                },
+            ]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(dashboard, "_get", fake_get)
+    monkeypatch.setattr(dashboard, "_rate_limit", lambda request: None)
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_TENANT", "tenant_a")
+    client = TestClient(dashboard.app)
+
+    response = client.get("/", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+    assert "50.0%" in response.text
+    assert "40ms" in response.text
+    assert "120040ms" not in response.text
+    assert "BLOCKED" in response.text
+    assert "HELD" in response.text
+    assert "/traces/call-2" in response.text
+
+
 def test_dashboard_logout_revokes_session_and_protected_pages_are_no_store(monkeypatch):
     async def fake_get(path, params=None):
         if path == "/usage":
             return {"tenant_id": "tenant_a", "calls": 1, "limits": {}, "remaining": {}}
         if path == "/metrics":
             return {}
+        if path == "/traces":
+            return []
         raise AssertionError(path)
 
     monkeypatch.setattr(dashboard, "_get", fake_get)
@@ -269,6 +360,8 @@ def test_dashboard_logout_requires_csrf_for_cookie_sessions(monkeypatch):
             return {"tenant_id": "tenant_a", "calls": 1, "limits": {}, "remaining": {}}
         if path == "/metrics":
             return {}
+        if path == "/traces":
+            return []
         raise AssertionError(path)
 
     monkeypatch.setattr(dashboard, "_get", fake_get)

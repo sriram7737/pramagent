@@ -10,7 +10,6 @@ Canonical links:
 - PyPI: https://pypi.org/project/pramagent/
 - GitHub: https://github.com/sriram7737/pramagent
 - Implementation status: https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md
-- Live workflow demo: https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_WORKFLOW_DEMO.md
 
 Core wedge:
 
@@ -36,8 +35,7 @@ Day 0:
 
 Day 1:
 
-- Publish the LinkedIn Builder Story with the live OpenAI payment-agent
-  screenshot.
+- Publish the LinkedIn Builder Story.
 - Target recruiters, hiring managers, platform engineers, and AI infra teams.
 - Primary visual: terminal screenshot, not architecture diagram.
 
@@ -58,21 +56,23 @@ Day 7:
 
 Use a real terminal screenshot as the main launch visual:
 
-```powershell
-python examples\live_payment_agent.py --provider openai --env-file .env.live --reset-db
-```
+```bash
+pip install pramagent
+python - <<'PY'
+import asyncio
+from pramagent import Pramagent
 
-What the screenshot should prove:
+async def main():
+    resp = await Pramagent().run(
+        "Summarize this request",
+        tenant_id="demo",
+        session_id="s1",
+    )
+    print(resp.output)
+    print("trace:", resp.trace.this_hash)
 
-```text
-provider: openai
-guard  : allow - all checks passed
-guard  : escalate - payment tools require human approval
-guard  : block - tenant 'marketing_team' not in allowed_tenants for 'send_payment'
-guard  : block - argument schema violation: $.amount_usd: 9000 > maximum 5000
-hitl   : idle
-tool   : not executed
-chain_valid: True
+asyncio.run(main())
+PY
 ```
 
 Secondary visuals:
@@ -247,7 +247,7 @@ Pramagent wraps model calls and agent workflows with:
 
 Release evidence:
 
-- 623 passing tests, one optional-environment skip
+- 673 passing tests, 2 optional-environment skips
 - Python 3.10, 3.11, 3.12, and 3.13 CI matrix
 - live OpenAI smoke test
 - real OpenAI job-agent stress run: 216 calls, five tenants, concurrency 10,
@@ -256,6 +256,8 @@ Release evidence:
   (`~$0.031` per 1,000 calls under this workload)
 - real Slack HITL approve/deny clicks with trace hashes and hash-chain
   verification
+- authenticated dashboard evidence with screenshots for allowed, blocked,
+  scrubbed, destructive-DB blocked, and HITL-held paths
 - local Ollama smoke test
 - live Sepolia anchoring smoke test
 - S3 archive/restore smoke test
@@ -320,7 +322,7 @@ pip install pramagent
 Run the benchmark:
 
 ```bash
-python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
+pramagent redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 Open the repo:
@@ -391,11 +393,12 @@ The most important layer is ToolGuard:
 - escalate risky tools to human approval
 - record decisions in a tamper-evident trace
 
-The release has 623 passing tests, one optional-environment skip, and a Python
+The release has 673 passing tests, 2 optional-environment skips, and a Python
 3.10 through 3.13 CI matrix, plus live smoke evidence for OpenAI, Ollama,
 Sepolia anchoring, S3 archive/restore, Slack HITL, multi-tenant load,
-enterprise-audit remediation, and security scans. That does not make it
-production-certified, but it does mean the release is more than a README.
+dashboard evidence, enterprise-audit remediation, and security scans. That does
+not make it production-certified, but it does mean the release is more than a
+README.
 
 It is published as Alpha software, with an honest implementation-status doc. No
 fake "prompt-injection-proof" claims. No pretending it is certified enterprise
@@ -445,7 +448,7 @@ Pramagent currently includes:
 - FastAPI sidecar, dashboard, Redis/Postgres support, OTel spans
 - compliance evidence generation
 - red-team benchmark CLI
-- 623 passing tests across Python 3.10 through 3.13, with one optional skip
+- 673 passing tests across Python 3.10 through 3.13, with 2 optional skips
 
 Important: it is Alpha software. It is not bank-grade, healthcare-grade,
 externally audited, or prompt-injection-proof. I documented the current status
@@ -489,7 +492,7 @@ What is included today:
 - optional Sepolia timestamp anchoring and S3 archive support
 - compliance evidence generation for auditor-facing packages
 - FastAPI sidecar, dashboard, Redis/Postgres, OTel
-- 623 passing tests, 1 optional-environment skip
+- 673 passing tests, 2 optional-environment skips
 
 It is Alpha and not externally certified. The implementation status is public
 and intentionally blunt.
@@ -556,12 +559,13 @@ anchoring, S3 archive support, Redis/Postgres, OTel, and a FastAPI sidecar.
 
 6. Current release evidence:
 
-- 623 passing tests, 1 optional-environment skip
+- 673 passing tests, 2 optional-environment skips
 - Python 3.10 to 3.13 CI
 - OpenAI and Ollama smoke tests
 - Sepolia anchoring smoke
 - S3 archive/restore smoke
 - Bandit, Semgrep, and authenticated OWASP ZAP scan evidence
+- authenticated dashboard evidence with trace hashes
 - red-team benchmark CLI
 
 7. Important: it is Alpha.
@@ -676,7 +680,7 @@ generic guardrails:
 Run this before launch posts, release notes, or demo videos:
 
 ```powershell
-cd path\to\pramagent
+cd C:\Users\srira\OneDrive\Desktop\veritrace
 
 # Legacy-name scan. Expected hits: only migration docs or intentional mentions.
 rg -n "veritrace|Veritrace|VERITRACE" `
@@ -700,4 +704,3 @@ python -m twine check dist\pramagent-*.whl dist\pramagent-*.tar.gz
 4. Honest safety marketing: why Alpha AI infrastructure should publish its
    limitations.
 5. Local agents: running Pramagent with Ollama and OpenAI-compatible endpoints.
-

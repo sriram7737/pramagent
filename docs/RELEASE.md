@@ -27,7 +27,7 @@ python -m venv %TEMP%/pramagent-release-venv
 Optional extras install check:
 
 ```bash
-python -m pip install "dist/pramagent-0.7.8-py3-none-any.whl[all]"
+python -m pip install "dist/pramagent-0.8.0-py3-none-any.whl[all]"
 python - <<'PY'
 import anthropic, aiohttp, fastapi, uvicorn, jinja2, httpx, cryptography
 import opentelemetry, redis, psycopg, web3, boto3
@@ -87,14 +87,14 @@ python -m twine check dist/*
 
 ```bash
 git status --short
-git tag -a v0.7.8 -m "v0.7.8"
+git tag -a v0.8.0 -m "v0.8.0"
 git push origin main
-git push origin v0.7.8
+git push origin v0.8.0
 ```
 
-Create a GitHub Release from tag `v0.7.8` and include:
+Create a GitHub Release from tag `v0.8.0` and include:
 
-- Test result: `657 passed, 2 skipped`
+- Test result: `673 passed, 2 skipped`
 - Public-demo output-judge result: `OutputJudgeLayer` on by default, visible
   policy toggle in `/demo`, keylogger/bypass/destructive-output class withheld,
   reference `/v1/run` opt-in via `PRAMAGENT_OUTPUT_JUDGE=1`
@@ -113,7 +113,10 @@ Create a GitHub Release from tag `v0.7.8` and include:
 - Encoded-payload and multilingual hardening result: hex/unicode-escape
   injection blocked; targeted fr/es/de/hi override phrases and
   override-confirmation tokens blocked; public demo must be redeployed to pick
-  up the v0.7.8 runtime.
+  up the v0.8.0 runtime.
+- Dashboard evidence result: screenshots for allowed, PII-scrubbed, injection
+  blocked, destructive-DB blocked, and HITL-held paths, plus engine-latency
+  metrics separated from HITL wait time.
 - Live OpenAI payment-agent workflow result from `docs/LIVE_WORKFLOW_DEMO.md`
 - Real OpenAI + local Ollama smoke-test results from `docs/LIVE_TEST_RESULTS.md`
 - Real OpenAI job-agent load result: 216 calls, five tenants, concurrency 10,

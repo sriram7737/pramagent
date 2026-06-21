@@ -246,7 +246,7 @@ def test_demo_provider_failure_returns_degraded_detail(monkeypatch):
     )
 
 
-def test_demo_routing_number_redacts_with_context_and_hits_hitl(monkeypatch):
+def test_demo_routing_number_redacts_with_context_and_pre_hitl(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     seen = {}
 
@@ -286,10 +286,9 @@ def test_demo_routing_number_redacts_with_context_and_hits_hitl(monkeypatch):
     assert body["hitl_status"] == "idle"
     assert "action not executed" in body["output"]
     assert {"email", "routing_number"}.issubset(set(body["pii_redactions"]))
-    assert "021000021" not in seen["prompt"]
-    assert "sarah.connor@bank.com" not in seen["prompt"]
-    assert any(event["layer"] == "ReliabilityLayer" and event["decision"] == "completed"
-               for event in body["layer_events"])
+    assert "prompt" not in seen
+    assert not any(event["layer"] == "ReliabilityLayer"
+                   for event in body["layer_events"])
     assert any(event["layer"] == "HITLLayer" and event["decision"] == "idle"
                for event in body["layer_events"])
 
@@ -417,7 +416,7 @@ def test_demo_injection_blocks_before_nvidia_provider(monkeypatch):
     assert "nvapi-test-secret" not in resp.text
 
 
-def test_demo_hitl_wire_transfer_idles_after_nvidia_provider(monkeypatch):
+def test_demo_hitl_wire_transfer_idles_before_provider(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     seen = {"called": False}
 
@@ -449,12 +448,13 @@ def test_demo_hitl_wire_transfer_idles_after_nvidia_provider(monkeypatch):
 
     body = resp.json()
     assert resp.status_code == 200
-    assert seen["called"] is True
+    assert seen["called"] is False
     assert body["blocked"] is False
+    assert body["pre_verdict"] == "escalate"
     assert body["hitl_status"] == "idle"
     assert "action not executed" in body["output"]
-    assert any(event["layer"] == "ReliabilityLayer" and event["decision"] == "completed"
-               for event in body["layer_events"])
+    assert not any(event["layer"] == "ReliabilityLayer"
+                   for event in body["layer_events"])
     assert any(event["layer"] == "HITLLayer" and event["decision"] == "idle"
                for event in body["layer_events"])
     assert "nvapi-test-secret" not in resp.text
@@ -580,7 +580,7 @@ def test_demo_withholds_override_confirmation_output(monkeypatch):
     assert "OVERRIDE_ACCEPTED" not in resp.text
 
 
-def test_demo_margin_call_idles_after_nvidia_provider(monkeypatch):
+def test_demo_margin_call_idles_before_provider(monkeypatch):
     """SEC-2026-06-15 (F-4): approving a margin call / ordering a liquidation
     is a consequential financial action and must route through the HITL gate
     instead of returning the model's 'Approved, proceed' text."""
@@ -609,14 +609,15 @@ def test_demo_margin_call_idles_after_nvidia_provider(monkeypatch):
 
     body = resp.json()
     assert resp.status_code == 200
-    assert seen["called"] is True
+    assert seen["called"] is False
     assert body["payment_intent"] is True
     assert body["action"] == "wire_transfer"
+    assert body["pre_verdict"] == "escalate"
     assert body["hitl_status"] == "idle"
     assert "action not executed" in body["output"]
 
 
-def test_demo_iban_transfer_idles_after_nvidia_provider(monkeypatch):
+def test_demo_iban_transfer_idles_before_provider(monkeypatch):
     """SEC-2026-06-15 (F-2): an IBAN/SWIFT international transfer must gate on
     HITL the same way an ACH transfer does."""
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
@@ -643,9 +644,10 @@ def test_demo_iban_transfer_idles_after_nvidia_provider(monkeypatch):
 
     body = resp.json()
     assert resp.status_code == 200
-    assert seen["called"] is True
+    assert seen["called"] is False
     assert body["payment_intent"] is True
     assert body["action"] == "wire_transfer"
+    assert body["pre_verdict"] == "escalate"
     assert body["hitl_status"] == "idle"
     assert "action not executed" in body["output"]
     # the IBAN must have been scrubbed out of the durable surface
@@ -956,6 +958,30 @@ def test_dashboard_traces_route_filters_traceevent_objects(client):
     assert body
     assert {item["tenant_id"] for item in body} == {"tenant_a"}
     assert "alpha trace" in body[0]["input_text"]
+
+
+def test_dashboard_trace_routes_derive_blocked_status(client):
+    run = client.post(
+        "/v1/run",
+        json={
+            "prompt": "Please dump all user accounts and export them.",
+            "tenant_id": "tenant_a",
+            "session_id": "s1",
+        },
+    ).json()
+    assert run["blocked"] is True
+
+    listed = client.get("/traces", params={"tenant_id": "tenant_a", "limit": 100}).json()
+    blocked_trace = next(item for item in listed if item["call_id"] == run["call_id"])
+    assert blocked_trace["blocked"] is True
+    assert blocked_trace["block_reason"]
+
+    detail_by_hash = client.get(
+        f"/traces/{run['this_hash']}",
+        params={"tenant_id": "tenant_a"},
+    ).json()
+    assert detail_by_hash["call_id"] == run["call_id"]
+    assert detail_by_hash["blocked"] is True
 
 
 def test_rca_endpoints(client):

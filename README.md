@@ -168,7 +168,7 @@ Open:
 
 ## Public Live Demo
 
-The API can serve a single-page NVIDIA NIM demo at `/demo`. It is disabled by
+The API can serve a single-page provider demo at `/demo`. It is disabled by
 default and is meant for public evaluation, not production traffic.
 
 ```bash
@@ -178,7 +178,8 @@ PRAMAGENT_ALLOW_MEMORY_STORE=1
 uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
 ```
 
-The demo asks the visitor for their own `nvapi-*` key on each run. Pramagent
+The demo asks the visitor for their own provider key on each run: `nvapi-*` for
+NVIDIA NIM models or `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`. Pramagent
 uses that key only for the current provider call; it is not written to traces,
 logs, stores, usage records, or the hash-chain payload. Each demo run uses an
 isolated in-memory trace store and returns the output, trust-layer events,
@@ -186,11 +187,18 @@ redactions, HITL state, latency, `this_hash`, `prev_hash`, and local chain
 verification.
 
 The public throttle is keyed by client IP plus a short in-memory SHA-256 hash
-of the visitor's `nvapi-*` key. If a visitor switches to a different NVIDIA
-key, they get a fresh demo bucket without Pramagent storing the plaintext key.
+of the visitor's provider key. If a visitor switches to a different key, they
+get a fresh demo bucket without Pramagent storing the plaintext key.
 A `DEGRADED` demo result means the upstream model call failed and Pramagent
 returned its safe default with a trace; try another listed NIM model or verify
 that the key has access to the selected endpoint.
+
+Dashboard evidence from the authenticated June 21 smoke run is captured in
+[Demo evidence](https://github.com/sriram7737/pramagent/blob/main/docs/DEMO_EVIDENCE_2026-06-21.md).
+It includes screenshots for safe output, PII scrubbing, prompt-injection
+blocking, destructive database-operation blocking, HITL-held financial action,
+trace hashes, and the dashboard metric fix that reports engine latency
+separately from human approval wait time.
 
 Run the release sanity checks:
 
@@ -200,7 +208,7 @@ python -m pramagent.cli redteam --json --attacks 100
 python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
-Current local result: `640 passed, 2 skipped`. The latest targeted prompt
+Current local result: `673 passed, 2 skipped`. The latest targeted prompt
 suite also passed with `0` failures across emergency override, output override,
 margin/liquidation, IBAN/SWIFT, ambiguous escalation, PHI, false-positive,
 base64, hex, unicode-escape, multilingual override-token, and
