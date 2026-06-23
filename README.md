@@ -198,7 +198,12 @@ Dashboard evidence from the authenticated June 21 smoke run is captured in
 It includes screenshots for safe output, PII scrubbing, prompt-injection
 blocking, destructive database-operation blocking, HITL-held financial action,
 trace hashes, and the dashboard metric fix that reports engine latency
-separately from human approval wait time.
+separately from human approval wait time. The evidence set also includes the
+current console redesign preview: single-brand navigation, dense trace detail
+with raw/scrubbed payloads, terminal `EXPIRED` approval states, and a
+favicon-size proof for the Pramagent mark. The packaged dashboard serves the
+new Pramagent SVG mark from `/static` across authenticated and pre-auth key
+flows.
 
 Run the release sanity checks:
 

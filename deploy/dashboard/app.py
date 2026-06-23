@@ -36,6 +36,7 @@ from urllib.parse import quote_plus
 import httpx
 from fastapi import Cookie, Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pramagent.dashboard_auth import (
     DashboardAuthError,
@@ -124,6 +125,11 @@ async def _lifespan(app_: FastAPI):
 app = FastAPI(title="Pramagent Dashboard", docs_url=None, redoc_url=None,
               lifespan=_lifespan)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).parent / "static")),
+    name="static",
+)
 log = logging.getLogger("pramagent.dashboard")
 
 

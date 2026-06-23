@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## v0.8.2 - 2026-06-23
+
+### Changed
+
+- Dashboard package now ships Pramagent SVG logo assets and serves them from
+  `/static`, replacing placeholder letter marks across the authenticated
+  console and pre-auth key flows.
+- Auth preview design removed the inverted-logo filter that caused ghosting on
+  dark panels; the hero now uses the small mark plus live text so state-node
+  colors stay true.
+- Dashboard evidence screenshots were refreshed with the redesigned overview,
+  trace detail, approval queue, login page, and favicon-size logo proof.
+- Approval UI language now treats timed-out approval requests as terminal
+  `EXPIRED` states instead of ambiguous `IDLE` labels.
+
+### Verified
+
+- Logo mark proof remains readable from 16px through 48px.
+
 ## v0.8.1 - 2026-06-23
 
 ### Changed

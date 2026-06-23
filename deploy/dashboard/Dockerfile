@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir \
 COPY pramagent/ pramagent/
 COPY deploy/dashboard/app.py .
 COPY deploy/dashboard/templates/ templates/
+COPY deploy/dashboard/static/ static/
 # Non-root user for security
 RUN useradd -r -u 1001 -g root dashboard \
     && chown -R 1001:0 /app

@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-21 dashboard evidence and metric hardening pass._
+_Last updated after the 2026-06-23 dashboard identity/evidence refresh._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -214,6 +214,11 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Dashboard latency cards now report engine latency and track HITL wait
   separately. A human approval timeout is shown as a held action, not as a
   120-second Pramagent engine latency.
+- 2026-06-23 dashboard identity refresh: the package now ships SVG logo assets,
+  serves them from the dashboard `/static` route, and uses the real Pramagent
+  mark across login/signup/reset/key-issued and authenticated console chrome.
+  The evidence set includes console redesign preview screenshots for overview,
+  trace detail, approval queue, login, plus a favicon-size proof.
 
 2026-06-16 v0.8.0 prompt-injection classifier hardening:
 

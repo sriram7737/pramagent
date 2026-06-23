@@ -1,0 +1,12 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Pramagent mark</title>
+  <desc id="desc">A geometric P mark built from a policy gate and hash-chain nodes.</desc>
+  <rect x="28" y="28" width="184" height="184" rx="40" fill="#111417"/>
+  <path d="M78 176V64H126C153.062 64 174 83.004 174 108C174 132.996 153.062 152 126 152H106V176H78Z" fill="#F8FAFC"/>
+  <path d="M106 88H126C138.663 88 148 96.492 148 108C148 119.508 138.663 128 126 128H106V88Z" fill="#111417"/>
+  <circle cx="106" cy="88" r="7" fill="#17A398"/>
+  <circle cx="148" cy="108" r="7" fill="#D39B2A"/>
+  <circle cx="106" cy="152" r="7" fill="#E2554F"/>
+  <path d="M113 89.5L141 105.5" stroke="#17A398" stroke-width="5" stroke-linecap="round"/>
+  <path d="M142 112L111 148" stroke="#D39B2A" stroke-width="5" stroke-linecap="round"/>
+</svg>

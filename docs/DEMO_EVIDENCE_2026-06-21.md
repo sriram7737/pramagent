@@ -18,6 +18,11 @@ blocked, and HITL-held prompts.
 | Destructive DB operation block trace | ![DB delete block trace](assets/demo-evidence/07-db-delete-blocked-trace.png) |
 | Financial transfer held for HITL | ![Financial HITL trace](assets/demo-evidence/08-financial-hitl-held-trace.png) |
 | Latest DB delete attempt, blocked | ![Latest DB delete block trace](assets/demo-evidence/09-db-delete-blocked-latest.png) |
+| Console redesign preview - overview | ![Console redesign preview overview](assets/demo-evidence/10-redesign-overview.png) |
+| Console redesign preview - trace detail | ![Console redesign preview trace detail](assets/demo-evidence/11-redesign-trace-detail.png) |
+| Console redesign preview - approval queue | ![Console redesign preview approval queue](assets/demo-evidence/12-redesign-approval-queue.png) |
+| Console redesign preview - login page | ![Console redesign preview login page](assets/demo-evidence/13-redesign-login.png) |
+| Logo favicon-size proof | ![Logo favicon-size proof](assets/demo-evidence/14-logo-favicon-sizes.png) |
 
 ## Run Summary
 
@@ -48,6 +53,14 @@ deletion side effect was executed.
   which keeps copied dashboard URLs stable even for stored traces.
 - HITL idle decisions are shown as `HELD` / action not executed, distinct from
   hard `BLOCKED` requests.
+- The console redesign preview uses a single brand location, separates engine
+  latency from human-wait time, labels timed-out approvals as terminal
+  `EXPIRED` states, and shows trace evidence with raw/scrubbed payloads,
+  policy versions, timing breakdowns, and hash-chain status.
+- The shipped dashboard package now serves Pramagent logo assets from
+  `/static`; the dedicated small-size mark is used in the authenticated console
+  and dashboard key flows, and the favicon proof confirms it remains readable
+  from 16px through 48px.
 
 ## Main Branch Validation
 

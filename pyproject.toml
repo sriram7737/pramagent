@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pramagent"
-version = "0.8.1"
+version = "0.8.2"
 description = "Alpha agent trust middleware: audit trails, safety guardrails, HITL, and tool validation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -101,7 +101,7 @@ include = ["pramagent*", "deploy*"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"deploy.dashboard" = ["templates/*.html"]
+"deploy.dashboard" = ["templates/*.html", "static/*.svg"]
 "pramagent.api" = ["demo_page.html"]
 
 [tool.setuptools.data-files]

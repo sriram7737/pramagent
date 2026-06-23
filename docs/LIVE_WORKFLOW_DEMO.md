@@ -183,6 +183,8 @@ screenshots for:
 - destructive database-operation blocking, with `everify_db` still present
 - financial-transfer HITL hold where the action is not executed
 - overview metrics that report engine latency separately from HITL wait time
+- redesigned console overview, trace detail, approval queue, login page, and
+  favicon-size logo proof
 
 Use these screenshots for marketing or reviewer walkthroughs when the goal is
 to show the running dashboard rather than the terminal-only payment script.
