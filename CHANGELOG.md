@@ -2,15 +2,27 @@
 
 ## Unreleased
 
+## v0.8.1 - 2026-06-23
+
 ### Changed
 
+- Dashboard overview metrics now reconcile from persisted trace rows, so
+  visible blocked traces cannot sit under a misleading `0.0%` block rate after
+  API restarts or in-memory metric resets.
+- Dashboard latency cards now report engine latency separately from HITL wait
+  time, so a held approval timeout is not presented as Pramagent processing
+  latency.
+- Trace browser links use `call_id` while still displaying trace hashes, making
+  copied dashboard URLs stable for stored traces.
 - Public demo now defaults to `mistralai/mistral-small-4-119b-2603`, the NIM
   model that has been stable in live tests, and surfaces upstream provider
   failures as explicit `DEGRADED` detail instead of leaving visitors to infer
   the cause from the trace table.
 - Demo rate limiting is now scoped by client IP plus a short in-memory SHA-256
-  hash of the visitor's NVIDIA key. Plaintext keys are still never persisted,
+  hash of the visitor's provider key. Plaintext keys are still never persisted,
   logged, traced, or used as raw dictionary keys.
+- The public demo accepts either NVIDIA NIM `nvapi-*` keys or OpenAI `sk-*` /
+  `sk-proj-*` keys. OpenAI demo runs route to `gpt-4o-mini`.
 
 ### Added
 
@@ -19,6 +31,13 @@
 - Added `docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md` and
   `docs/COOKBOOK_SUBMISSIONS.md` to track the Google Dev Library, Anthropic
   Claude Cookbook, and OpenAI Cookbook submission path.
+- Added authenticated dashboard evidence with screenshots and trace hashes in
+  `docs/DEMO_EVIDENCE_2026-06-21.md`.
+
+### Verified
+
+- `python -m pytest -q --tb=short` -> `673 passed, 2 skipped`.
+- `python -m compileall -q pramagent deploy\dashboard tests` -> passed.
 
 ## v0.8.0 - 2026-06-16
 
