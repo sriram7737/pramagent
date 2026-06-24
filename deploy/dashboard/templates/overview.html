@@ -1,71 +1,57 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Overview</h1>
-
-<div class="grid grid-3" style="margin-bottom:1.5rem"
-     hx-get="/metrics/fragment" hx-trigger="every 10s" hx-swap="innerHTML">
-  {% set m = metrics %}
-  <div class="card">
-    <div class="stat-value">{{ m.get("total_calls", "-") }}</div>
-    <div class="stat-label">Total Calls</div>
-  </div>
-  <div class="card">
-    <div class="stat-value" style="color:{% if m.get('block_rate_pct', 0) > 5 %}#b91c1c{% else %}#15803d{% endif %}">
-      {{ "%.1f"|format(m.get("block_rate_pct", 0)) }}%
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Production</div>
+      <h1>Overview</h1>
     </div>
-    <div class="stat-label">Block Rate</div>
+    {% if metrics.get("circuit_open") %}
+      <span class="badge bad">Circuit open</span>
+    {% else %}
+      <span class="badge ok">Operational</span>
+    {% endif %}
   </div>
-  <div class="card">
-    <div class="stat-value">{{ "%.0f"|format(m.get("p95_latency_ms", 0)) }}ms</div>
-    <div class="stat-label">p95 Engine Latency</div>
+  <div class="metrics"
+       hx-get="/metrics/fragment" hx-trigger="every 10s" hx-swap="innerHTML">
+    {% include "metrics_fragment.html" %}
   </div>
-  <div class="card">
-    <div class="stat-value">${{ "%.4f"|format(m.get("total_cost_usd", 0)) }}</div>
-    <div class="stat-label">Total Cost</div>
-  </div>
-  <div class="card">
-    <div class="stat-value">{{ m.get("hitl_holds", m.get("pending_hitl", 0)) }}</div>
-    <div class="stat-label">HITL Holds</div>
-  </div>
-  <div class="card">
-    <div class="stat-value" style="color:{% if m.get('circuit_open') %}#b91c1c{% else %}#15803d{% endif %}">
-      {% if m.get("circuit_open") %}OPEN{% else %}OK{% endif %}
-    </div>
-    <div class="stat-label">Circuit Breaker</div>
-  </div>
-</div>
+</section>
 
-<div class="card">
-  <h2>Recent Traces</h2>
+<section class="panel">
+  <div class="panel-header">
+    <h2>Recent traces</h2>
+    <a class="button" href="/traces">Open traces</a>
+  </div>
   {% if recent_traces %}
   <div class="table-wrap">
-    <table>
-      <thead><tr>
-        <th>Time</th><th>Tenant</th><th>Input</th><th>Verdict</th><th>Engine Latency</th>
-      </tr></thead>
+    <table class="trace-table">
+      <thead>
+        <tr><th>Time</th><th>Tenant</th><th>Input</th><th>Verdict</th><th>Engine</th></tr>
+      </thead>
       <tbody>
       {% for t in recent_traces %}
-      <tr>
-        <td class="mono">{{ t.get("created_at","") }}</td>
-        <td>{{ t.get("tenant_id","") }}</td>
-        <td class="truncate">
-          <a href="/traces/{{ t.get('call_id','') }}">{{ t.get("input_text","")[:80] }}</a>
-        </td>
-        <td>
-          {% if t.get("blocked") %}
-            <span class="badge badge-block">BLOCKED</span>
-          {% elif t.get("hitl_status") == "idle" %}
-            <span class="badge badge-escalate">HELD</span>
-          {% elif t.get("hitl_status") == "denied" %}
-            <span class="badge badge-block">DENIED</span>
-          {% elif t.get("hitl_status") == "approved" %}
-            <span class="badge badge-ok">APPROVED</span>
-          {% else %}
-            <span class="badge badge-ok">OK</span>
-          {% endif %}
-        </td>
-        <td>{{ "%.0f"|format(t.get("engine_latency_ms", t.get("total_latency_ms",0))) }}ms</td>
-      </tr>
+        <tr>
+          <td class="mono">{{ t.get("created_at","") }}</td>
+          <td>{{ t.get("tenant_id","") }}</td>
+          <td class="truncate">
+            <a href="/traces/{{ t.get('call_id','') }}">{{ t.get("input_text","")[:80] }}</a>
+          </td>
+          <td>
+            {% if t.get("blocked") %}
+              <span class="badge bad">BLOCKED</span>
+            {% elif t.get("hitl_status") == "idle" %}
+              <span class="badge warn">HELD</span>
+            {% elif t.get("hitl_status") == "denied" %}
+              <span class="badge bad">DENIED</span>
+            {% elif t.get("hitl_status") == "approved" %}
+              <span class="badge ok">APPROVED</span>
+            {% else %}
+              <span class="badge ok">ALLOWED</span>
+            {% endif %}
+          </td>
+          <td class="mono">{{ "%.0f"|format(t.get("engine_latency_ms", t.get("total_latency_ms",0))) }}ms</td>
+        </tr>
       {% endfor %}
       </tbody>
     </table>
@@ -73,6 +59,5 @@
   {% else %}
   <div class="empty">No traces yet.</div>
   {% endif %}
-  <div style="margin-top:0.75rem"><a href="/traces">View all traces -></a></div>
-</div>
+</section>
 {% endblock %}

@@ -151,6 +151,14 @@ def test_dashboard_redis_rate_limit_blocks_after_burst(monkeypatch):
     assert exc.value.status_code == 429
 
 
+def test_dashboard_redis_unavailable_cooldown_skips_reconnect(monkeypatch):
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_REDIS_URL", "redis://not-running")
+    monkeypatch.setattr(dashboard, "_redis_client", None)
+    monkeypatch.setattr(dashboard, "_redis_unavailable_until", dashboard.time.monotonic() + 60)
+
+    assert dashboard._dashboard_redis() is None
+
+
 def test_dashboard_login_cookie_uses_configured_tenant_and_secure_flag(monkeypatch):
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_TENANT", "tenant_a")
@@ -204,6 +212,25 @@ def test_dashboard_preauth_csrf_rejects_tampered_token(monkeypatch):
     assert "pramagent_session" not in response.cookies
 
 
+def test_dashboard_preauth_csrf_accepts_stale_signed_form_token(monkeypatch):
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
+    monkeypatch.setattr(dashboard, "_rate_limit", lambda request: None)
+    client = TestClient(dashboard.app)
+    csrf = _csrf_from(client, "/login")
+
+    newer_cookie = dashboard._new_preauth_csrf()
+    client.cookies.set("pramagent_csrf", newer_cookie, domain="testserver.local", path="/")
+
+    response = client.post(
+        "/login",
+        data={"username": "alice", "password": "secret", "csrf_token": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "pramagent_session" in response.cookies
+
+
 def test_dashboard_usage_page_is_tenant_scoped(monkeypatch):
     async def fake_get(path, params=None):
         if path == "/usage":
@@ -249,7 +276,7 @@ def test_dashboard_overview_reconciles_metrics_from_trace_rows(monkeypatch):
                 "p95_latency_ms": 0,
             }
         if path == "/traces":
-            assert params in ({"limit": 5}, {"limit": 500})
+            assert params == {"limit": dashboard.PRAMAGENT_DASHBOARD_STATS_TRACE_LIMIT}
             return [
                 {
                     "call_id": "call-1",
@@ -318,12 +345,33 @@ def test_dashboard_overview_reconciles_metrics_from_trace_rows(monkeypatch):
     response = client.get("/", headers={"X-API-Key": "secret"})
 
     assert response.status_code == 200
+    assert "Verify chain" in response.text
     assert "50.0%" in response.text
     assert "40ms" in response.text
     assert "120040ms" not in response.text
     assert "BLOCKED" in response.text
     assert "HELD" in response.text
     assert "/traces/call-2" in response.text
+
+
+def test_dashboard_audit_verify_route(monkeypatch):
+    async def fake_get(path, params=None):
+        assert path == "/v1/audit/verify"
+        assert params is None
+        return {"chain_valid": True, "records": 7}
+
+    monkeypatch.setattr(dashboard, "_get", fake_get)
+    monkeypatch.setattr(dashboard, "_rate_limit", lambda request: None)
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_TENANT", "tenant_a")
+    client = TestClient(dashboard.app)
+
+    response = client.get("/audit/verify", headers={"X-API-Key": "secret"})
+
+    assert response.status_code == 200
+    assert "Hash chain integrity" in response.text
+    assert "VALID" in response.text
+    assert "7" in response.text
 
 
 def test_dashboard_logout_revokes_session_and_protected_pages_are_no_store(monkeypatch):

@@ -816,7 +816,7 @@ def test_demo_rate_limit(monkeypatch):
 
     assert first.status_code == 200
     assert second.status_code == 429
-    assert second.json()["detail"] == "demo rate limit exceeded for this IP and NVIDIA key"
+    assert second.json()["detail"] == "demo rate limit exceeded for this IP and provider key"
     assert "Retry-After" in second.headers
     assert third.status_code == 200
 

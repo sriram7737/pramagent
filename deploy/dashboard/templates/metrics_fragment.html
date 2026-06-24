@@ -1,32 +1,37 @@
 {% set m = metrics %}
-<div class="grid grid-3" style="margin-bottom:1rem">
-  <div class="card">
-    <div class="stat-value">{{ m.get("total_calls","-") }}</div>
-    <div class="stat-label">Total Calls</div>
-  </div>
-  <div class="card">
-    <div class="stat-value" style="color:{% if m.get('block_rate_pct',0)>5 %}#b91c1c{% else %}#15803d{% endif %}">
-      {{ "%.1f"|format(m.get("block_rate_pct",0)) }}%
-    </div>
-    <div class="stat-label">Block Rate</div>
-  </div>
-  <div class="card">
-    <div class="stat-value">{{ "%.0f"|format(m.get("p50_latency_ms",0)) }}ms</div>
-    <div class="stat-label">p50 Engine Latency</div>
-  </div>
-  <div class="card">
-    <div class="stat-value">{{ "%.0f"|format(m.get("p95_latency_ms",0)) }}ms</div>
-    <div class="stat-label">p95 Engine Latency</div>
-  </div>
-  <div class="card">
-    <div class="stat-value">${{ "%.4f"|format(m.get("total_cost_usd",0)) }}</div>
-    <div class="stat-label">Total Cost</div>
-  </div>
-  <div class="card">
-    <div class="stat-value">{{ m.get("hitl_holds", m.get("pending_hitl",0)) }}</div>
-    <div class="stat-label">HITL Holds</div>
-  </div>
+<div class="metric">
+  <small>Total calls</small>
+  <strong>{{ m.get("total_calls", "-") }}</strong>
+  <span class="subline">across visible tenant scope</span>
+</div>
+<div class="metric {% if m.get('block_rate_pct', 0) > 5 %}bad{% else %}ok{% endif %}">
+  <small>Block rate</small>
+  <strong>{{ "%.1f"|format(m.get("block_rate_pct", 0)) }}%</strong>
+  <span class="delta {% if m.get('block_rate_pct', 0) > 5 %}warn{% else %}up{% endif %}">policy decisions</span>
+</div>
+<div class="metric">
+  <small>P50 engine latency</small>
+  <strong>{{ "%.0f"|format(m.get("p50_latency_ms", 0)) }}ms</strong>
+  <span class="subline">median guard evaluation</span>
+</div>
+<div class="metric ok">
+  <small>P95 engine latency</small>
+  <strong>{{ "%.0f"|format(m.get("p95_latency_ms", 0)) }}ms</strong>
+  <span class="subline">tail guard evaluation</span>
+</div>
+<div class="metric">
+  <small>Total cost</small>
+  <strong>${{ "%.4f"|format(m.get("total_cost_usd", 0)) }}</strong>
+  <span class="subline">tracked provider spend</span>
+</div>
+<div class="metric {% if m.get('hitl_holds', m.get('pending_hitl', 0)) %}warn{% endif %}">
+  <small>HITL holds</small>
+  <strong>{{ m.get("hitl_holds", m.get("pending_hitl", 0)) }}</strong>
+  <span class="subline">awaiting human review</span>
 </div>
 {% if m.get("error") %}
-<div style="color:#b91c1c;font-size:0.85rem">API error: {{ m.error }}</div>
+<div class="metric bad" style="grid-column: 1 / -1;">
+  <small>API error</small>
+  <strong style="font-size:14px;">{{ m.error }}</strong>
+</div>
 {% endif %}

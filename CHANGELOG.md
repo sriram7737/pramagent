@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v0.8.3 - 2026-06-24
+
+### Changed
+
+- Public `/demo` now uses the lighter trust-stack walkthrough: scenario picker,
+  policy toggles, provider-key field, ordered layer timeline, safe output, and
+  hash-chain evidence in one first-screen flow.
+- Demo copy now uses `HELD` for paused human-approval actions instead of the
+  ambiguous `IDLE` label, and the chain-verification button reads the live
+  `/demo/verify` response before reporting success.
+- Authenticated dashboard now exposes `Verify chain` in the main top bar and
+  serves a dedicated `/audit/verify` page backed by `/v1/audit/verify`.
+- Dashboard summary pages fetch a bounded trace window once for metrics
+  reconciliation instead of scanning 500 traces during normal page rendering.
+- Dashboard Redis fallback now uses a short connection timeout plus a retry
+  cooldown so a missing local Redis server does not make every page load feel
+  slow.
+- Pre-auth dashboard CSRF accepts a still-valid signed form token even when a
+  second open tab has rotated the CSRF cookie.
+
+### Verified
+
+- `python -m pytest tests\test_api.py tests\test_dashboard_security.py -q --tb=short` -> `120 passed`.
+
 ## v0.8.2 - 2026-06-23
 
 ### Changed

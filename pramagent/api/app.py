@@ -517,7 +517,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.8.2",
+        version="0.8.3",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )
@@ -1119,7 +1119,7 @@ def create_app(armor: Optional[Pramagent] = None,
         allowed, retry_after = app.state.demo_bucket.allow(_demo_rate_key(request, api_key))
         if not allowed:
             return JSONResponse(
-                {"detail": "demo rate limit exceeded for this IP and NVIDIA key"},
+                {"detail": "demo rate limit exceeded for this IP and provider key"},
                 status_code=429,
                 headers={**_demo_cors_headers(), "Retry-After": str(int(retry_after) + 1)},
             )

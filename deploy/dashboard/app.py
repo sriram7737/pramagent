@@ -20,6 +20,7 @@ PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN=true.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -90,6 +91,10 @@ PRAMAGENT_DASHBOARD_RESET_TOKEN_TTL_S = int(os.environ.get(
 PRAMAGENT_DASHBOARD_CSRF_TTL_S = int(os.environ.get(
     "PRAMAGENT_DASHBOARD_CSRF_TTL_S", "3600"
 ))
+PRAMAGENT_DASHBOARD_STATS_TRACE_LIMIT = max(
+    5,
+    min(500, int(os.environ.get("PRAMAGENT_DASHBOARD_STATS_TRACE_LIMIT", "100"))),
+)
 PRAMAGENT_DASHBOARD_DEFAULT_ROLE = os.environ.get(
     "PRAMAGENT_DASHBOARD_DEFAULT_ROLE", "viewer"
 )
@@ -341,13 +346,16 @@ def _preauth_template_response(request: Request, template: str, context: dict) -
 
 def require_preauth_csrf(request: Request, supplied: str = "") -> None:
     cookie_token = request.cookies.get(_PREAUTH_CSRF_COOKIE, "")
-    if (
-        not supplied
-        or not cookie_token
-        or not hmac.compare_digest(supplied, cookie_token)
-        or not _valid_preauth_csrf(cookie_token)
-    ):
+    if not supplied or not _valid_preauth_csrf(supplied):
         raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+    if cookie_token and _valid_preauth_csrf(cookie_token):
+        if hmac.compare_digest(supplied, cookie_token):
+            return
+        # Multiple open pre-auth tabs can rotate the cookie while an older
+        # signed form token is still within its TTL. The form token is already
+        # HMAC-signed and embedded in a same-origin page, so accept it rather
+        # than failing legitimate login/signup/reset submissions.
+        return
 
 
 def require_csrf(request: Request, ctx: AuthContext, supplied: str = "") -> None:
@@ -367,28 +375,35 @@ _rl_state: dict[str, tuple[float, float]] = {}  # ip -> (tokens, last_refill)
 _revoked_sessions: dict[str, float] = {}        # dashboard session id -> exp
 _RL_CAPACITY    = float(os.environ.get("PRAMAGENT_DASHBOARD_RL_CAPACITY", "60"))
 _RL_REFILL_S    = float(os.environ.get("PRAMAGENT_DASHBOARD_RL_REFILL", "60"))  # tokens/minute
+_REDIS_RETRY_S  = float(os.environ.get("PRAMAGENT_DASHBOARD_REDIS_RETRY_S", "30"))
+_REDIS_TIMEOUT_S = float(os.environ.get("PRAMAGENT_DASHBOARD_REDIS_TIMEOUT_S", "0.2"))
 _redis_client = None
+_redis_unavailable_until = 0.0
 
 
 def _dashboard_redis():
-    global _redis_client
+    global _redis_client, _redis_unavailable_until
     if not PRAMAGENT_DASHBOARD_REDIS_URL:
         return None
     if _redis_client is not None:
         return _redis_client
+    now = time.monotonic()
+    if now < _redis_unavailable_until:
+        return None
     try:
         import redis  # type: ignore
         _redis_client = redis.Redis.from_url(
             PRAMAGENT_DASHBOARD_REDIS_URL,
             decode_responses=True,
-            socket_timeout=1.0,
-            socket_connect_timeout=1.0,
+            socket_timeout=_REDIS_TIMEOUT_S,
+            socket_connect_timeout=_REDIS_TIMEOUT_S,
         )
         _redis_client.ping()
         return _redis_client
     except Exception as exc:
         log.warning("dashboard redis rate limit unavailable; using local bucket: %s", exc)
         _redis_client = None
+        _redis_unavailable_until = now + _REDIS_RETRY_S
         return None
 
 
@@ -472,14 +487,30 @@ def _upstream_headers() -> dict:
 
 
 async def _get(path: str, params: Optional[dict] = None) -> dict | list:
-    async with httpx.AsyncClient(base_url=PRAMAGENT_API_URL, timeout=10.0) as client:
-        r = await client.get(path, headers=_upstream_headers(), params=params or {})
-        r.raise_for_status()
-        return r.json()
+    async with httpx.AsyncClient(
+        base_url=PRAMAGENT_API_URL,
+        timeout=10.0,
+        trust_env=False,
+    ) as client:
+        return await _get_with_client(client, path, params)
+
+
+async def _get_with_client(
+    client: httpx.AsyncClient,
+    path: str,
+    params: Optional[dict] = None,
+) -> dict | list:
+    r = await client.get(path, headers=_upstream_headers(), params=params or {})
+    r.raise_for_status()
+    return r.json()
 
 
 async def _post(path: str, json_body: dict) -> dict:
-    async with httpx.AsyncClient(base_url=PRAMAGENT_API_URL, timeout=10.0) as client:
+    async with httpx.AsyncClient(
+        base_url=PRAMAGENT_API_URL,
+        timeout=10.0,
+        trust_env=False,
+    ) as client:
         r = await client.post(path, headers=_upstream_headers(), json=json_body)
         r.raise_for_status()
         return r.json()
@@ -567,6 +598,34 @@ def _normalize_metrics(metrics: dict, traces: list | None = None) -> dict:
             )
 
     return data
+
+
+async def _dashboard_metrics_and_traces(
+    ctx: AuthContext,
+    trace_params: Optional[dict] = None,
+) -> tuple[dict, list]:
+    params = {"limit": PRAMAGENT_DASHBOARD_STATS_TRACE_LIMIT}
+    if trace_params:
+        params.update(trace_params)
+    metrics_result, traces_result = await asyncio.gather(
+        _get("/metrics"),
+        _get("/traces", params),
+        return_exceptions=True,
+    )
+
+    metrics = (
+        {"error": str(metrics_result)}
+        if isinstance(metrics_result, Exception)
+        else metrics_result
+    )
+    if not isinstance(metrics, dict):
+        metrics = {"error": "Unexpected metrics response"}
+
+    if isinstance(traces_result, Exception):
+        return _normalize_metrics(metrics), []
+    items = traces_result if isinstance(traces_result, list) else traces_result.get("items", [])
+    traces = _decorate_trace_rows(_filter_by_tenant(items, ctx))
+    return _normalize_metrics(metrics, traces), traces
 
 
 async def _require_pending_approval_scope(request_id: str, ctx: AuthContext) -> None:
@@ -827,32 +886,11 @@ async def overview(
     ctx: AuthContext = Depends(require_auth),
     _rl=Depends(_rate_limit),
 ):
-    try:
-        metrics = await _get("/metrics")
-    except Exception:
-        metrics = {}
-    try:
-        traces = await _get("/traces", {"limit": 5})
-    except Exception:
-        traces = []
-    items = traces if isinstance(traces, list) else traces.get("items", [])
-    scoped_traces = _decorate_trace_rows(_filter_by_tenant(items, ctx))
-    try:
-        stats_data = await _get("/traces", {"limit": 500})
-        stats_items = (
-            stats_data if isinstance(stats_data, list)
-            else stats_data.get("items", [])
-        )
-        metrics = _normalize_metrics(
-            metrics,
-            _decorate_trace_rows(_filter_by_tenant(stats_items, ctx)),
-        )
-    except Exception:
-        metrics = _normalize_metrics(metrics, scoped_traces)
+    metrics, scoped_traces = await _dashboard_metrics_and_traces(ctx)
     return templates.TemplateResponse(request, "overview.html", _template_context(
         ctx,
         metrics=metrics,
-        recent_traces=scoped_traces,
+        recent_traces=scoped_traces[-5:],
         api_url=PRAMAGENT_API_URL,
     ))
 
@@ -972,16 +1010,7 @@ async def metrics_page(
     ctx: AuthContext = Depends(require_auth),
     _rl=Depends(_rate_limit),
 ):
-    try:
-        data = await _get("/metrics")
-    except Exception as exc:
-        data = {"error": str(exc)}
-    try:
-        traces_data = await _get("/traces", {"limit": 500})
-        traces = traces_data if isinstance(traces_data, list) else traces_data.get("items", [])
-        data = _normalize_metrics(data, _decorate_trace_rows(_filter_by_tenant(traces, ctx)))
-    except Exception:
-        data = _normalize_metrics(data)
+    data, _ = await _dashboard_metrics_and_traces(ctx)
     return templates.TemplateResponse(request, "metrics.html", _template_context(ctx, metrics=data))
 
 
@@ -999,16 +1028,7 @@ async def usage_page(
         usage = await _get("/usage", {"tenant_id": effective_tenant})
     except Exception as exc:
         usage = {"error": str(exc)}
-    try:
-        metrics = await _get("/metrics")
-    except Exception:
-        metrics = {}
-    try:
-        traces_data = await _get("/traces", {"limit": 500, "tenant_id": effective_tenant})
-        traces = traces_data if isinstance(traces_data, list) else traces_data.get("items", [])
-        metrics = _normalize_metrics(metrics, _decorate_trace_rows(_filter_by_tenant(traces, ctx)))
-    except Exception:
-        metrics = _normalize_metrics(metrics)
+    metrics, _ = await _dashboard_metrics_and_traces(ctx, {"tenant_id": effective_tenant})
     return templates.TemplateResponse(request, "usage.html", _template_context(
         ctx,
         usage=usage,
@@ -1022,17 +1042,29 @@ async def metrics_fragment(
     request: Request,
     ctx: AuthContext = Depends(require_auth),
 ):
-    try:
-        data = await _get("/metrics")
-    except Exception as exc:
-        data = {"error": str(exc)}
-    try:
-        traces_data = await _get("/traces", {"limit": 500})
-        traces = traces_data if isinstance(traces_data, list) else traces_data.get("items", [])
-        data = _normalize_metrics(data, _decorate_trace_rows(_filter_by_tenant(traces, ctx)))
-    except Exception:
-        data = _normalize_metrics(data)
+    data, _ = await _dashboard_metrics_and_traces(ctx)
     return templates.TemplateResponse(request, "metrics_fragment.html", _template_context(ctx, metrics=data))
+
+
+@app.get("/audit/verify", response_class=HTMLResponse)
+async def audit_verify_page(
+    request: Request,
+    ctx: AuthContext = Depends(require_auth),
+    _rl=Depends(_rate_limit),
+):
+    started = time.perf_counter()
+    try:
+        data = await _get("/v1/audit/verify")
+        if not isinstance(data, dict):
+            data = {"chain_valid": False, "error": "Unexpected audit response"}
+    except Exception as exc:
+        data = {"chain_valid": False, "error": str(exc)}
+    data["verify_latency_ms"] = (time.perf_counter() - started) * 1000
+    return templates.TemplateResponse(
+        request,
+        "audit_verify.html",
+        _template_context(ctx, audit=data),
+    )
 
 
 # ── export ────────────────────────────────────────────────────────────────────

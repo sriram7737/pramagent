@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>{% block title %}Pramagent{% endblock %}</title>
+  <style>
+    :root {
+      --ink: #111417;
+      --ink-2: #2b3138;
+      --muted: #64707d;
+      --line: #dbe2e7;
+      --line-strong: #c4cdd5;
+      --paper: #f7f8f7;
+      --panel: #ffffff;
+      --panel-2: #f1f4f5;
+      --teal: #17a398;
+      --teal-dark: #0f756e;
+      --red: #e2554f;
+      --ok-bg: #e6f6f3;
+      --bad-bg: #fae9e7;
+      --warn-bg: #f8efd9;
+      --shadow: 0 16px 42px rgba(20, 26, 31, 0.08);
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(17, 20, 23, 0.04) 1px, transparent 1px) 0 0 / 32px 32px,
+        var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      letter-spacing: 0;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 26px; line-height: 1.12; letter-spacing: 0; }
+    h2 { font-size: 17px; line-height: 1.2; }
+    p { color: var(--muted); line-height: 1.45; font-size: 14px; }
+    a { color: var(--teal-dark); text-decoration: none; font-weight: 750; }
+    a:hover { text-decoration: underline; }
+    code { font-family: var(--mono); font-size: 0.85em; }
+
+    .auth-stage {
+      min-height: 100vh;
+      padding: 26px;
+      display: grid;
+      align-items: center;
+    }
+
+    .login-screen {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(390px, 0.55fr);
+      gap: 22px;
+      align-items: stretch;
+    }
+
+    .identity-panel {
+      min-height: 620px;
+      background: #111417;
+      color: #fff;
+      border-radius: 8px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      overflow: hidden;
+      border: 1px solid #111417;
+      box-shadow: var(--shadow);
+    }
+
+    .hero-brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .hero-brand img {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      flex: 0 0 auto;
+    }
+
+    .hero-brand span {
+      color: #fff;
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .hero-copy {
+      margin-top: 42px;
+      max-width: 620px;
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font: 700 11px/1.2 var(--mono);
+      text-transform: uppercase;
+    }
+
+    .identity-panel .eyebrow { color: #93a2aa; }
+    .identity-panel h1 {
+      margin-top: 10px;
+      color: #fff;
+      max-width: 720px;
+      font-size: 42px;
+      line-height: 1.08;
+    }
+    .identity-panel p {
+      margin-top: 14px;
+      color: #bec8ce;
+      max-width: 620px;
+    }
+
+    .chain-map {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .chain-cell {
+      min-height: 94px;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      color: #d7dde2;
+    }
+
+    .chain-cell strong {
+      color: #fff;
+      font: 800 15px/1 var(--mono);
+    }
+
+    .login-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 24px;
+      display: grid;
+      gap: 20px;
+      align-content: start;
+    }
+
+    .login-card .mark {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+    }
+
+    .form-grid { display: grid; gap: 14px; }
+    .field { display: grid; gap: 8px; }
+    label { color: var(--muted); font-size: 12px; font-weight: 750; }
+    input {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      font: 14px/1.45 var(--sans);
+      min-height: 42px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    input:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(23, 163, 152, 0.13);
+    }
+
+    .button {
+      min-height: 42px;
+      border-radius: 7px;
+      border: 1px solid var(--line-strong);
+      background: var(--panel);
+      color: var(--ink);
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-weight: 750;
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .button.primary { background: var(--ink); border-color: var(--ink); color: #fff; width: 100%; }
+
+    .helper-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+
+    .callout {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+      display: grid;
+      gap: 8px;
+    }
+    .callout.ok { border-color: #bfe1dc; background: #f2fbf9; }
+    .callout.warn { border-color: #e5d1a3; background: #fbf7ed; }
+    .callout.bad { border-color: #efcfcc; background: #fff6f5; }
+    .callout.bad p { color: #9a332e; }
+    .callout.ok p { color: #185f57; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      width: max-content;
+      padding: 0 8px;
+      border-radius: 6px;
+      font: 800 11px/1 var(--mono);
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .badge.ok { color: var(--teal-dark); background: var(--ok-bg); border-color: #c4e8e4; }
+    .badge.warn { color: #835f16; background: var(--warn-bg); border-color: #e8d7ae; }
+
+    .key {
+      background: #111417;
+      color: #fff;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: clamp(0.78rem, 2vw, 1rem);
+      line-height: 1.55;
+      word-break: break-all;
+      user-select: all;
+      border: 1px solid #2d363d;
+    }
+
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .actions .button { min-height: 38px; }
+
+    @media (max-width: 1120px) {
+      .login-screen { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .auth-stage { padding: 14px; }
+      .identity-panel { min-height: auto; }
+      .identity-panel h1 { font-size: 32px; }
+      .chain-map { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script>
+    window.addEventListener("pageshow", function (event) {
+      if (event.persisted) window.location.reload();
+    });
+  </script>
+</head>
+<body>
+  <main class="auth-stage">
+    <div class="login-screen">
+      <section class="identity-panel" aria-label="Pramagent access model">
+        <div>
+          <div class="hero-brand">
+            <img src="/static/pramagent-mark-small.svg" alt="">
+            <span>Pramagent</span>
+          </div>
+          <div class="hero-copy">
+            <div class="eyebrow">Secure access</div>
+            <h1>A dashboard key is a capability, not a password.</h1>
+            <p>Generated keys are shown once, scoped to a tenant, and every dashboard action is traceable back to a signed session event.</p>
+          </div>
+        </div>
+        <div class="chain-map">
+          <div class="chain-cell"><span>Email verified</span><strong>01</strong></div>
+          <div class="chain-cell"><span>Key generated</span><strong>02</strong></div>
+          <div class="chain-cell"><span>Tenant scoped</span><strong>03</strong></div>
+          <div class="chain-cell"><span>JWT issued</span><strong>04</strong></div>
+          <div class="chain-cell"><span>Trace sealed</span><strong>05</strong></div>
+        </div>
+      </section>
+
+      <section class="login-card">
+        <img class="mark" src="/static/pramagent-mark-small.svg" alt="">
+        {% block card %}{% endblock %}
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -42,6 +42,13 @@ The June 11 active security prompt results are tracked in
 walks from install to provider setup, agent wrapping, ToolGuard, HITL, trace
 storage, dashboard/API, and real workflow demos.
 
+**Try the public demo:** run the API with `PRAMAGENT_ENABLE_DEMO=1` and open
+`/demo`. The demo is bring-your-own-key: visitors enter an NVIDIA NIM
+`nvapi-*` key or OpenAI `sk-*` key for that request only, choose a scenario,
+and watch the trust stack decide where the request stops. It shows PII
+scrubbing, injection blocking, deterministic safety rules, output judging,
+HITL holds, and hash-chain verification as one walkthrough.
+
 ## Bare Install Quickstart
 
 This works with the base package only. No Docker, API server, or provider key is

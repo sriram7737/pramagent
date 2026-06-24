@@ -27,7 +27,7 @@ python -m venv %TEMP%/pramagent-release-venv
 Optional extras install check:
 
 ```bash
-python -m pip install "dist/pramagent-0.8.2-py3-none-any.whl[all]"
+python -m pip install "dist/pramagent-0.8.3-py3-none-any.whl[all]"
 python - <<'PY'
 import anthropic, aiohttp, fastapi, uvicorn, jinja2, httpx, cryptography
 import opentelemetry, redis, psycopg, web3, boto3
@@ -87,12 +87,12 @@ python -m twine check dist/*
 
 ```bash
 git status --short
-git tag -a v0.8.2 -m "v0.8.2"
+git tag -a v0.8.3 -m "v0.8.3"
 git push origin main
-git push origin v0.8.2
+git push origin v0.8.3
 ```
 
-Create a GitHub Release from tag `v0.8.2` and include:
+Create a GitHub Release from tag `v0.8.3` and include:
 
 - Test result: `673 passed, 2 skipped`
 - Public-demo output-judge result: `OutputJudgeLayer` on by default, visible
@@ -113,7 +113,7 @@ Create a GitHub Release from tag `v0.8.2` and include:
 - Encoded-payload and multilingual hardening result: hex/unicode-escape
   injection blocked; targeted fr/es/de/hi override phrases and
   override-confirmation tokens blocked; public demo must be redeployed to pick
-  up the v0.8.2 runtime.
+  up the v0.8.3 runtime.
 - Dashboard evidence result: screenshots for allowed, PII-scrubbed, injection
   blocked, destructive-DB blocked, and HITL-held paths, plus engine-latency
   metrics separated from HITL wait time.

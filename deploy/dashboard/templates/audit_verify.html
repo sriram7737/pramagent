@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Audit verification</div>
+      <h1>Hash chain integrity</h1>
+    </div>
+    {% if audit.get("chain_valid") %}
+      <span class="badge ok">VALID</span>
+    {% else %}
+      <span class="badge bad">ATTENTION</span>
+    {% endif %}
+  </div>
+  <div class="panel-body">
+    <div class="summary-grid">
+      <div class="summary-cell">
+        <small>Chain status</small>
+        <strong>{% if audit.get("chain_valid") %}Valid{% else %}Needs review{% endif %}</strong>
+      </div>
+      <div class="summary-cell">
+        <small>Records checked</small>
+        <strong>{{ audit.get("records", "-") }}</strong>
+      </div>
+      <div class="summary-cell">
+        <small>Verification time</small>
+        <strong>{{ "%.1f"|format(audit.get("verify_latency_ms", 0)) }}ms</strong>
+      </div>
+    </div>
+
+    {% if audit.get("error") %}
+      <div class="callout bad">
+        <span class="badge bad">Error</span>
+        <h3>Verification could not complete</h3>
+        <p>{{ audit.get("error") }}</p>
+      </div>
+    {% elif audit.get("chain_valid") %}
+      <div class="callout ok">
+        <span class="badge ok">Verified</span>
+        <h3>No tampering detected</h3>
+        <p>The sidecar recomputed the audit hash chain and every link matched the persisted chain.</p>
+      </div>
+    {% else %}
+      <div class="callout bad">
+        <span class="badge bad">Invalid</span>
+        <h3>Chain mismatch detected</h3>
+        <p>The stored trace chain failed verification. Treat this as evidence of tampering or storage corruption until investigated.</p>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

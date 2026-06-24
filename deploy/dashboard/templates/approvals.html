@@ -1,36 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Pending Approvals</h1>
-<div class="card">
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Approvals</div>
+      <h1>Human review queue</h1>
+    </div>
+    {% if approvals %}<span class="badge warn">{{ approvals | length }} pending</span>{% else %}<span class="badge ok">Clear</span>{% endif %}
+  </div>
   {% if approvals %}
   <div class="table-wrap">
-    <table>
-      <thead><tr>
-        <th>Request ID</th><th>Action</th><th>Tenant</th><th>Preview</th><th>Age</th><th>Decision</th>
-      </tr></thead>
+    <table class="trace-table">
+      <thead>
+        <tr><th>Request</th><th>Action</th><th>Tenant</th><th>Preview</th><th>Decision</th></tr>
+      </thead>
       <tbody>
       {% for a in approvals %}
-      <tr id="approval-{{ a.request_id }}">
-        <td class="mono">{{ a.request_id[:12] }}...</td>
-        <td><code>{{ a.action }}</code></td>
-        <td>{{ a.context.get("tenant","") }}</td>
-        <td class="truncate" style="color:#64748b">
-          {{ a.context.get("output_preview","") }}
-        </td>
-        <td style="color:#64748b">-</td>
-        <td style="display:flex;gap:0.5rem">
-          <button class="btn btn-approve"
-            hx-post="/approvals/{{ a.request_id }}/approve"
-            hx-headers='{"X-CSRF-Token":"{{ csrf_token }}"}'
-            hx-target="#approval-{{ a.request_id }}"
-            hx-swap="outerHTML">Approve</button>
-          <button class="btn btn-deny"
-            hx-post="/approvals/{{ a.request_id }}/deny"
-            hx-headers='{"X-CSRF-Token":"{{ csrf_token }}"}'
-            hx-target="#approval-{{ a.request_id }}"
-            hx-swap="outerHTML">Deny</button>
-        </td>
-      </tr>
+        <tr id="approval-{{ a.request_id }}">
+          <td class="mono">{{ a.request_id[:12] }}...</td>
+          <td><span class="mono">{{ a.action }}</span></td>
+          <td>{{ a.context.get("tenant","") }}</td>
+          <td class="truncate" style="color:var(--muted)">{{ a.context.get("output_preview","") }}</td>
+          <td style="display:flex;gap:8px">
+            <button class="button approve"
+              hx-post="/approvals/{{ a.request_id }}/approve"
+              hx-headers='{"X-CSRF-Token":"{{ csrf_token }}"}'
+              hx-target="#approval-{{ a.request_id }}"
+              hx-swap="outerHTML">Approve</button>
+            <button class="button deny"
+              hx-post="/approvals/{{ a.request_id }}/deny"
+              hx-headers='{"X-CSRF-Token":"{{ csrf_token }}"}'
+              hx-target="#approval-{{ a.request_id }}"
+              hx-swap="outerHTML">Deny</button>
+          </td>
+        </tr>
       {% endfor %}
       </tbody>
     </table>
@@ -38,5 +41,5 @@
   {% else %}
   <div class="empty">No pending approvals.</div>
   {% endif %}
-</div>
+</section>
 {% endblock %}

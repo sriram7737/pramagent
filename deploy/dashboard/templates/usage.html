@@ -1,51 +1,63 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Usage</h1>
-
-<div class="filter-bar">
-  <form method="get" action="/usage" style="display:flex;gap:0.75rem;flex-wrap:wrap">
-    <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id"
-           {% if tenant != "*" %}readonly{% endif %}>
-    <button class="btn btn-primary" type="submit">Refresh</button>
-  </form>
-</div>
-
-{% if usage.get("error") %}
-  <div class="card"><span class="badge badge-block">{{ usage.get("error") }}</span></div>
-{% else %}
-  {% set remaining = usage.get("remaining", {}) %}
-  {% set limits = usage.get("limits", {}) %}
-  <div class="grid grid-3" style="margin-bottom:1.5rem">
-    <div class="card">
-      <div class="stat-value">{{ usage.get("calls", 0) }}</div>
-      <div class="stat-label">Calls Used</div>
-      <div class="layer-detail">remaining {{ remaining.get("calls", "unlimited") }}</div>
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Quota</div>
+      <h1>Usage</h1>
     </div>
-    <div class="card">
-      <div class="stat-value">{{ usage.get("tool_validations", 0) }}</div>
-      <div class="stat-label">Tool Checks</div>
-      <div class="layer-detail">remaining {{ remaining.get("tool_validations", "unlimited") }}</div>
-    </div>
-    <div class="card">
-      <div class="stat-value">${{ "%.4f"|format(usage.get("cost_usd", 0)) }}</div>
-      <div class="stat-label">Tracked Cost</div>
-      <div class="layer-detail">remaining {{ remaining.get("cost_usd", "unlimited") }}</div>
-    </div>
-    <div class="card">
-      <div class="stat-value">{{ "%.0f"|format(limits.get("window_s", 0)) }}s</div>
-      <div class="stat-label">Quota Window</div>
-      <div class="layer-detail">tenant {{ usage.get("tenant_id", tenant_id) }}</div>
-    </div>
-    <div class="card">
-      <div class="stat-value">{{ metrics.get("usage_event_sinks", 0) }}</div>
-      <div class="stat-label">Usage Event Sinks</div>
-      <div class="layer-detail">billing hooks configured</div>
-    </div>
-    <div class="card">
-      <div class="stat-value">{% if metrics.get("usage_quota_enabled") %}ON{% else %}OFF{% endif %}</div>
-      <div class="stat-label">Quota Enforcement</div>
-      <div class="layer-detail">API-side hard limit</div>
-    </div>
+    <span class="badge {% if metrics.get('usage_quota_enabled') %}ok{% else %}info{% endif %}">
+      {% if metrics.get("usage_quota_enabled") %}Enforced{% else %}Tracking{% endif %}
+    </span>
   </div>
-{% endif %}
+
+  <div class="filterbar">
+    <form method="get" action="/usage">
+      <input name="tenant_id" value="{{ tenant_id }}" placeholder="tenant_id"
+             {% if tenant != "*" %}readonly{% endif %}>
+      <button class="button primary" type="submit">Refresh</button>
+    </form>
+  </div>
+
+  {% if usage.get("error") %}
+    <div class="panel-body">
+      <div class="callout bad"><span class="badge bad">Error</span><p>{{ usage.get("error") }}</p></div>
+    </div>
+  {% else %}
+    {% set remaining = usage.get("remaining", {}) %}
+    {% set limits = usage.get("limits", {}) %}
+    <div class="metrics" style="grid-template-columns: repeat(3, minmax(0,1fr));">
+      <div class="metric">
+        <small>Calls used</small>
+        <strong>{{ usage.get("calls", 0) }}</strong>
+        <span class="subline">remaining {{ remaining.get("calls", "unlimited") }}</span>
+      </div>
+      <div class="metric">
+        <small>Tool checks</small>
+        <strong>{{ usage.get("tool_validations", 0) }}</strong>
+        <span class="subline">remaining {{ remaining.get("tool_validations", "unlimited") }}</span>
+      </div>
+      <div class="metric">
+        <small>Tracked cost</small>
+        <strong>${{ "%.4f"|format(usage.get("cost_usd", 0)) }}</strong>
+        <span class="subline">remaining {{ remaining.get("cost_usd", "unlimited") }}</span>
+      </div>
+      <div class="metric">
+        <small>Quota window</small>
+        <strong>{{ "%.0f"|format(limits.get("window_s", 0)) }}s</strong>
+        <span class="subline">tenant {{ usage.get("tenant_id", tenant_id) }}</span>
+      </div>
+      <div class="metric">
+        <small>Usage Event Sinks</small>
+        <strong>{{ metrics.get("usage_event_sinks", 0) }}</strong>
+        <span class="subline">billing hooks configured</span>
+      </div>
+      <div class="metric {% if metrics.get('usage_quota_enabled') %}ok{% endif %}">
+        <small>Quota enforcement</small>
+        <strong>{% if metrics.get("usage_quota_enabled") %}ON{% else %}OFF{% endif %}</strong>
+        <span class="subline">API-side hard limit</span>
+      </div>
+    </div>
+  {% endif %}
+</section>
 {% endblock %}
