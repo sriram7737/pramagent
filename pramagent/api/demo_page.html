@@ -212,7 +212,7 @@
       <div class="brand"><div class="mark">P</div><b>Pramagent</b></div>
       <div class="topmeta">
         <span><span class="dot"></span>Isolated demo - keys are used only for this request</span>
-        <a href="https://build.nvidia.com" target="_blank" rel="noopener">Get a free NVIDIA key</a>
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a Gemini key</a>
       </div>
     </div>
 
@@ -253,8 +253,8 @@
             <div class="conn-body">
               <div>
                 <label class="field-label" for="apiKey">Provider API key</label>
-                <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="nvapi-... or sk-...">
-                <div class="hint">NVIDIA NIM keys use the selected model; OpenAI keys use gpt-4o-mini. Used only for this request. The demo never persists the key.</div>
+                <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="nvapi-..., sk-..., AIza..., or AQ...">
+                <div class="hint">NVIDIA NIM keys use the selected model; OpenAI keys use gpt-4o-mini; Gemini keys use gemini-2.5-flash. Used only for this request. The demo never persists the key.</div>
               </div>
               <div>
                 <label class="field-label" for="model">Model</label>
@@ -429,9 +429,12 @@
       const preBlocked = !!blockStage;
       const gateState = providerError ? "error" : (preBlocked ? "withheld" : "called");
       const providerFailureDetail = data.provider_error_detail || "Provider failed - safe default returned";
-      const modelName = $("apiKey").value.trim().startsWith("sk-")
+      const key = $("apiKey").value.trim();
+      const isOpenAIKey = key.startsWith("sk-");
+      const isGeminiKey = key.startsWith("AIza") || key.startsWith("AQ.");
+      const modelName = isOpenAIKey
         ? "gpt-4o-mini"
-        : (($("model").selectedOptions[0] || {}).textContent || "provider");
+        : (isGeminiKey ? "gemini-2.5-flash" : (($("model").selectedOptions[0] || {}).textContent || "provider"));
 
       const root = $("stack");
       root.innerHTML = "";
@@ -492,7 +495,7 @@
       // output + redactions + evidence
       if (providerError) {
         const d = data.provider_error_detail ? `\n\nProvider detail: ${data.provider_error_detail}` : "";
-        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${d}\n\nIf you are using NVIDIA NIM, try another listed model or verify that the key has access to the selected endpoint. If you are using OpenAI, use an sk- or sk-proj- key with access to gpt-4o-mini.`;
+        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${d}\n\nIf you are using NVIDIA NIM, try another listed model or verify that the key has access to the selected endpoint. If you are using OpenAI, use an sk- or sk-proj- key with access to gpt-4o-mini. If you are using Gemini, use an AI Studio key with access to gemini-2.5-flash.`;
       } else {
         $("output").textContent = data.blocked ? (data.output || data.block_reason || "Blocked.") : (data.output || "");
       }
@@ -512,8 +515,9 @@
       $("error").classList.remove("show");
       $("error").textContent = "";
       const key = $("apiKey").value.trim();
-      if (!(key.startsWith("nvapi-") || key.startsWith("sk-"))) {
-        $("error").textContent = "Add a key under Connection - NVIDIA (nvapi-...) or OpenAI (sk-...) - to run a live request.";
+      const isGeminiKey = key.startsWith("AIza") || key.startsWith("AQ.");
+      if (!(key.startsWith("nvapi-") || key.startsWith("sk-") || isGeminiKey)) {
+        $("error").textContent = "Add a key under Connection - NVIDIA (nvapi-...), OpenAI (sk-...), or Gemini (AIza.../AQ...) - to run a live request.";
         $("error").classList.add("show");
         const c = document.querySelector(".conn"); if (c) c.open = true;
         return;

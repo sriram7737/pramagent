@@ -12,7 +12,7 @@ from pramagent.auth import APIKeyRegistry  # noqa: E402
 from pramagent.hitl.slack import SlackApprovalRegistry  # noqa: E402
 from pramagent.layers import HITLLayer, ToolGuardLayer, ToolPolicy  # noqa: E402
 from pramagent.layers.tool_guard import SideEffect  # noqa: E402
-from pramagent.providers import NvidiaProvider, ProviderResult  # noqa: E402
+from pramagent.providers import GeminiProvider, NvidiaProvider, ProviderResult  # noqa: E402
 from pramagent.ratelimit import TokenBucket  # noqa: E402
 from pramagent.usage import InMemoryUsageLedger, UsageLimits, UsageTracker  # noqa: E402
 
@@ -273,6 +273,43 @@ def test_demo_provider_auth_failure_is_sanitized(monkeypatch):
         "Provider rejected the API key or selected model (HTTP 403)."
     )
     assert "Authorization failed" not in resp.text
+
+
+def test_demo_accepts_gemini_key_and_routes_provider(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    seen = {}
+
+    async def fake_complete(self, prompt, **kwargs):
+        seen.setdefault("calls", 0)
+        seen["calls"] += 1
+        seen["key"] = self.api_key
+        seen["model"] = self.model
+        if "safety judge" in prompt.lower():
+            return ProviderResult(text="SAFE", model=self.model, latency_ms=1.0)
+        return ProviderResult(text="Gemini routed response.", model=self.model, latency_ms=2.0)
+
+    async def fail_nvidia(self, prompt, **kwargs):  # pragma: no cover - assertion helper
+        raise AssertionError("Gemini-shaped keys must not route to NVIDIA")
+
+    monkeypatch.setattr(GeminiProvider, "complete", fake_complete)
+    monkeypatch.setattr(NvidiaProvider, "complete", fail_nvidia)
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/run",
+        json={
+            "nvidia_api_key": "AIza" + "A" * 36,
+            "prompt": "Summarize audit logging for AI agents.",
+        },
+    )
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["blocked"] is False
+    assert body["output"] == "Gemini routed response."
+    assert seen["key"].startswith("AIza")
+    assert seen["model"] == "gemini-2.5-flash"
+    assert "AIza" not in resp.text
 
 
 def test_demo_routing_number_redacts_with_context_and_pre_hitl(monkeypatch):

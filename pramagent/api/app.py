@@ -219,6 +219,7 @@ NVIDIA_DEMO_MODELS: dict[str, str] = {
     "nvidia/llama-3.1-nemotron-nano-8b-v1": "Nemotron Nano 8B",
 }
 DEFAULT_NVIDIA_DEMO_MODEL = "mistralai/mistral-small-4-119b-2603"
+DEFAULT_GEMINI_DEMO_MODEL = "gemini-2.5-flash"
 
 
 def _demo_enabled() -> bool:
@@ -801,8 +802,8 @@ def create_app(armor: Optional[Pramagent] = None,
         """Cheap shape check before the demo tries a live provider call.
 
         This is not authentication; the upstream provider still validates the
-        key. It rejects obvious placeholders and short fake ``sk-`` strings so
-        bad-key tests and demos fail before a provider error can echo context.
+        key. It rejects obvious placeholders and short fake strings so bad-key
+        tests and demos fail before a provider error can echo context.
         """
         if not isinstance(api_key, str):
             return False
@@ -813,7 +814,25 @@ def create_app(armor: Optional[Pramagent] = None,
         if api_key.startswith("sk-"):
             suffix = api_key[3:]
             return len(suffix) >= 32 and suffix.isalnum()
+        if api_key.startswith("AIza"):
+            return len(api_key) >= 24
+        # Some managed Gemini/API Studio credentials are represented as AQ.*
+        # tokens in user environments. The provider still performs the real
+        # authentication check; this only routes them away from NVIDIA.
+        if api_key.startswith("AQ."):
+            return len(api_key) >= 24
         return False
+
+    def _demo_provider_kind(api_key: object) -> Optional[str]:
+        if not isinstance(api_key, str):
+            return None
+        if api_key.startswith("nvapi-"):
+            return "nvidia"
+        if api_key.startswith("sk-") or api_key.startswith("sk-proj-"):
+            return "openai"
+        if api_key.startswith("AIza") or api_key.startswith("AQ."):
+            return "gemini"
+        return None
 
     def _demo_policy(payload: dict) -> dict[str, bool]:
         raw = payload.get("policies") or {}
@@ -841,6 +860,11 @@ def create_app(armor: Optional[Pramagent] = None,
             or "http 403" in lowered
             or "authorization" in lowered
             or "forbidden" in lowered
+            or "api_key_invalid" in lowered
+            or "api key not valid" in lowered
+            or "invalid api key" in lowered
+            or "permission_denied" in lowered
+            or "unauthenticated" in lowered
         ):
             if "403" in lowered:
                 return "Provider rejected the API key or selected model (HTTP 403)."
@@ -995,9 +1019,15 @@ def create_app(armor: Optional[Pramagent] = None,
                 detail="demo payment tool requires human approval",
             )
         ])
-        if isinstance(api_key, str) and (api_key.startswith("sk-") or api_key.startswith("sk-proj-")):
+        provider_kind = _demo_provider_kind(api_key)
+        if provider_kind == "openai":
             # If the user passed an OpenAI key, route to OpenAI's default mini model
             provider = OpenAIProvider(model="gpt-4o-mini", api_key=api_key)
+        elif provider_kind == "gemini":
+            provider = GeminiProvider(
+                model=os.environ.get("PRAMAGENT_DEMO_GEMINI_MODEL", DEFAULT_GEMINI_DEMO_MODEL),
+                api_key=api_key,
+            )
         else:
             provider = NvidiaProvider(model=model, api_key=api_key)
 
@@ -1106,10 +1136,11 @@ def create_app(armor: Optional[Pramagent] = None,
         api_key = payload.get("nvidia_api_key")
         if not _looks_like_demo_api_key(api_key):
             return JSONResponse(
-                {"detail": "valid NVIDIA NIM or OpenAI API key required"},
+                {"detail": "valid NVIDIA NIM, OpenAI, or Gemini API key required"},
                 status_code=400,
                 headers=_demo_cors_headers(),
             )
+        provider_kind = _demo_provider_kind(api_key)
 
         prompt = payload.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
@@ -1126,7 +1157,7 @@ def create_app(armor: Optional[Pramagent] = None,
             )
 
         model = payload.get("model") or DEFAULT_NVIDIA_DEMO_MODEL
-        if model not in NVIDIA_DEMO_MODELS:
+        if provider_kind == "nvidia" and model not in NVIDIA_DEMO_MODELS:
             return JSONResponse(
                 {"detail": "unsupported NVIDIA model"},
                 status_code=400,
