@@ -66,7 +66,7 @@ from ..ratelimit import TokenBucket
 from ..rca import RCAEngine
 from ..store import MemoryStore, SQLiteStore
 from ..telemetry import configure_otel
-from ..types import Verdict
+from ..types import LayerEvent, Verdict
 from ..usage import UsageTracker
 
 
@@ -863,15 +863,23 @@ def create_app(armor: Optional[Pramagent] = None,
             or "api_key_invalid" in lowered
             or "api key not valid" in lowered
             or "invalid api key" in lowered
+            or ("http 400" in lowered and "api key" in lowered)
             or "permission_denied" in lowered
             or "unauthenticated" in lowered
         ):
+            if "400" in lowered:
+                return "Provider rejected the API key or selected model (HTTP 400)."
             if "403" in lowered:
                 return "Provider rejected the API key or selected model (HTTP 403)."
             if "401" in lowered:
                 return "Provider rejected the API key (HTTP 401)."
             return "Provider rejected the API key or selected model."
         return detail[:220]
+
+    def _demo_layer_event_detail(event: LayerEvent) -> str:
+        if event.layer == "ReliabilityLayer" and event.decision == "degraded":
+            return _demo_provider_error_detail(event.detail) or "provider failed"
+        return event.detail
 
     def _demo_financial_intent(prompt: str, action: str) -> bool:
         import re
@@ -1225,7 +1233,7 @@ def create_app(armor: Optional[Pramagent] = None,
                 {
                     "layer": event.layer,
                     "decision": event.decision,
-                    "detail": event.detail,
+                    "detail": _demo_layer_event_detail(event),
                     "latency_ms": event.latency_ms,
                     "data": event.data,
                 }

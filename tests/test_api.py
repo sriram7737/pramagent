@@ -312,6 +312,35 @@ def test_demo_accepts_gemini_key_and_routes_provider(monkeypatch):
     assert "AIza" not in resp.text
 
 
+def test_demo_gemini_auth_failure_is_sanitized(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+
+    async def fake_complete(self, prompt, **kwargs):
+        raise RuntimeError(
+            'provider HTTP 400: {"error":{"message":"API key not valid. Please pass a valid API key."}}'
+        )
+
+    monkeypatch.setattr(GeminiProvider, "complete", fake_complete)
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/run",
+        json={
+            "nvidia_api_key": "AIza" + "A" * 36,
+            "prompt": "Summarize safe deployment logging practices.",
+        },
+    )
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["blocked"] is True
+    assert body["block_reason"] == "provider error"
+    assert body["provider_error_detail"] == (
+        "Provider rejected the API key or selected model (HTTP 400)."
+    )
+    assert "API key not valid" not in resp.text
+
+
 def test_demo_routing_number_redacts_with_context_and_pre_hitl(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     seen = {}
