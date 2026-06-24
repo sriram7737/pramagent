@@ -851,7 +851,10 @@ def create_app(armor: Optional[Pramagent] = None,
             "output_judge": _as_bool(raw.get("output_judge"), True),
         }
 
-    def _demo_provider_error_detail(detail: Optional[str]) -> Optional[str]:
+    def _demo_provider_error_detail(
+        detail: Optional[str],
+        provider_kind: Optional[str] = None,
+    ) -> Optional[str]:
         if not detail:
             return None
         lowered = detail.lower()
@@ -870,15 +873,25 @@ def create_app(armor: Optional[Pramagent] = None,
             if "400" in lowered:
                 return "Provider rejected the API key or selected model (HTTP 400)."
             if "403" in lowered:
+                if provider_kind == "nvidia":
+                    return (
+                        "NVIDIA rejected this key/account for hosted chat completions "
+                        "(HTTP 403). This usually means Public API Endpoints access "
+                        "is not enabled for the NVIDIA organization; changing models "
+                        "will not fix it."
+                    )
                 return "Provider rejected the API key or selected model (HTTP 403)."
             if "401" in lowered:
                 return "Provider rejected the API key (HTTP 401)."
             return "Provider rejected the API key or selected model."
         return detail[:220]
 
-    def _demo_layer_event_detail(event: LayerEvent) -> str:
+    def _demo_layer_event_detail(
+        event: LayerEvent,
+        provider_kind: Optional[str] = None,
+    ) -> str:
         if event.layer == "ReliabilityLayer" and event.decision == "degraded":
-            return _demo_provider_error_detail(event.detail) or "provider failed"
+            return _demo_provider_error_detail(event.detail, provider_kind) or "provider failed"
         return event.detail
 
     def _demo_financial_intent(prompt: str, action: str) -> bool:
@@ -1215,7 +1228,10 @@ def create_app(armor: Optional[Pramagent] = None,
              if event.layer == "ReliabilityLayer" and event.decision == "degraded"),
             None,
         )
-        provider_error_detail = _demo_provider_error_detail(provider_error_detail)
+        provider_error_detail = _demo_provider_error_detail(
+            provider_error_detail,
+            provider_kind,
+        )
         body = {
             "call_id": trace.call_id,
             "action": action,
@@ -1233,7 +1249,7 @@ def create_app(armor: Optional[Pramagent] = None,
                 {
                     "layer": event.layer,
                     "decision": event.decision,
-                    "detail": _demo_layer_event_detail(event),
+                    "detail": _demo_layer_event_detail(event, provider_kind),
                     "latency_ms": event.latency_ms,
                     "data": event.data,
                 }

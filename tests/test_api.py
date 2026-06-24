@@ -270,7 +270,10 @@ def test_demo_provider_auth_failure_is_sanitized(monkeypatch):
     assert body["blocked"] is True
     assert body["block_reason"] == "provider error"
     assert body["provider_error_detail"] == (
-        "Provider rejected the API key or selected model (HTTP 403)."
+        "NVIDIA rejected this key/account for hosted chat completions "
+        "(HTTP 403). This usually means Public API Endpoints access "
+        "is not enabled for the NVIDIA organization; changing models "
+        "will not fix it."
     )
     assert "Authorization failed" not in resp.text
 

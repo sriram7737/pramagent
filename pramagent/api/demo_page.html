@@ -495,7 +495,7 @@
       // output + redactions + evidence
       if (providerError) {
         const d = data.provider_error_detail ? `\n\nProvider detail: ${data.provider_error_detail}` : "";
-        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${d}\n\nIf you are using NVIDIA NIM, try another listed model or verify that the key has access to the selected endpoint. If you are using OpenAI, use an sk- or sk-proj- key with access to gpt-4o-mini. If you are using Gemini, use an AI Studio key with access to gemini-2.5-flash.`;
+        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${d}\n\nIf this is NVIDIA HTTP 403, the key/account is not authorized for hosted chat completions; changing models usually will not fix it. Confirm Public API Endpoints access for the NVIDIA organization, or use an OpenAI key with gpt-4o-mini / a Gemini AI Studio key with gemini-2.5-flash.`;
       } else {
         $("output").textContent = data.blocked ? (data.output || data.block_reason || "Blocked.") : (data.output || "");
       }
