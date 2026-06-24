@@ -331,7 +331,7 @@
       { key: "isolation",  name: "IsolationLayer",  note: "Block destructive or out-of-scope actions", match: /isolation/i },
       { key: "safety",     name: "SafetyLayer",     note: "Deterministic block, escalate, or redact", match: /safety(?!.*post)|injection|policy/i },
       { key: "gate",       name: "Model gate",      note: "The provider is called only if the request earns it", gate: true },
-      { key: "judge",      name: "OutputJudge",     note: "A second model withholds unsafe output", match: /judge|reliability|safety.*post|post/i },
+      { key: "judge",      name: "OutputJudge",     note: "A second model withholds unsafe output", match: /judge|safety.*post|post/i },
       { key: "audit",      name: "AuditChain",      note: "Seal the run into a verifiable hash chain", match: /audit|chain|seal/i }
     ];
 
@@ -428,6 +428,7 @@
       const [label, klass] = statusFor(data);
       const preBlocked = !!blockStage;
       const gateState = providerError ? "error" : (preBlocked ? "withheld" : "called");
+      const providerFailureDetail = data.provider_error_detail || "Provider failed - safe default returned";
       const modelName = $("apiKey").value.trim().startsWith("sk-")
         ? "gpt-4o-mini"
         : (($("model").selectedOptions[0] || {}).textContent || "provider");
@@ -446,8 +447,10 @@
         } else if (st.gate) {
           cls += " gate " + gateState;
           if (gateState === "called") { cls += " ok"; nt = `Provider called - ${modelName}`; pill = `<span class="pill ok">called</span>`; }
-          else if (gateState === "error") { cls += " warn"; nt = "Provider failed - safe default returned"; pill = `<span class="pill warn">error</span>`; }
+          else if (gateState === "error") { cls += " warn"; nt = providerFailureDetail; pill = `<span class="pill warn">provider error</span>`; }
           else { cls += " bad"; nt = "Provider never called"; pill = `<span class="pill bad">withheld</span>`; }
+        } else if (st.key === "judge" && (providerError || preBlocked)) {
+          cls += " cut"; nt = "Not reached"; pill = `<span class="pill skip">skipped</span>`;
         } else if (bind[st.key]) {
           const e = bind[st.key];
           const ds = decisionState(e.decision);
@@ -489,7 +492,7 @@
       // output + redactions + evidence
       if (providerError) {
         const d = data.provider_error_detail ? `\n\nProvider detail: ${data.provider_error_detail}` : "";
-        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${d}\n\nTry a different NVIDIA model, or verify this key has access to the selected NIM endpoint.`;
+        $("output").textContent = `Provider call failed, so Pramagent returned a safe default and kept the audit trace intact.${d}\n\nIf you are using NVIDIA NIM, try another listed model or verify that the key has access to the selected endpoint. If you are using OpenAI, use an sk- or sk-proj- key with access to gpt-4o-mini.`;
       } else {
         $("output").textContent = data.blocked ? (data.output || data.block_reason || "Blocked.") : (data.output || "");
       }

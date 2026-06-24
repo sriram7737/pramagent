@@ -246,6 +246,35 @@ def test_demo_provider_failure_returns_degraded_detail(monkeypatch):
     )
 
 
+def test_demo_provider_auth_failure_is_sanitized(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+
+    async def fake_complete(self, prompt, **kwargs):
+        raise RuntimeError(
+            'provider HTTP 403: {"status":403,"title":"Forbidden","detail":"Authorization failed"}'
+        )
+
+    monkeypatch.setattr(NvidiaProvider, "complete", fake_complete)
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/run",
+        json={
+            "nvidia_api_key": "nvapi-test-secret",
+            "prompt": "Summarize safe deployment logging practices.",
+        },
+    )
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["blocked"] is True
+    assert body["block_reason"] == "provider error"
+    assert body["provider_error_detail"] == (
+        "Provider rejected the API key or selected model (HTTP 403)."
+    )
+    assert "Authorization failed" not in resp.text
+
+
 def test_demo_routing_number_redacts_with_context_and_pre_hitl(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     seen = {}

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Public demo now keeps provider failures on the model-gate row instead of
+  showing them as `OutputJudge` failures, and 401/403 provider errors are
+  rendered as key/model-access failures without echoing raw upstream auth text.
+
 ## v0.8.3 - 2026-06-24
 
 ### Changed

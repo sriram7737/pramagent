@@ -832,6 +832,23 @@ def create_app(armor: Optional[Pramagent] = None,
             "output_judge": _as_bool(raw.get("output_judge"), True),
         }
 
+    def _demo_provider_error_detail(detail: Optional[str]) -> Optional[str]:
+        if not detail:
+            return None
+        lowered = detail.lower()
+        if (
+            "http 401" in lowered
+            or "http 403" in lowered
+            or "authorization" in lowered
+            or "forbidden" in lowered
+        ):
+            if "403" in lowered:
+                return "Provider rejected the API key or selected model (HTTP 403)."
+            if "401" in lowered:
+                return "Provider rejected the API key (HTTP 401)."
+            return "Provider rejected the API key or selected model."
+        return detail[:220]
+
     def _demo_financial_intent(prompt: str, action: str) -> bool:
         import re
 
@@ -1159,6 +1176,7 @@ def create_app(armor: Optional[Pramagent] = None,
              if event.layer == "ReliabilityLayer" and event.decision == "degraded"),
             None,
         )
+        provider_error_detail = _demo_provider_error_detail(provider_error_detail)
         body = {
             "call_id": trace.call_id,
             "action": action,
