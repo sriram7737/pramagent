@@ -28,6 +28,11 @@
   showing them as `OutputJudge` failures, and 401/403 provider errors are
   rendered as key/model-access failures without echoing raw upstream auth text.
 
+### Verified
+
+- `python -m pytest -q --tb=short` -> `684 passed, 2 skipped`.
+- `python -m build; python -m twine check dist/*` -> passed.
+
 ## v0.8.3 - 2026-06-24
 
 ### Changed

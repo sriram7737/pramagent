@@ -333,7 +333,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   hardening raised it to **640 passed, 2 skipped**; v0.7.8 output-judge
   hardening raised it to **657 passed, 2 skipped**; v0.8.0 classifier
   hardening raised it to **661 passed, 2 skipped**; the dashboard evidence and
-  metric hardening pass raised it to **673 passed, 2 skipped**.
+  metric hardening pass raised it to **673 passed, 2 skipped**; the v0.8.4
+  conformance-label release raised it to **684 passed, 2 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 

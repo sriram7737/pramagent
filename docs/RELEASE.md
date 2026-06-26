@@ -94,7 +94,7 @@ git push origin v0.8.4
 
 Create a GitHub Release from tag `v0.8.4` and include:
 
-- Test result: `673 passed, 2 skipped`
+- Test result: `684 passed, 2 skipped`
 - Public-demo output-judge result: `OutputJudgeLayer` on by default, visible
   policy toggle in `/demo`, keylogger/bypass/destructive-output class withheld,
   reference `/v1/run` opt-in via `PRAMAGENT_OUTPUT_JUDGE=1`
