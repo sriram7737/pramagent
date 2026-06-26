@@ -106,6 +106,11 @@ class RunResponse(BaseModel):
     this_hash: str
     prev_hash: str
     total_latency_ms: float
+    aws_scope: str = "undeclared"
+    detection_tier: str = ""
+    response_tier: str = ""
+    attack_techniques: list[str] = Field(default_factory=list)
+    conformance_metrics: dict = Field(default_factory=dict)
 
 
 class CounterfactualRequest(BaseModel):
@@ -197,6 +202,11 @@ class TraceModel(BaseModel):
     anchor_tx_id: str
     anchor_block_number: int
     anchor_metadata: dict
+    aws_scope: str = "undeclared"
+    detection_tier: str = ""
+    response_tier: str = ""
+    attack_techniques: list[str] = Field(default_factory=list)
+    conformance_metrics: dict = Field(default_factory=dict)
 
 
 class EraseResponse(BaseModel):
@@ -398,6 +408,7 @@ def build_default_armor() -> Pramagent:
         # that want a different posture pass their own escalate_policy.
         escalate_policy={"pre": "hitl"},
         output_judge=output_judge,
+        agent_scope=os.environ.get("PRAMAGENT_AGENT_SCOPE", "scope_2"),
         audit=audit,
         store=store,
     )
@@ -518,7 +529,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.8.3",
+        version="0.8.4",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )
@@ -1087,6 +1098,7 @@ def create_app(armor: Optional[Pramagent] = None,
             # returns ESCALATE, the action is held for human approval before
             # the model runs.  Without this, ESCALATE verdicts are only logged.
             escalate_policy={"pre": "hitl"},
+            agent_scope="scope_2",
         )
 
     @app.get("/demo", response_class=HTMLResponse)
@@ -1258,6 +1270,11 @@ def create_app(armor: Optional[Pramagent] = None,
             "provider": trace.provider,
             "provider_model": trace.provider_model,
             "provider_latency_ms": trace.provider_latency_ms,
+            "aws_scope": trace.aws_scope,
+            "detection_tier": trace.detection_tier,
+            "response_tier": trace.response_tier,
+            "attack_techniques": trace.attack_techniques,
+            "conformance_metrics": trace.conformance_metrics,
             "this_hash": trace.this_hash,
             "prev_hash": trace.prev_hash,
             "total_latency_ms": trace.total_latency_ms,
@@ -1349,6 +1366,11 @@ def create_app(armor: Optional[Pramagent] = None,
             provider_model=t.provider_model, used_fallback=t.used_fallback,
             this_hash=t.this_hash, prev_hash=t.prev_hash,
             total_latency_ms=t.total_latency_ms,
+            aws_scope=t.aws_scope,
+            detection_tier=t.detection_tier,
+            response_tier=t.response_tier,
+            attack_techniques=t.attack_techniques,
+            conformance_metrics=t.conformance_metrics,
         )
 
     @app.get("/v1/trace/{call_id}", response_model=TraceModel)

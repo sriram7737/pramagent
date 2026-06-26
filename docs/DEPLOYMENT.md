@@ -259,7 +259,7 @@ kubectl create secret generic pramagent-secrets \
   --from-literal=PRAMAGENT_API_KEY=... --from-literal=PRAMAGENT_JWT_SECRET=... \
   --from-literal=PRAMAGENT_REDIS_URL=redis://... --from-literal=PRAMAGENT_POSTGRES_DSN=postgresql://...
 helm install pramagent deploy/helm/pramagent \
-  --set image.tag=0.8.3 --set otel.endpoint=http://otel-collector:4317
+  --set image.tag=0.8.4 --set otel.endpoint=http://otel-collector:4317
 ```
 Includes readiness/liveness probes, HorizontalPodAutoscaler (3–10 replicas), and
 secret-based config. Point `otel.endpoint` at any OTLP collector (Jaeger,

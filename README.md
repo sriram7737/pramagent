@@ -18,7 +18,8 @@ most differentiated layer is ToolGuard: deterministic tool validation with JSON
 Schema, tenant/action allow-lists, side-effect taxonomy, dangerous-chain
 detection, output scanning, and HITL escalation. The current package also
 ships curated safety rule corpora, persistent HITL queues, thin adapters for
-popular agent frameworks, and compliance evidence generation.
+popular agent frameworks, compliance evidence generation, and
+DeepMind/AWS-style conformance labels on every trace.
 
 ## Alpha Maturity Notice
 
@@ -37,6 +38,8 @@ or third-party-validated safety from the bundled benchmarks alone. Read
 before using it in a customer-facing pilot.
 The June 11 active security prompt results are tracked in
 [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md).
+The DeepMind/AWS agent-security mapping is tracked in
+[Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md).
 
 **Start here:** [Getting Started With Pramagent](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
 walks from install to provider setup, agent wrapping, ToolGuard, HITL, trace
@@ -44,8 +47,9 @@ storage, dashboard/API, and real workflow demos.
 
 **Try the public demo:** run the API with `PRAMAGENT_ENABLE_DEMO=1` and open
 `/demo`. The demo is bring-your-own-key: visitors enter an NVIDIA NIM
-`nvapi-*` key or OpenAI `sk-*` key for that request only, choose a scenario,
-and watch the trust stack decide where the request stops. It shows PII
+`nvapi-*` key, OpenAI `sk-*` key, or Gemini API Studio key for that request
+only, choose a scenario, and watch the trust stack decide where the request
+stops. It shows PII
 scrubbing, injection blocking, deterministic safety rules, output judging,
 HITL holds, and hash-chain verification as one walkthrough.
 
@@ -65,7 +69,8 @@ from pramagent import Pramagent
 async def main():
     resp = await Pramagent().run("Summarize this request", tenant_id="demo", session_id="s1")
     print(resp.output)
-    print(resp.trace.this_hash)
+print(resp.trace.this_hash)
+print(resp.trace.detection_tier, resp.trace.response_tier)
 
 asyncio.run(main())
 ```
@@ -102,7 +107,17 @@ tool policy, HITL gate, or audit chain by changing its own text output.
 **How do I audit AI agent decisions in production?**  
 Every Pramagent call produces a hash-chained `TraceEvent` with layer decisions,
 verdicts, provider metadata, PII redactions, HITL status, and `this_hash` /
-`prev_hash`. The local chain can be verified and optionally anchored externally.
+`prev_hash`. New traces also include `aws_scope`, `detection_tier`,
+`response_tier`, `attack_techniques`, and `conformance_metrics` so the same
+evidence can be read through DeepMind/AWS agent-security vocabulary. The local
+chain can be verified and optionally anchored externally.
+
+**How do I declare AWS agent autonomy scope?**
+Pass `agent_scope="scope_1"`, `"scope_2"`, or `"scope_3"` to `Pramagent`, or
+set `PRAMAGENT_AGENT_SCOPE` for the API sidecar. Scope 1 blocks non-read side
+effects. Scope 2 requires human approval for non-read tools even if a policy
+was accidentally configured as `ALLOW`. Scope 3 records bounded-autonomy intent
+and relies on your configured ToolGuard/HITL/rate-limit policies.
 
 **How do I prevent prompt injection in a Python LLM agent?**  
 `IsolationLayer` scans inputs before the model sees them. It covers known
@@ -186,19 +201,21 @@ uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
 ```
 
 The demo asks the visitor for their own provider key on each run: `nvapi-*` for
-NVIDIA NIM models or `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`. Pramagent
-uses that key only for the current provider call; it is not written to traces,
-logs, stores, usage records, or the hash-chain payload. Each demo run uses an
-isolated in-memory trace store and returns the output, trust-layer events,
-redactions, HITL state, latency, `this_hash`, `prev_hash`, and local chain
+NVIDIA NIM models, `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`, or an AI
+Studio Gemini key for `gemini-2.5-flash`. Pramagent uses that key only for the
+current provider call; it is not written to traces, logs, stores, usage
+records, or the hash-chain payload. Each demo run uses an isolated in-memory
+trace store and returns the output, trust-layer events, redactions, HITL state,
+latency, conformance fields, `this_hash`, `prev_hash`, and local chain
 verification.
 
 The public throttle is keyed by client IP plus a short in-memory SHA-256 hash
 of the visitor's provider key. If a visitor switches to a different key, they
 get a fresh demo bucket without Pramagent storing the plaintext key.
 A `DEGRADED` demo result means the upstream model call failed and Pramagent
-returned its safe default with a trace; try another listed NIM model or verify
-that the key has access to the selected endpoint.
+returned its safe default with a trace. NVIDIA HTTP 403 usually means the
+NVIDIA organization lacks hosted Public API Endpoints access; changing models
+usually will not fix that entitlement issue.
 
 Dashboard evidence from the authenticated June 21 smoke run is captured in
 [Demo evidence](https://github.com/sriram7737/pramagent/blob/main/docs/DEMO_EVIDENCE_2026-06-21.md).

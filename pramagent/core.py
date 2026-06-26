@@ -30,6 +30,8 @@ import time
 from typing import Any, Optional
 
 from .audit import HashChainBackend
+from .conformance import (finalize_trace_conformance,
+                          is_read_only_side_effect, normalize_agent_scope)
 from .layers import (CircuitOpenError, ComplianceLayer, HITLLayer,
                      InjectionSuspected, InputTooLarge, IsolationLayer,
                      IsolationViolation, ObservabilityLayer,
@@ -38,8 +40,8 @@ from .layers.tool_guard import ToolDecision
 from .providers import BaseProvider, MockProvider
 from .store import MemoryStore
 from .telemetry import trace_layer, span_from_headers
-from .types import (AgentResponse, EscalatePolicy, HITLStatus, LayerEvent,
-                    Provenance, TraceEvent, Verdict)
+from .types import (AgentResponse, AgentScope, EscalatePolicy, HITLStatus,
+                    LayerEvent, Provenance, TraceEvent, Verdict)
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class Pramagent:
         consent_purpose: str = "service_provision",
         escalate_policy=None,
         output_judge=None,
+        agent_scope=None,
     ):
         """Create a Pramagent orchestrator.
 
@@ -102,6 +105,9 @@ class Pramagent:
         # disabled (zero overhead). When set, every output that clears the
         # deterministic checks is evaluated semantically before it is returned.
         self.output_judge = output_judge
+        # Optional AWS Agentic AI Security Scoping Matrix declaration. Default
+        # remains "undeclared" for backwards-compatible library use.
+        self.agent_scope = normalize_agent_scope(agent_scope)
 
     def validate_tool(
         self,
@@ -167,6 +173,7 @@ class Pramagent:
         # covers the original bytes so the caller can prove what was sent.
         tr = TraceEvent(tenant_id=tenant_id, session_id=session_id)
         tr.input_hash = hashlib.sha256(prompt.encode()).hexdigest()
+        tr.aws_scope = self.agent_scope.value
 
         def mark(layer, decision, detail, t0, **data):
             tr.layer_events.append(LayerEvent(
@@ -307,6 +314,23 @@ class Pramagent:
                 mark("ToolGuardLayer", td.verdict.value,
                      f"{tool_name}: {td.reason}", t0,
                      side_effect=td.side_effect, decision_id=td.decision_id)
+                if (
+                    self.agent_scope == AgentScope.SCOPE_1_READ_ONLY
+                    and not is_read_only_side_effect(td.side_effect)
+                ):
+                    t_scope = time.perf_counter()
+                    reason = (
+                        f"AWS Scope 1 is read-only; side-effect "
+                        f"'{td.side_effect}' is not allowed"
+                    )
+                    mark("ScopePolicy", "blocked", reason, t_scope,
+                         aws_scope=self.agent_scope.value,
+                         side_effect=td.side_effect)
+                    response = await self._finalize(tr, output="", blocked=True,
+                                              reason=reason, t_start=t_start)
+                    self.observability.record_result(blocked=True,
+                        latency_ms=response.trace.total_latency_ms, block_reason=reason)
+                    return response
                 if td.verdict == Verdict.BLOCK:
                     reason = f"tool blocked by policy: {td.reason}"
                     response = await self._finalize(tr, output="", blocked=True,
@@ -314,11 +338,19 @@ class Pramagent:
                     self.observability.record_result(blocked=True,
                         latency_ms=response.trace.total_latency_ms, block_reason=reason)
                     return response
-                if td.verdict == Verdict.ESCALATE:
+                scope2_requires_approval = (
+                    self.agent_scope == AgentScope.SCOPE_2_HUMAN_APPROVED
+                    and not is_read_only_side_effect(td.side_effect)
+                )
+                if td.verdict == Verdict.ESCALATE or scope2_requires_approval:
                     # ESCALATE → HITL: the tool requires human approval before
                     # any side effect. Propose-and-wait; on DENIED or IDLE
                     # (silence is never consent) the call does not proceed.
                     hitl_action = f"tool:{tool_name}"
+                    hitl_reason = (
+                        td.reason if td.verdict == Verdict.ESCALATE
+                        else "AWS Scope 2 requires human approval for non-read side effects"
+                    )
                     t0 = time.perf_counter()
                     with trace_layer("HITLLayer",
                                      attributes={"action": hitl_action}) as span:
@@ -326,13 +358,16 @@ class Pramagent:
                             "tenant": tenant_id,
                             "tool_name": tool_name,
                             "side_effect": td.side_effect,
-                            "reason": td.reason,
+                            "reason": hitl_reason,
+                            "aws_scope": self.agent_scope.value,
                         })
                         span.set_attribute("hitl.status", status.value)
                     tr.hitl_status = status.value
                     mark("HITLLayer", status.value,
-                         f"tool escalation: {tool_name} ({td.reason})", t0,
-                         tool_name=tool_name, decision_id=td.decision_id)
+                         f"tool approval: {tool_name} ({hitl_reason})", t0,
+                         tool_name=tool_name, decision_id=td.decision_id,
+                         aws_scope=self.agent_scope.value,
+                         side_effect=td.side_effect)
                     if status != HITLStatus.APPROVED:
                         reason = (f"tool '{tool_name}' requires human approval: "
                                   + ("denied" if status == HITLStatus.DENIED
@@ -344,6 +379,24 @@ class Pramagent:
                             latency_ms=response.trace.total_latency_ms,
                             block_reason=reason)
                         return response
+
+            if (
+                self.agent_scope == AgentScope.SCOPE_1_READ_ONLY
+                and self.hitl.is_consequential(action)
+            ):
+                t0 = time.perf_counter()
+                reason = (
+                    f"AWS Scope 1 is read-only; consequential action "
+                    f"'{action}' is not allowed"
+                )
+                mark("ScopePolicy", "blocked", reason, t0,
+                     aws_scope=self.agent_scope.value,
+                     action=action)
+                response = await self._finalize(tr, output="", blocked=True,
+                                          reason=reason, t_start=t_start)
+                self.observability.record_result(blocked=True,
+                    latency_ms=response.trace.total_latency_ms, block_reason=reason)
+                return response
 
             # 4) Reliability-guarded provider call
             t0 = time.perf_counter()
@@ -524,6 +577,7 @@ class Pramagent:
         scrubbed_output, _ = self.compliance.scrub(output)
         tr.output_text = scrubbed_output
         tr.total_latency_ms = (time.perf_counter() - t_start) * 1000
+        finalize_trace_conformance(tr, blocked=blocked, block_reason=reason)
         payload = tr.to_dict()
         for k in (
             "this_hash",

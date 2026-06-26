@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-23 dashboard identity/evidence refresh._
+_Last updated after the 2026-06-26 DeepMind/AWS conformance-label release._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -66,6 +66,13 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   detection, Redis/back-end-backed side-effect history and session call counters,
   per-tenant/action allow-lists, decision recorded in the trace,
   **LLM-as-judge** tightening hook
+- **DeepMind/AWS conformance labels** on every finalized trace:
+  `aws_scope`, `detection_tier`, `response_tier`, `attack_techniques`, and
+  `conformance_metrics`. `Pramagent(agent_scope="scope_1"|"scope_2"|"scope_3")`
+  declares AWS autonomy scope; Scope 1 blocks non-read side effects, and Scope 2
+  requires HITL for non-read tools even when a policy is accidentally configured
+  as `ALLOW`. The API reference deployment declares Scope 2 by default through
+  `PRAMAGENT_AGENT_SCOPE=scope_2`.
 - **OutputJudgeLayer** — LLM-as-judge on the model OUTPUT, wired into the
   pipeline between output validation and the HITL gate. This is the "is the
   OUTPUT safe?" check that deterministic rules cannot give: it catches semantic
@@ -117,6 +124,8 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   and session-authenticated browser forms
 - Built-in red-team benchmark CLI with static and dynamic mutation modes
   (`python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`)
+- Seeded red-team recall reporting via `RedTeamReport.recall`; runtime traces
+  intentionally mark recall as unavailable because live traffic is unlabeled.
 - Held-out prompt-injection benchmark fixtures for Lakera PINT-style and
   TensorTrust-style attacks so classifier regressions are not measured only
   against Pramagent's own exemplar corpus.
@@ -126,8 +135,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - CI security scanning with Bandit, Semgrep, and authenticated OWASP ZAP
   OpenAPI scan
 - Public provider demo mode is disabled by default, rate-limited per IP, and
-  uses a visitor-supplied `nvapi-*` NVIDIA key or `sk-*` OpenAI key only for the
-  current request. Demo traces are isolated in memory and are not persisted.
+  uses a visitor-supplied `nvapi-*` NVIDIA key, `sk-*` OpenAI key, or Gemini key
+  only for the current request. Demo traces are isolated in memory and are not
+  persisted.
 
 ### MVP / needs hardening
 - Usage quotas: enforced before expensive routes and integrated with rate
@@ -183,9 +193,18 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   testing
 - RCA for complex branching agents — graph support added; heuristic, not a solver
 - OTel tracing — spans emitted; Grafana dashboards are provided as config, not battle-tested
+- Conformance map: `docs/CONFORMANCE.md` maps current controls to DeepMind
+  individual-agent security tiers and AWS Scopes 1-3. It is self-assessment
+  evidence, not external validation.
 
 ### Not implemented / out of scope for the current alpha
 - SSO/OIDC/RBAC dashboard auth and email-verification delivery
+- Persistent agent memory/state integrity beyond the trace hash chain
+- Reasoning/plan capture as a first-class trace field
+- Progressive autonomy ladder that graduates an agent after passing configured
+  eval gates
+- Overtask/overeagerness heuristics for valid-goal overreach
+- AI supervisor focused on high-risk tool classes
 - QuantumLayer (future research only; intentionally not built or exposed)
 - Real external penetration test (must be run by a third party)
 - 200-500 call run with full production side effects such as real email sends

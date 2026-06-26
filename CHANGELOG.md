@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## v0.8.4 - 2026-06-26
+
+### Added
+
+- Added DeepMind/AWS-style conformance labels to every finalized trace:
+  `aws_scope`, `detection_tier`, `response_tier`, `attack_techniques`, and
+  `conformance_metrics`.
+- Added `AgentScope` plus `Pramagent(agent_scope=...)` / `PRAMAGENT_AGENT_SCOPE`
+  support for AWS Scopes 1-3. Scope 1 blocks non-read side effects; Scope 2
+  requires HITL for non-read tools even when a tool policy says `ALLOW`.
+- Added `docs/CONFORMANCE.md`, a self-assessment map for DeepMind
+  individual-agent controls and AWS agentic AI scopes.
+- Added seeded red-team recall as `RedTeamReport.recall`.
+
+### Changed
+
+- The reference API deployment and public demo now declare Scope 2 by default.
+- Public demo copy now reflects NVIDIA, OpenAI, and Gemini bring-your-own-key
+  routing and gives clearer NVIDIA 403 entitlement guidance.
+
 ### Fixed
 
 - Public demo now keeps provider failures on the model-gate row instead of

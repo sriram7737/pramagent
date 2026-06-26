@@ -41,6 +41,51 @@ class Provenance(str, Enum):
     RETRIEVED = "retrieved"
 
 
+class AgentScope(str, Enum):
+    """AWS-style autonomy scope declaration for a Pramagent deployment.
+
+    UNDECLARED keeps backwards-compatible library behavior.
+    SCOPE_1_READ_ONLY allows human-initiated read/compute work only.
+    SCOPE_2_HUMAN_APPROVED requires human approval for non-read side effects.
+    SCOPE_3_BOUNDED_AUTONOMY allows bounded autonomous execution under the
+    configured ToolGuard/HITL/rate-limit policies.
+    """
+    UNDECLARED = "undeclared"
+    SCOPE_1_READ_ONLY = "scope_1_read_only"
+    SCOPE_2_HUMAN_APPROVED = "scope_2_human_approved"
+    SCOPE_3_BOUNDED_AUTONOMY = "scope_3_bounded_autonomy"
+
+    @classmethod
+    def from_config(cls, value) -> "AgentScope":
+        if value is None or value == "":
+            return cls.UNDECLARED
+        if isinstance(value, cls):
+            return value
+        key = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "1": cls.SCOPE_1_READ_ONLY,
+            "scope1": cls.SCOPE_1_READ_ONLY,
+            "scope_1": cls.SCOPE_1_READ_ONLY,
+            "read_only": cls.SCOPE_1_READ_ONLY,
+            "scope_1_read_only": cls.SCOPE_1_READ_ONLY,
+            "2": cls.SCOPE_2_HUMAN_APPROVED,
+            "scope2": cls.SCOPE_2_HUMAN_APPROVED,
+            "scope_2": cls.SCOPE_2_HUMAN_APPROVED,
+            "human_approved": cls.SCOPE_2_HUMAN_APPROVED,
+            "scope_2_human_approved": cls.SCOPE_2_HUMAN_APPROVED,
+            "3": cls.SCOPE_3_BOUNDED_AUTONOMY,
+            "scope3": cls.SCOPE_3_BOUNDED_AUTONOMY,
+            "scope_3": cls.SCOPE_3_BOUNDED_AUTONOMY,
+            "bounded_autonomy": cls.SCOPE_3_BOUNDED_AUTONOMY,
+            "scope_3_bounded_autonomy": cls.SCOPE_3_BOUNDED_AUTONOMY,
+            "undeclared": cls.UNDECLARED,
+        }
+        try:
+            return aliases[key]
+        except KeyError as exc:
+            raise ValueError(f"unknown agent scope: {value!r}") from exc
+
+
 class HITLStatus(str, Enum):
     """Status of a human-in-the-loop decision."""
     NOT_REQUIRED = "not_required"   # action was low-risk; no approval needed
@@ -174,6 +219,15 @@ class TraceEvent:
     hitl_status: str = HITLStatus.NOT_REQUIRED.value
     layer_events: list[LayerEvent] = field(default_factory=list)
     total_latency_ms: float = 0.0
+
+    # Framework-conformance labels. Populated by the orchestrator at finalize
+    # time so every persisted trace can be read through DeepMind/AWS vocabulary
+    # without changing the core policy engine.
+    aws_scope: str = AgentScope.UNDECLARED.value
+    detection_tier: str = ""
+    response_tier: str = ""
+    attack_techniques: list[str] = field(default_factory=list)
+    conformance_metrics: dict[str, Any] = field(default_factory=dict)
 
     # hash-chain fields
     prev_hash: str = ""

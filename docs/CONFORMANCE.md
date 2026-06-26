@@ -1,0 +1,110 @@
+# Pramagent Conformance Map
+
+This document maps Pramagent to the current agent-security vocabulary used by
+Google DeepMind and AWS. It is an engineering self-assessment, not a
+certification, penetration test, or claim of production compliance.
+
+Pramagent's lane is the individual-agent control tier: deterministic checks
+outside the model, human approval for consequential actions, tamper-evident
+evidence, and portable traces that can run on top of any provider or hosting
+runtime.
+
+## What Is Implemented
+
+| Framework idea | Pramagent mechanism | Status |
+|---|---|---|
+| Deterministic controls outside the agent | `ToolGuardLayer`, `SafetyLayer`, `IsolationLayer`, HITL, output validation | Implemented |
+| AWS autonomy scope declaration | `Pramagent(agent_scope="scope_1" | "scope_2" | "scope_3")` and `PRAMAGENT_AGENT_SCOPE` for the API | Implemented |
+| AWS Scope 1: human-initiated read-only | Non-read tool side effects and registered consequential actions are blocked | Implemented |
+| AWS Scope 2: mandatory human approval | Non-read tool side effects require HITL even when a tool policy accidentally says `ALLOW` | Implemented |
+| AWS Scope 3: bounded autonomy | Scope is recorded on traces; enforcement comes from configured ToolGuard/HITL/rate-limit policies | Partial |
+| DeepMind-style detection tiers | Each trace receives `detection_tier` such as `D2_rule_detection` or `D4_runtime_containment` | Implemented |
+| DeepMind-style response tiers | Each trace receives `response_tier` such as `R1_log_and_monitor`, `R2_human_approval`, or `R3_block_or_safe_default` | Implemented |
+| Coverage metric | Each trace includes required/observed trust layers and a `coverage` value | Implemented |
+| Time-to-response metric | Each trace includes `time_to_response_ms`, computed to first block/escalation/containment decision | Implemented |
+| Recall metric | `run_injection_benchmark()` reports seeded red-team recall | Implemented for seeded evals |
+| MITRE ATT&CK-style tagging | Each trace receives `attack_techniques` derived from side effects, layer decisions, and scrubbed text | Implemented |
+| Tamper-evident evidence | Trace payload, conformance fields, and decisions are sealed into the hash chain | Implemented |
+
+## Trace Fields
+
+New traces include:
+
+```json
+{
+  "aws_scope": "scope_2_human_approved",
+  "detection_tier": "D4_runtime_containment",
+  "response_tier": "R3_block_or_safe_default",
+  "attack_techniques": [
+    "ATT&CK:T1059 Command and Scripting Interpreter",
+    "ATLAS:AML.T0051 Prompt Injection"
+  ],
+  "conformance_metrics": {
+    "coverage": 1.0,
+    "required_layers": ["ComplianceLayer", "IsolationLayer", "SafetyLayer.pre"],
+    "observed_layers": ["ComplianceLayer", "IsolationLayer"],
+    "monitored": true,
+    "time_to_response_ms": 0.7,
+    "recall": null,
+    "recall_source": "runtime traffic is unlabeled; use run_injection_benchmark() for seeded recall"
+  }
+}
+```
+
+Runtime traces do not know ground truth labels, so they cannot honestly claim
+recall. Recall is reported by seeded red-team runs:
+
+```python
+from pramagent.redteam import run_injection_benchmark
+
+report = run_injection_benchmark(force_keyword_only=True)
+print(report.recall)
+```
+
+## Configuring AWS Scope
+
+Library:
+
+```python
+from pramagent import Pramagent
+
+scope_2_armor = Pramagent(agent_scope="scope_2")
+```
+
+API sidecar:
+
+```bash
+PRAMAGENT_AGENT_SCOPE=scope_2
+uvicorn pramagent.api.app:app --port 8080
+```
+
+Supported aliases:
+
+- `scope_1`, `scope1`, `read_only`
+- `scope_2`, `scope2`, `human_approved`
+- `scope_3`, `scope3`, `bounded_autonomy`
+- `undeclared`
+
+## Boundary Of Responsibility
+
+Pramagent intentionally does not provide:
+
+- Firecracker/micro-VM/container compute isolation
+- Host sandboxing for arbitrary code execution
+- Multi-agent delegation/reputation systems
+- Ecosystem-level identity federation
+- External certification
+
+Those belong to the hosting platform, cloud control plane, or an enterprise
+security program. Pramagent is designed to sit above those controls and produce
+portable, inspectable evidence for each individual agent call.
+
+## Remaining Gaps
+
+- Persistent agent memory/state integrity beyond the existing trace hash chain
+- Reasoning/plan capture as a first-class trace field
+- Progressive autonomy ladder that graduates an agent only after passing
+  configured eval gates
+- Overtask/overeagerness heuristics for valid-goal overreach
+- AI supervisor focused on a narrow high-risk tool class
+- External red-team / penetration-test validation
