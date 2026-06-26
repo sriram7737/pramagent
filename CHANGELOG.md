@@ -2,14 +2,32 @@
 
 ## Unreleased
 
+### Added
+
+- Added `AgentMemoryStore`, `IntegrityMemoryStore`, in-memory and SQLite memory
+  backends, and explicit `expected_head` verification for externally anchored
+  memory-chain heads.
+- Added `DecisionRationale`, a structured intent/policy/tool-rationale schema
+  with no raw reasoning slot and fail-closed PII scrubbing.
+- Added `corpus/overreach`, a 26-case human-labeled seeded overreach corpus,
+  plus `overreach_v0` and `evaluate_corpus()` for counts-first baseline
+  evaluation.
+
 ### Changed
 
 - Renamed exported conformance metrics to carry their denominator:
   runtime traces now use `trace_layer_coverage`, while seeded red-team JSON uses
   `seeded_recall`.
 - Added `docs/DESIGN_DECISIONS.md` to explain intentionally deferred controls
-  such as memory integrity, raw reasoning capture, autonomy ladders, sandboxing,
-  and external certification.
+  such as full memory backend coverage, raw reasoning capture, autonomy ladders,
+  sandboxing, and external certification.
+
+### Fixed
+
+- Hardened rationale scrubbing so malformed scrubber returns fail closed instead
+  of preserving raw free text.
+- Packaged the overreach corpus for installed wheels and made the corpus loader
+  fall back to the installed `share/pramagent` data path.
 
 ## v0.8.4 - 2026-06-26
 

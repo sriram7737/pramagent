@@ -4,36 +4,46 @@ This file records security and product decisions where Pramagent deliberately
 does less than a checklist might ask for. The goal is to keep implementation
 claims tied to real controls, not green checkmarks.
 
-## ADR-001: Do Not Ship Partial Memory Integrity As Full Integrity
+## ADR-001: Ship Memory Integrity Through A Contract
 
-**Decision:** Defer persistent agent memory/state integrity until Pramagent has
-a defined memory-store contract.
+**Decision:** Implement agent-memory integrity through a small
+`AgentMemoryStore` contract plus an `IntegrityMemoryStore` wrapper, instead of
+claiming arbitrary framework memory is protected.
 
 **Why:** Pramagent already hash-chains traces, but arbitrary agent memory can
 live in vector stores, SQL rows, files, browser state, or framework-specific
-checkpointers. Adding integrity to one path would create a misleading claim
-that "memory integrity" is solved while other paths remain uncovered.
+checkpointers. Integrity has to be a property of the memory contract, not a
+single backend.
 
-**Current control:** Trace inputs, decisions, outputs, and conformance labels
-are tamper-evident through the audit chain.
+**Current control:** `IntegrityMemoryStore` ships with in-memory and SQLite
+backends. It detects point mutation on read and supports `expected_head` so a
+caller can catch full-chain rewrites when the genuine head is held outside the
+store.
 
-**Future gate:** Define a memory-store interface with append, read, erase,
-checksum, and tenant/session boundaries; then apply integrity checks to every
-supported backend through that contract.
+**Honest limit:** It detects integrity failures, not authenticity failures. A
+bad value written through the legitimate API chains cleanly. Without an
+externally held head, a store owner can rewrite the whole chain
+self-consistently.
 
-## ADR-002: Do Not Capture Raw Hidden Reasoning
+**Future gate:** Add Redis/Postgres backends, tenant/session erasure semantics,
+and framework adapters that force agent memory through this contract.
 
-**Decision:** Defer reasoning/plan capture as a first-class trace field.
+## ADR-002: Capture Structured Rationale, Not Raw Reasoning
+
+**Decision:** Ship a bounded `DecisionRationale` schema and continue refusing
+raw hidden reasoning capture.
 
 **Why:** Raw reasoning can expose private prompts, sensitive business logic, or
-chain-of-thought-like content. Capturing it without a safe schema would improve
-audit appearance while increasing data-retention and disclosure risk.
+chain-of-thought-like content. Capturing it would improve audit appearance while
+increasing data-retention and disclosure risk.
 
-**Current control:** Traces capture policy decisions, layer events, rule names,
-latency, HITL state, and hash-chain evidence.
+**Current control:** `DecisionRationale` has only `intent`, `policy_reason`,
+and `tool_rationale`; there is no `raw_reasoning` field. Free-text fields are
+scrubbed through the compliance layer and fail closed on scrubber errors or bad
+return shapes.
 
-**Future gate:** Capture bounded rationale fields such as intent, policy reason,
-tool rationale, and cited evidence, not raw hidden reasoning.
+**Future gate:** Attach scrubbed rationale summaries to selected trace events
+and add cited evidence fields without creating a raw reasoning slot.
 
 ## ADR-003: Do Not Hardcode An Autonomy Ladder
 
@@ -49,20 +59,23 @@ it would make the table green without proving an agent earned more autonomy.
 **Future gate:** Add configured eval suites and promotion/rollback criteria
 before any automatic scope upgrade.
 
-## ADR-004: Treat Overtask Detection As A Measured Classifier Problem
+## ADR-004: Build The Overreach Corpus Before The Runtime Heuristic
 
-**Decision:** Defer overeagerness and overtask heuristics.
+**Decision:** Ship the labeled corpus and a disposable v0 baseline before
+turning overreach detection into runtime enforcement.
 
 **Why:** "Doing too much" depends on user intent, tool permissions, tenant
 policy, and task context. Broad rules can block useful work or miss subtle
-overreach. It needs a corpus and false-positive budget before release.
+overreach. A corpus with human labels is the durable asset; a rule without that
+corpus is just another brittle heuristic.
 
-**Current control:** ToolGuard side effects, scope enforcement, HITL, quotas,
-and rate limits bound what an agent can actually do.
+**Current control:** `corpus/overreach` contains 26 human-labeled seeded cases
+with labeling guidelines, edge cases, and counts-first reporting. `overreach_v0`
+scores TP=6, FP=2, FN=4, TN=14; the failures show the intended finding: v0's
+authorization model is lexical, not semantic.
 
-**Future gate:** Build a labeled overtask corpus, track false positives, and
-emit a separate `overtask_verdict` rather than folding it into injection or
-safety.
+**Future gate:** Grow the corpus from real traces, then add a separate runtime
+`overreach_verdict` only after a v1 beats the baseline without overfitting.
 
 ## ADR-005: Keep AI Supervision Narrow And Opt-In
 

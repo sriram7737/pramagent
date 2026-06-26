@@ -130,6 +130,17 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Runtime trace conformance metrics use `trace_layer_coverage`, scoped to one
   trace's required local trust layers. This is not a fleet-level monitoring
   coverage claim.
+- Agent memory integrity contract: `AgentMemoryStore` plus
+  `IntegrityMemoryStore` with in-memory and SQLite backends. Reads verify the
+  stored hash lineage; callers can pass an externally held `expected_head` to
+  catch a full self-consistent rewrite.
+- `DecisionRationale` captures bounded intent/policy/tool rationale without a
+  raw reasoning slot. Free-text fields are PII-scrubbed and scrubber failures
+  fail closed to `[REDACTED:SCRUB_ERROR]`.
+- `corpus/overreach` ships 26 human-labeled seeded overreach cases and a
+  counts-first `overreach_v0` baseline: TP=6, FP=2, FN=4, TN=14. The corpus is
+  illustrative, not statistical, and deliberately exposes v0's lexical
+  authorization weakness.
 - Held-out prompt-injection benchmark fixtures for Lakera PINT-style and
   TensorTrust-style attacks so classifier regressions are not measured only
   against Pramagent's own exemplar corpus.
@@ -200,14 +211,23 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Conformance map: `docs/CONFORMANCE.md` maps current controls to DeepMind
   individual-agent security tiers and AWS Scopes 1-3. It is self-assessment
   evidence, not external validation.
+- Agent memory integrity: in-memory and SQLite backends exist, but Redis,
+  Postgres, vector-store adapters, and automatic framework memory routing are
+  not implemented. It detects mutation, not poisoned-but-valid writes.
+- Rationale capture: the safe schema exists, but the core trace pipeline does
+  not yet attach `DecisionRationale` automatically to every layer event.
+- Overreach detection: the corpus and v0 evaluator exist, but this is not yet a
+  runtime enforcement layer and should not be marketed as semantic autonomy
+  supervision.
 
 ### Not implemented / out of scope for the current alpha
 - SSO/OIDC/RBAC dashboard auth and email-verification delivery
-- Persistent agent memory/state integrity beyond the trace hash chain
-- Reasoning/plan capture as a first-class trace field
+- Full agent memory/state integrity across Redis/Postgres/vector stores and
+  framework-native checkpointers
+- Automatic reasoning/rationale capture in the trace pipeline
 - Progressive autonomy ladder that graduates an agent after passing configured
   eval gates
-- Overtask/overeagerness heuristics for valid-goal overreach
+- Runtime overtask/overeagerness enforcement for valid-goal overreach
 - AI supervisor focused on high-risk tool classes
 - QuantumLayer (future research only; intentionally not built or exposed)
 - Real external penetration test (must be run by a third party)

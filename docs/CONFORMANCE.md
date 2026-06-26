@@ -25,6 +25,9 @@ runtime.
 | Seeded recall metric | `run_injection_benchmark()` reports `seeded_recall` over first-party seeded red-team prompts | Implemented for seeded evals |
 | MITRE ATT&CK-style tagging | Each trace receives `attack_techniques` derived from side effects, layer decisions, and scrubbed text | Implemented |
 | Tamper-evident evidence | Trace payload, conformance fields, and decisions are sealed into the hash chain | Implemented |
+| Agent-memory integrity contract | `IntegrityMemoryStore` verifies in-memory/SQLite agent memory chains and supports externally held heads | Implemented for optional memory stores |
+| Structured rationale capture | `DecisionRationale` captures scrubbed intent/policy/tool rationale without raw reasoning | Implemented as schema |
+| Overreach corpus | 26 human-labeled seeded cases plus `overreach_v0` counts-first evaluator | Implemented as corpus/eval, not runtime enforcement |
 
 ## Trace Fields
 
@@ -107,10 +110,12 @@ portable, inspectable evidence for each individual agent call.
 The rationale for these deferrals is tracked in
 [Design decisions](DESIGN_DECISIONS.md).
 
-- Persistent agent memory/state integrity beyond the existing trace hash chain
-- Reasoning/plan capture as a first-class trace field
+- Redis/Postgres/vector-store memory backends and automatic framework memory
+  routing through `IntegrityMemoryStore`; current memory integrity support is
+  limited to optional in-memory/SQLite agent-memory stores
+- Automatic trace attachment for `DecisionRationale`
 - Progressive autonomy ladder that graduates an agent only after passing
   configured eval gates
-- Overtask/overeagerness heuristics for valid-goal overreach
+- Runtime overtask/overeagerness enforcement for valid-goal overreach
 - AI supervisor focused on a narrow high-risk tool class
 - External red-team / penetration-test validation

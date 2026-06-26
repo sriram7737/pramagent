@@ -126,6 +126,10 @@ include-package-data = true
     "docs/SECURITY_SCAN_REPORT_2026-06-07.md",
     "docs/quickstart-terminal.png",
 ]
+"share/pramagent/corpus/overreach" = [
+    "corpus/overreach/README.md",
+    "corpus/overreach/cases.jsonl",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -19,7 +19,9 @@ Schema, tenant/action allow-lists, side-effect taxonomy, dangerous-chain
 detection, output scanning, and HITL escalation. The current package also
 ships curated safety rule corpora, persistent HITL queues, thin adapters for
 popular agent frameworks, compliance evidence generation, and
-DeepMind/AWS-style conformance labels on every trace.
+DeepMind/AWS-style conformance labels on every trace. It also includes an
+optional agent-memory integrity contract, structured decision-rationale schema,
+and a human-labeled overreach corpus for measuring valid-goal overreach.
 
 ## Alpha Maturity Notice
 
@@ -556,6 +558,7 @@ metrics, and per-tenant usage.
 - [Implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
 - [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md)
 - [Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md)
+- [Overreach corpus](https://github.com/sriram7737/pramagent/tree/main/corpus/overreach)
 - [Live test results](https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_TEST_RESULTS.md)
 - [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
 - [Google Dev Library submission draft](https://github.com/sriram7737/pramagent/blob/main/docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md)

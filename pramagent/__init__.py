@@ -27,6 +27,12 @@ from .providers import (AnthropicProvider, BaseProvider, FallbackProvider,
                         NvidiaProvider,
                         OpenAICompatibleProvider, OpenAIProvider)
 from .store import MemoryStore, SQLiteStore
+from .memory import (AgentMemoryStore, InMemoryBackend, IntegrityMemoryStore,
+                     MemoryBackend, MemoryIntegrityError, MemoryRecord,
+                     SQLiteMemoryBackend)
+from .rationale import DecisionRationale
+from .overreach import (OverreachVerdict, authorized_ceiling, evaluate_corpus,
+                        load_cases, overreach_v0)
 from .auth import APIKeyRegistry, JWTManager, PostgresAPIKeyRegistry
 from .otel import OpenTelemetryExporter, OpenTelemetryNotInstalled
 from .anchoring import EthereumAnchor, EthereumAnchorReceipt
@@ -73,6 +79,19 @@ __all__ = [
     "Rule",
     "MemoryStore",
     "SQLiteStore",
+    "AgentMemoryStore",
+    "MemoryBackend",
+    "InMemoryBackend",
+    "SQLiteMemoryBackend",
+    "IntegrityMemoryStore",
+    "MemoryRecord",
+    "MemoryIntegrityError",
+    "DecisionRationale",
+    "OverreachVerdict",
+    "overreach_v0",
+    "authorized_ceiling",
+    "evaluate_corpus",
+    "load_cases",
     "APIKeyRegistry",
     "PostgresAPIKeyRegistry",
     "JWTManager",

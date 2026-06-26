@@ -27,5 +27,7 @@ include docs/SECURITY_AUDIT_PROMPT.md
 include docs/INDEXING_AND_DISCOVERY.md
 include docs/SECURITY_SCAN_REPORT_2026-06-07.md
 include docs/TECHNICAL_MARKETING_POST.md
+include corpus/overreach/README.md
+include corpus/overreach/cases.jsonl
 recursive-include docs *.png
 recursive-include tests/data *.json
