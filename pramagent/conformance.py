@@ -151,9 +151,10 @@ def _coverage(trace: TraceEvent) -> dict[str, Any]:
     observed = {event.layer for event in trace.layer_events}
     covered = [layer for layer in required if layer in observed]
     return {
-        "coverage": round(len(covered) / len(required), 3),
-        "required_layers": required,
-        "observed_layers": sorted(observed),
+        "trace_layer_coverage": round(len(covered) / len(required), 3),
+        "coverage_scope": "single_trace_required_layer_presence",
+        "trace_required_layers": required,
+        "trace_observed_layers": sorted(observed),
         "monitored": len(covered) == len(required),
     }
 
@@ -190,8 +191,11 @@ def finalize_trace_conformance(
     trace.conformance_metrics = {
         **coverage,
         "time_to_response_ms": _time_to_response_ms(trace),
-        "recall": None,
-        "recall_source": "runtime traffic is unlabeled; use run_injection_benchmark() for seeded recall",
+        "seeded_recall": None,
+        "seeded_recall_source": (
+            "not available on runtime traces; use run_injection_benchmark() "
+            "for first-party seeded recall"
+        ),
     }
 
 

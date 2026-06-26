@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- Renamed exported conformance metrics to carry their denominator:
+  runtime traces now use `trace_layer_coverage`, while seeded red-team JSON uses
+  `seeded_recall`.
+- Added `docs/DESIGN_DECISIONS.md` to explain intentionally deferred controls
+  such as memory integrity, raw reasoning capture, autonomy ladders, sandboxing,
+  and external certification.
+
 ## v0.8.4 - 2026-06-26
 
 ### Added
@@ -14,7 +23,8 @@
   requires HITL for non-read tools even when a tool policy says `ALLOW`.
 - Added `docs/CONFORMANCE.md`, a self-assessment map for DeepMind
   individual-agent controls and AWS agentic AI scopes.
-- Added seeded red-team recall as `RedTeamReport.recall`.
+- Added seeded red-team recall as `RedTeamReport.seeded_recall`; `.recall`
+  remains a compatibility alias.
 
 ### Changed
 

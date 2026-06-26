@@ -49,8 +49,10 @@ red-team or penetration-test evidence.
 `docs/CONFORMANCE.md` maps the same implementation to Google DeepMind
 individual-agent control vocabulary and the AWS Agentic AI Security Scoping
 Matrix. New traces include `aws_scope`, `detection_tier`, `response_tier`,
-`attack_techniques`, and `conformance_metrics`. Runtime traces report coverage
-and time-to-response; seeded red-team runs report recall.
+`attack_techniques`, and `conformance_metrics`. Runtime traces report
+single-trace trust-layer coverage and time-to-response; seeded red-team runs
+report `seeded_recall`. These names deliberately carry their denominator and
+must not be presented as fleet-level coverage or live-traffic recall.
 
 ## Auditor-facing artifacts
 - `ComplianceReporter.generate()` - point-in-time JSON/text/PDF-style evidence

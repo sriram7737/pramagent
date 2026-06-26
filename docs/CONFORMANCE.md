@@ -20,9 +20,9 @@ runtime.
 | AWS Scope 3: bounded autonomy | Scope is recorded on traces; enforcement comes from configured ToolGuard/HITL/rate-limit policies | Partial |
 | DeepMind-style detection tiers | Each trace receives `detection_tier` such as `D2_rule_detection` or `D4_runtime_containment` | Implemented |
 | DeepMind-style response tiers | Each trace receives `response_tier` such as `R1_log_and_monitor`, `R2_human_approval`, or `R3_block_or_safe_default` | Implemented |
-| Coverage metric | Each trace includes required/observed trust layers and a `coverage` value | Implemented |
+| Trace-layer coverage metric | Each trace includes required/observed trust layers and a `trace_layer_coverage` value scoped to that single trace | Implemented |
 | Time-to-response metric | Each trace includes `time_to_response_ms`, computed to first block/escalation/containment decision | Implemented |
-| Recall metric | `run_injection_benchmark()` reports seeded red-team recall | Implemented for seeded evals |
+| Seeded recall metric | `run_injection_benchmark()` reports `seeded_recall` over first-party seeded red-team prompts | Implemented for seeded evals |
 | MITRE ATT&CK-style tagging | Each trace receives `attack_techniques` derived from side effects, layer decisions, and scrubbed text | Implemented |
 | Tamper-evident evidence | Trace payload, conformance fields, and decisions are sealed into the hash chain | Implemented |
 
@@ -40,25 +40,28 @@ New traces include:
     "ATLAS:AML.T0051 Prompt Injection"
   ],
   "conformance_metrics": {
-    "coverage": 1.0,
-    "required_layers": ["ComplianceLayer", "IsolationLayer", "SafetyLayer.pre"],
-    "observed_layers": ["ComplianceLayer", "IsolationLayer"],
+    "trace_layer_coverage": 1.0,
+    "coverage_scope": "single_trace_required_layer_presence",
+    "trace_required_layers": ["ComplianceLayer", "IsolationLayer", "SafetyLayer.pre"],
+    "trace_observed_layers": ["ComplianceLayer", "IsolationLayer"],
     "monitored": true,
     "time_to_response_ms": 0.7,
-    "recall": null,
-    "recall_source": "runtime traffic is unlabeled; use run_injection_benchmark() for seeded recall"
+    "seeded_recall": null,
+    "seeded_recall_source": "not available on runtime traces; use run_injection_benchmark() for first-party seeded recall"
   }
 }
 ```
 
 Runtime traces do not know ground truth labels, so they cannot honestly claim
-recall. Recall is reported by seeded red-team runs:
+recall. `trace_layer_coverage` is also not a fleet-level monitoring coverage
+claim; it only says whether this one trace passed through the required local
+trust layers. First-party seeded recall is reported by red-team runs:
 
 ```python
 from pramagent.redteam import run_injection_benchmark
 
 report = run_injection_benchmark(force_keyword_only=True)
-print(report.recall)
+print(report.seeded_recall)
 ```
 
 ## Configuring AWS Scope
@@ -100,6 +103,9 @@ security program. Pramagent is designed to sit above those controls and produce
 portable, inspectable evidence for each individual agent call.
 
 ## Remaining Gaps
+
+The rationale for these deferrals is tracked in
+[Design decisions](DESIGN_DECISIONS.md).
 
 - Persistent agent memory/state integrity beyond the existing trace hash chain
 - Reasoning/plan capture as a first-class trace field

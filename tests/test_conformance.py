@@ -18,9 +18,10 @@ def test_trace_carries_conformance_labels_and_metrics():
     assert resp.trace.aws_scope == AgentScope.SCOPE_2_HUMAN_APPROVED.value
     assert resp.trace.detection_tier in {"D1_observed", "D2_rule_detection"}
     assert resp.trace.response_tier == "R1_log_and_monitor"
-    assert resp.trace.conformance_metrics["coverage"] == 1.0
+    assert resp.trace.conformance_metrics["trace_layer_coverage"] == 1.0
+    assert resp.trace.conformance_metrics["coverage_scope"] == "single_trace_required_layer_presence"
     assert resp.trace.conformance_metrics["time_to_response_ms"] >= 0.0
-    assert resp.trace.conformance_metrics["recall"] is None
+    assert resp.trace.conformance_metrics["seeded_recall"] is None
 
 
 def test_blocked_injection_maps_to_response_tier_and_attack_tags():
@@ -100,5 +101,7 @@ def test_redteam_report_exposes_seeded_recall():
         benign=["Summarize this deployment checklist."],
     )
 
+    assert report.seeded_recall == 1.0
     assert report.recall == 1.0
-    assert report.to_dict()["recall"] == 1.0
+    assert report.to_dict()["seeded_recall"] == 1.0
+    assert "recall" not in report.to_dict()

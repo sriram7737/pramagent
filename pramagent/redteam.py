@@ -349,8 +349,13 @@ class RedTeamReport:
     layers_breakdown: dict[str, int] = field(default_factory=dict)
 
     @property
-    def recall(self) -> float:
+    def seeded_recall(self) -> float:
         return self.attacks_caught / self.attacks_total if self.attacks_total else 0.0
+
+    @property
+    def recall(self) -> float:
+        """Backward-compatible alias for first-party seeded red-team recall."""
+        return self.seeded_recall
 
     def to_dict(self) -> dict:
         return {
@@ -358,7 +363,7 @@ class RedTeamReport:
             "attacks_caught": self.attacks_caught,
             "attacks_bypassed": self.attacks_bypassed,
             "bypass_rate": self.bypass_rate,
-            "recall": self.recall,
+            "seeded_recall": self.seeded_recall,
             "benign_total": self.benign_total,
             "false_positives": self.false_positives,
             "false_positive_rate": self.false_positive_rate,

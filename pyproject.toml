@@ -116,6 +116,7 @@ include-package-data = true
     "docs/DEPLOYMENT.md",
     "docs/COMPLIANCE_MAPPING.md",
     "docs/CONFORMANCE.md",
+    "docs/DESIGN_DECISIONS.md",
     "docs/RELEASE.md",
     "docs/DEMO_SCRIPT.md",
     "docs/LIVE_WORKFLOW_DEMO.md",

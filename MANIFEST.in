@@ -14,6 +14,7 @@ include docs/COMPLIANCE_MAPPING.md
 include docs/CONFORMANCE.md
 include docs/DEMO_SCRIPT.md
 include docs/DEPLOYMENT.md
+include docs/DESIGN_DECISIONS.md
 include docs/HARDENING_GUIDE.md
 include docs/IMPLEMENTATION_STATUS.md
 include docs/LIVE_TEST_RESULTS.md

@@ -124,8 +124,12 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   and session-authenticated browser forms
 - Built-in red-team benchmark CLI with static and dynamic mutation modes
   (`python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999`)
-- Seeded red-team recall reporting via `RedTeamReport.recall`; runtime traces
-  intentionally mark recall as unavailable because live traffic is unlabeled.
+- Seeded red-team recall reporting via `RedTeamReport.seeded_recall`; runtime
+  traces intentionally mark `seeded_recall` as unavailable because live traffic
+  is unlabeled.
+- Runtime trace conformance metrics use `trace_layer_coverage`, scoped to one
+  trace's required local trust layers. This is not a fleet-level monitoring
+  coverage claim.
 - Held-out prompt-injection benchmark fixtures for Lakera PINT-style and
   TensorTrust-style attacks so classifier regressions are not measured only
   against Pramagent's own exemplar corpus.

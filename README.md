@@ -40,6 +40,8 @@ The June 11 active security prompt results are tracked in
 [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md).
 The DeepMind/AWS agent-security mapping is tracked in
 [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md).
+Deferred controls and the reasoning behind them are tracked in
+[Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md).
 
 **Start here:** [Getting Started With Pramagent](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
 walks from install to provider setup, agent wrapping, ToolGuard, HITL, trace
@@ -552,6 +554,8 @@ metrics, and per-tenant usage.
 
 - [Getting started](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
 - [Implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
+- [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md)
+- [Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md)
 - [Live test results](https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_TEST_RESULTS.md)
 - [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
 - [Google Dev Library submission draft](https://github.com/sriram7737/pramagent/blob/main/docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md)
