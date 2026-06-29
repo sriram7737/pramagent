@@ -51,9 +51,8 @@ three prior engineering audits whose release-blocking findings are remediated
 and verified in the current source. Those audit reports are kept in the repo
 **with remediation banners** so you can read both the original findings and
 their fixes — see
-[Full audit](https://github.com/sriram7737/pramagent/blob/main/pramagent_full_audit.md),
-[Enterprise review](https://github.com/sriram7737/pramagent/blob/main/pramagent_enterprise_audit.md),
-and [Security assessment](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_assessment.md).
+[Full audit](https://github.com/sriram7737/pramagent/blob/main/pramagent_full_audit.md)
+and [Enterprise review](https://github.com/sriram7737/pramagent/blob/main/pramagent_enterprise_audit.md).
 
 ## Alpha Maturity Notice
 
