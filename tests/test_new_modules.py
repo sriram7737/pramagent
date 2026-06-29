@@ -165,6 +165,32 @@ class TestCLI:
         assert r.returncode == 0
         assert "pramagent" in r.stdout.lower()
 
+    def test_demo_command_sets_zero_config_defaults(self, monkeypatch, capsys):
+        import os
+        import sys
+        from types import SimpleNamespace
+        from pramagent import cli
+
+        calls = {}
+
+        def fake_run(app_ref, **kwargs):
+            calls["app_ref"] = app_ref
+            calls.update(kwargs)
+
+        monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=fake_run))
+        monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+        monkeypatch.delenv("PRAMAGENT_ALLOW_MEMORY_STORE", raising=False)
+        args = SimpleNamespace(host="127.0.0.1", port=8765, reload=False)
+
+        assert cli.cmd_demo(args) == 0
+
+        assert os.environ["PRAMAGENT_DEMO_ENABLED"] == "true"
+        assert os.environ["PRAMAGENT_ALLOW_MEMORY_STORE"] == "1"
+        assert calls["app_ref"] == "pramagent.api.app:app"
+        assert calls["host"] == "127.0.0.1"
+        assert calls["port"] == 8765
+        assert "http://127.0.0.1:8765/demo" in capsys.readouterr().out
+
     def test_test_inject_detects_injection(self):
         import subprocess, sys
         r = subprocess.run(

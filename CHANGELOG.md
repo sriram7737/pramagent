@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.8.5 - 2026-06-29
+
 ### Added
 
 - Added `AgentMemoryStore`, `IntegrityMemoryStore`, in-memory and SQLite memory
@@ -12,6 +14,13 @@
 - Added `corpus/overreach`, a 26-case human-labeled seeded overreach corpus,
   plus `overreach_v0` and `evaluate_corpus()` for counts-first baseline
   evaluation.
+- Added opt-in public-demo product signals that record only hashed visitor
+  metadata, provider kind, verdict, HITL state, and conformance tiers; prompts,
+  outputs, provider keys, IP addresses, and plaintext email are not stored.
+- Added a managed-pilot request endpoint for the demo that stores hashed contact
+  metadata and a short use-case label.
+- Salted demo signal/contact hashes per process and redacted obvious email/phone
+  values from managed-pilot use-case labels.
 
 ### Changed
 
@@ -21,6 +30,18 @@
 - Added `docs/DESIGN_DECISIONS.md` to explain intentionally deferred controls
   such as full memory backend coverage, raw reasoning capture, autonomy ladders,
   sandboxing, and external certification.
+- Made `/demo` the zero-config product front door by default. The first
+  scenario is now the financial HITL wedge and can run without a provider key
+  through the deterministic mock provider; live OpenAI/Gemini/NVIDIA calls
+  remain BYO-key and request-scoped.
+- Added `pramagent demo`, a one-command local demo launcher that starts the
+  public demo with demo-safe local defaults.
+- Updated the demo UI to surface framework-adapter positioning and
+  DeepMind/AWS-style conformance fields next to the hash-chain evidence.
+- Bounded Ollama generation with `num_predict`, configurable timeout/max-token
+  knobs, and actionable Ollama HTTP/error/non-JSON messages.
+- Made missing Anthropic optional dependency errors point to
+  `pip install "pramagent[anthropic]"`.
 
 ### Fixed
 
@@ -28,6 +49,10 @@
   of preserving raw free text.
 - Packaged the overreach corpus for installed wheels and made the corpus loader
   fall back to the installed `share/pramagent` data path.
+
+### Verified
+
+- `python -m pytest -q --tb=short` -> `720 passed, 2 skipped`.
 
 ## v0.8.4 - 2026-06-26
 

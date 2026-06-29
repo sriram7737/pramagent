@@ -1,6 +1,6 @@
 # Pramagent — Current Implementation Status
 
-_Last updated after the 2026-06-26 DeepMind/AWS conformance-label release._
+_Last updated after the 2026-06-29 YC-readiness demo/onboarding and live-provider RCA pass._
 
 This document is deliberately blunt. Pramagent is **strong trust middleware for
 AI agents** — deterministic guardrails, HITL, tool policy, and tamper-evident
@@ -13,7 +13,7 @@ exist.
 
 ## Test status
 
-`python -m pytest -q --tb=short` -> **673 passing, 2 skipped**. The skipped
+`python -m pytest -q --tb=short` -> **720 passing, 2 skipped**. The skipped
 tests are optional-environment checks; there are no expected failures hiding
 classifier or output-judge misses in the bundled suite.
 
@@ -115,8 +115,17 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   Provider, HITL) + W3C trace-context propagation
 - FastAPI sidecar (auth, CORS, security headers, structured logging, RCA +
   retention + GDPR-erasure endpoints, `/v1/usage` quota snapshots,
-  `/v1/usage/ledger` ledger evidence, and a gated public `/demo` page for
-  provider smoke demos)
+  `/v1/usage/ledger` ledger evidence, and a public `/demo` product front door)
+- Public `/demo` front door: enabled by default unless explicitly disabled,
+  zero-config financial HITL scenario using the deterministic mock provider,
+  optional BYO provider keys for live OpenAI/Gemini/NVIDIA calls, visible
+  DeepMind/AWS-style trace labels, framework-adapter positioning, hash-chain
+  verification, privacy-preserving opt-in usage signals, and a salted-hash
+  managed-pilot request form. Demo signals do not store prompts, outputs,
+  provider keys, IP addresses, or plaintext email; managed-pilot use-case
+  labels redact obvious email/phone values.
+- `pramagent demo` CLI starts the public demo with demo-safe local defaults so
+  a new evaluator can reach the financial HITL trace in one command.
 - Dashboard usage page, Redis-backed dashboard rate limiting with local
   fallback, no-store security headers, session revocation, optional SQL users
   with generated high-entropy dashboard keys, bcrypt key hashes, phone/email
@@ -149,10 +158,10 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Small concurrency smoke test for trace uniqueness and hash-chain integrity
 - CI security scanning with Bandit, Semgrep, and authenticated OWASP ZAP
   OpenAPI scan
-- Public provider demo mode is disabled by default, rate-limited per IP, and
-  uses a visitor-supplied `nvapi-*` NVIDIA key, `sk-*` OpenAI key, or Gemini key
-  only for the current request. Demo traces are isolated in memory and are not
-  persisted.
+- Public demo mode is enabled by default, rate-limited per IP plus hashed
+  provider key, and can run the financial HITL scenario with no provider key.
+  Visitor-supplied `nvapi-*`, `sk-*`, or Gemini keys are used only for the
+  current request. Demo traces are isolated in memory and are not persisted.
 
 ### MVP / needs hardening
 - Usage quotas: enforced before expensive routes and integrated with rate
@@ -358,7 +367,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   hardening raised it to **657 passed, 2 skipped**; v0.8.0 classifier
   hardening raised it to **661 passed, 2 skipped**; the dashboard evidence and
   metric hardening pass raised it to **673 passed, 2 skipped**; the v0.8.4
-  conformance-label release raised it to **684 passed, 2 skipped**.
+  conformance-label release raised it to **684 passed, 2 skipped**; the
+  v0.8.5 memory/rationale/overreach corpus, YC-readiness demo/onboarding, and
+  live-provider/Ollama RCA pass raised it to **720 passed, 2 skipped**.
 
 2026-06-15 public demo hardening after live NVIDIA checks:
 
@@ -380,8 +391,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 2026-06-15 public NVIDIA NIM live-demo build:
 
 - Added `NvidiaProvider` for NVIDIA NIM's OpenAI-compatible endpoint.
-- Added gated `/demo`, `/demo/run`, and `/demo/verify` routes. The demo is
-  disabled by default with `PRAMAGENT_DEMO_ENABLED=false`, throttled by
+- Initially added gated `/demo`, `/demo/run`, and `/demo/verify` routes. The
+  current demo is enabled by default and can be disabled with
+  `PRAMAGENT_DEMO_ENABLED=false`; it is throttled by
   `PRAMAGENT_DEMO_RATE_LIMIT` per client IP plus hashed visitor provider key,
   and uses isolated in-memory traces per run.
 - Demo model allow-list excludes deprecated NVIDIA Build free-endpoint IDs that

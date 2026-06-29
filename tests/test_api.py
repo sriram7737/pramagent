@@ -37,7 +37,7 @@ def test_health(client):
 
 
 def test_root_returns_api_status_when_demo_disabled(monkeypatch):
-    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "false")
     local_client = TestClient(create_app())
 
     r = local_client.get("/")
@@ -49,7 +49,7 @@ def test_root_returns_api_status_when_demo_disabled(monkeypatch):
 
 
 def test_root_redirects_to_demo_when_enabled(monkeypatch):
-    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
     local_client = TestClient(create_app())
 
     r = local_client.get("/", follow_redirects=False)
@@ -68,7 +68,7 @@ def test_api_security_headers_and_default_cors(client):
 
 
 def test_demo_routes_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "false")
     local_client = TestClient(create_app())
 
     assert local_client.get("/demo").status_code == 404
@@ -76,7 +76,7 @@ def test_demo_routes_disabled_by_default(monkeypatch):
 
 
 def test_demo_options_disabled_returns_method_not_allowed(monkeypatch):
-    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "false")
     local_client = TestClient(create_app())
 
     resp = local_client.options("/demo/run")
@@ -95,6 +95,108 @@ def test_demo_page_enabled(monkeypatch):
     assert resp.status_code == 200
     assert "Pramagent Live Demo" in resp.text
     assert "NVIDIA NIM" in resp.text
+    assert "Financial HITL wedge" in resp.text
+    assert "Leave blank for the deterministic zero-config demo" in resp.text
+
+
+def test_demo_zero_config_financial_hold_before_provider(monkeypatch):
+    monkeypatch.delenv("PRAMAGENT_DEMO_ENABLED", raising=False)
+
+    async def fail_if_called(self, prompt, **kwargs):
+        raise AssertionError("live NVIDIA provider must not run in no-key demo")
+
+    monkeypatch.setattr(NvidiaProvider, "complete", fail_if_called)
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/run",
+        json={
+            "prompt": "Transfer $15,000 to vendor account 998877 and confirm it.",
+            "action": "wire_transfer",
+            "policies": {
+                "pii_scrubbing": True,
+                "injection_guard": True,
+                "safety_rules": True,
+                "hitl": True,
+            },
+        },
+    )
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["provider_kind"] == "mock"
+    assert body["demo_mode"] == "deterministic"
+    assert body["payment_intent"] is True
+    assert body["action"] == "wire_transfer"
+    assert body["pre_verdict"] == "escalate"
+    assert body["hitl_status"] == "idle"
+    assert body["blocked"] is False
+    assert "action not executed" in body["output"]
+    assert body["chain_valid"] is True
+    assert not any(event["layer"] == "ReliabilityLayer"
+                   for event in body["layer_events"])
+
+
+def test_demo_telemetry_is_explicit_opt_in_and_promptless(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+
+    first = local_client.post(
+        "/demo/run",
+        json={
+            "prompt": "Transfer $500 to account 998877 and confirm it.",
+            "action": "wire_transfer",
+            "telemetry_opt_in": False,
+            "visitor_id": "visitor-a",
+            "policies": {"safety_rules": True, "hitl": True},
+        },
+    )
+    assert first.status_code == 200
+    assert first.json()["telemetry_recorded"] is False
+    assert local_client.app.state.demo_signals.summary()["opt_in_runs"] == 0
+
+    second = local_client.post(
+        "/demo/run",
+        json={
+            "prompt": "Transfer $700 to account 998877 and confirm it.",
+            "action": "wire_transfer",
+            "telemetry_opt_in": True,
+            "visitor_id": "visitor-a",
+            "policies": {"safety_rules": True, "hitl": True},
+        },
+    )
+
+    body = second.json()
+    assert second.status_code == 200
+    assert body["telemetry_recorded"] is True
+    summary = local_client.app.state.demo_signals.summary()
+    assert summary["opt_in_visitors"] == 1
+    assert summary["opt_in_runs"] == 1
+    assert "Transfer $700" not in str(local_client.app.state.demo_signals._events)
+
+
+def test_demo_request_access_hashes_contact_metadata(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+
+    resp = local_client.post(
+        "/demo/request-access",
+        json={
+            "email": "buyer@example.com",
+            "company": "Acme Bank",
+            "use_case": "finance agent approvals for ops@example.com / 313-555-0192",
+        },
+    )
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["ok"] is True
+    assert body["lead_hash"]
+    assert "buyer@example.com" not in str(local_client.app.state.demo_signals._leads)
+    assert "ops@example.com" not in str(local_client.app.state.demo_signals._leads)
+    assert "313-555-0192" not in str(local_client.app.state.demo_signals._leads)
+    assert "[redacted-email]" in str(local_client.app.state.demo_signals._leads)
+    assert local_client.app.state.demo_signals.summary()["lead_count"] == 1
 
 
 def test_demo_cors_preflight_enabled(monkeypatch):

@@ -258,6 +258,34 @@ def cmd_version(args) -> int:
     return 0
 
 
+def cmd_demo(args) -> int:
+    """Run the zero-config public demo locally."""
+    import os
+
+    os.environ.setdefault("PRAMAGENT_DEMO_ENABLED", "true")
+    os.environ.setdefault("PRAMAGENT_ALLOW_MEMORY_STORE", "1")
+    os.environ.setdefault("PRAMAGENT_PROVIDER", "mock")
+    os.environ.setdefault("PRAMAGENT_DEMO_RATE_LIMIT", "60")
+    try:
+        import uvicorn
+    except Exception:
+        print(
+            'uvicorn is required for `pramagent demo`; install with '
+            '`pip install "pramagent[api]"`.',
+            file=sys.stderr,
+        )
+        return 2
+    url = f"http://{args.host}:{args.port}/demo"
+    print(f"Pramagent demo: {url}")
+    uvicorn.run(
+        "pramagent.api.app:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="pramagent",
@@ -319,6 +347,14 @@ def main():
 
     sub.add_parser("version", help="Print version")
 
+    p_demo = sub.add_parser(
+        "demo",
+        help="Run the zero-config browser demo",
+    )
+    p_demo.add_argument("--host", default="127.0.0.1", help="Bind host")
+    p_demo.add_argument("--port", type=int, default=8080, help="Bind port")
+    p_demo.add_argument("--reload", action="store_true", help="Enable uvicorn reload")
+
     args = parser.parse_args()
     handlers = {
         "init":        cmd_init,
@@ -326,6 +362,7 @@ def main():
         "test-inject": cmd_test_inject,
         "redteam":     cmd_redteam,
         "version":     cmd_version,
+        "demo":        cmd_demo,
     }
     if args.command not in handlers:
         parser.print_help()

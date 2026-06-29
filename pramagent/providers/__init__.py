@@ -82,7 +82,13 @@ class AnthropicProvider(BaseProvider):
         self.max_tokens = max_tokens
 
     async def complete(self, prompt: str, **kwargs) -> ProviderResult:
-        from anthropic import AsyncAnthropic  # lazy import
+        try:
+            from anthropic import AsyncAnthropic  # lazy import
+        except ImportError as exc:
+            raise RuntimeError(
+                "anthropic package is required for AnthropicProvider; "
+                "install with `pip install \"pramagent[anthropic]\"`"
+            ) from exc
         client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         t0 = time.perf_counter()
         msg = await client.messages.create(
@@ -329,8 +335,19 @@ class OllamaProvider(BaseProvider):
     """
     name = "ollama"
 
-    def __init__(self, model: str = "llama3.2:1b", host: str = "http://localhost:11434"):
+    def __init__(
+        self,
+        model: str = "llama3.2:1b",
+        host: str = "http://localhost:11434",
+        *,
+        timeout_s: float = 60.0,
+        max_tokens: int = 256,
+        temperature: float = 0.0,
+    ):
         self.model = model
+        self.timeout_s = timeout_s
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         # Validated like every other provider URL; private/loopback targets
         # are expected for a local daemon, so allow them explicitly (P3-7).
         self.host = validate_http_url(
@@ -345,13 +362,37 @@ class OllamaProvider(BaseProvider):
         t0 = time.perf_counter()
         # bounded like every other provider call — a hung local daemon must
         # not hold the request forever (P3-7)
-        timeout = aiohttp.ClientTimeout(total=60)
+        timeout_s = float(kwargs.get("timeout_s", self.timeout_s))
+        max_tokens = int(kwargs.get("max_tokens", self.max_tokens))
+        temperature = float(kwargs.get("temperature", self.temperature))
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        body = {
+            "model": kwargs.get("model", self.model),
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "num_predict": max(1, max_tokens),
+                "temperature": temperature,
+            },
+        }
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(f"{self.host}/api/generate",
-                              json={"model": self.model, "prompt": prompt, "stream": False}) as r:
-                data = await r.json()
-        return ProviderResult(text=data.get("response", ""), model=self.model, cost_usd=0.0,
-                              latency_ms=(time.perf_counter() - t0) * 1000)
+                              json=body) as r:
+                raw = await r.text()
+                if r.status >= 400:
+                    raise RuntimeError(f"ollama HTTP {r.status}: {raw[:400]}")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"ollama returned non-JSON response: {raw[:200]}") from exc
+        if data.get("error"):
+            raise RuntimeError(f"ollama error: {str(data['error'])[:400]}")
+        return ProviderResult(
+            text=str(data.get("response", "")),
+            model=str(data.get("model") or body["model"]),
+            cost_usd=0.0,
+            latency_ms=(time.perf_counter() - t0) * 1000,
+        )
 
 
 def _json_request(req: urllib.request.Request, *, timeout: float) -> dict[str, Any]:

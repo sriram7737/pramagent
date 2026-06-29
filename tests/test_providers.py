@@ -4,7 +4,8 @@ import urllib.error
 
 import pytest
 
-from pramagent.providers import (GeminiProvider, NvidiaProvider,
+from pramagent.providers import (AnthropicProvider, GeminiProvider, NvidiaProvider,
+                                 OllamaProvider,
                                  OpenAICompatibleProvider,
                                  OpenAIProvider)
 
@@ -21,6 +22,49 @@ class FakeHTTPResponse:
 
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
+
+
+class FakeAioHTTPResponse:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self):
+        if isinstance(self.payload, str):
+            return self.payload
+        return json.dumps(self.payload)
+
+
+class FakeAioHTTPSession:
+    last_json = None
+    response = FakeAioHTTPResponse({"response": "hello from ollama", "model": "qwen"})
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, json):
+        self.__class__.last_json = json
+        return self.__class__.response
+
+
+class FakeAioHTTPModule:
+    class ClientTimeout:
+        def __init__(self, total):
+            self.total = total
+
+    ClientSession = FakeAioHTTPSession
 
 
 @pytest.mark.asyncio
@@ -141,6 +185,64 @@ def test_openai_provider_uses_openai_defaults(monkeypatch):
     assert provider.base_url == "https://api.openai.com/v1"
     assert provider.model == "gpt-test"
     assert provider.api_key == "sk-test"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_missing_extra_has_actionable_error(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "anthropic":
+            raise ImportError("missing optional dependency")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    provider = AnthropicProvider(model="claude-test")
+
+    with pytest.raises(RuntimeError, match=r"pip install .*pramagent\[anthropic\]"):
+        await provider.complete("hello")
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_sends_bounded_generation_options(monkeypatch):
+    import sys
+
+    FakeAioHTTPSession.response = FakeAioHTTPResponse({
+        "response": "short local answer",
+        "model": "qwen2.5:1.5b",
+    })
+    FakeAioHTTPSession.last_json = None
+    monkeypatch.setitem(sys.modules, "aiohttp", FakeAioHTTPModule)
+    provider = OllamaProvider(
+        model="qwen2.5:1.5b",
+        max_tokens=7,
+        temperature=0.2,
+        timeout_s=3,
+    )
+
+    result = await provider.complete("say hi")
+
+    assert result.text == "short local answer"
+    assert result.model == "qwen2.5:1.5b"
+    assert FakeAioHTTPSession.last_json["stream"] is False
+    assert FakeAioHTTPSession.last_json["options"]["num_predict"] == 7
+    assert FakeAioHTTPSession.last_json["options"]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_reports_error_payload(monkeypatch):
+    import sys
+
+    FakeAioHTTPSession.response = FakeAioHTTPResponse({
+        "error": "model not found"
+    })
+    monkeypatch.setitem(sys.modules, "aiohttp", FakeAioHTTPModule)
+    provider = OllamaProvider(model="missing-model", timeout_s=3)
+
+    with pytest.raises(RuntimeError, match="ollama error: model not found"):
+        await provider.complete("say hi")
 
 
 @pytest.mark.asyncio

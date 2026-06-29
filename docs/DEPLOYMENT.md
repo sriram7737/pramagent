@@ -153,27 +153,41 @@ Use a scoped ServiceNow API user/token and store it in your secret manager.
 
 ## Public provider live demo
 Pramagent can serve a single-file browser demo at `GET /demo` and a public
-runner at `POST /demo/run`. This is disabled by default.
+runner at `POST /demo/run`. This is enabled by default so evaluators land on a
+zero-config trust-stack proof; set `PRAMAGENT_DEMO_ENABLED=false` for API-only
+deployments.
 
 ```bash
 pip install "pramagent[api]"
-PRAMAGENT_DEMO_ENABLED=true \
-PRAMAGENT_DEMO_RATE_LIMIT=60 \
-PRAMAGENT_ALLOW_MEMORY_STORE=1 \
-uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
+pramagent demo
 ```
 
-The public demo asks each visitor for their own provider key: `nvapi-*` for
-NVIDIA NIM models or `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`. The key is
-passed only to the current provider request. It is never stored in traces,
-audit payloads, usage records, or logs. Demo runs use isolated in-memory
-trace/audit stores so one visitor cannot fetch another visitor's trace.
+`pramagent demo` sets demo-safe local defaults in that process:
+`PRAMAGENT_DEMO_ENABLED=true`, `PRAMAGENT_ALLOW_MEMORY_STORE=1`,
+`PRAMAGENT_PROVIDER=mock`, and `PRAMAGENT_DEMO_RATE_LIMIT=60`.
+
+The first demo scenario requires no provider key: a financial transfer request
+is held at HITL before any provider call and sealed into a verifiable hash-chain
+trace. Visitors can optionally bring their own provider key: `nvapi-*` for
+NVIDIA NIM models, `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`, or Gemini
+API Studio keys for `gemini-2.5-flash`. The key is passed only to the current
+provider request. It is never stored in traces, audit payloads, usage records,
+or logs. Demo runs use isolated in-memory trace/audit stores so one visitor
+cannot fetch another visitor's trace.
 
 Demo throttling is keyed by client IP plus a short in-memory SHA-256 hash of
-the visitor's provider key. A new provider key gets a separate bucket, but the
-plaintext key is still not persisted or logged. If the UI shows `DEGRADED`,
-the ReliabilityLayer returned a safe default because the upstream provider
-request failed; the trace includes the provider detail.
+the visitor's provider key. The no-key deterministic path is throttled by IP. A
+new provider key gets a separate bucket, but the plaintext key is still not
+persisted or logged. If the UI shows `DEGRADED`, the ReliabilityLayer returned
+a safe default because the upstream provider request failed; the trace includes
+the provider detail.
+
+The demo includes opt-in product signals for evaluating adoption and retention:
+when a visitor checks the box, Pramagent records only a process-salted hashed
+visitor ID, provider kind, verdict, HITL state, and conformance tiers. Prompts,
+outputs, provider keys, IP addresses, and plaintext email are not recorded. The
+managed pilot form stores salted contact hashes and a short use-case label with
+obvious email/phone values redacted.
 
 The demo allow-list intentionally contains only currently hosted NVIDIA Build
 free-endpoint model IDs. If a benign prompt returns a ReliabilityLayer
@@ -189,7 +203,6 @@ web: uvicorn pramagent.api.app:app --host 0.0.0.0 --port $PORT
 Recommended Railway variables for the demo service:
 
 ```bash
-PRAMAGENT_DEMO_ENABLED=true
 PRAMAGENT_DEMO_RATE_LIMIT=60
 PRAMAGENT_ALLOW_MEMORY_STORE=1
 PRAMAGENT_JWT_SECRET=<generated secret, 32+ bytes>
@@ -259,7 +272,7 @@ kubectl create secret generic pramagent-secrets \
   --from-literal=PRAMAGENT_API_KEY=... --from-literal=PRAMAGENT_JWT_SECRET=... \
   --from-literal=PRAMAGENT_REDIS_URL=redis://... --from-literal=PRAMAGENT_POSTGRES_DSN=postgresql://...
 helm install pramagent deploy/helm/pramagent \
-  --set image.tag=0.8.4 --set otel.endpoint=http://otel-collector:4317
+  --set image.tag=0.8.5 --set otel.endpoint=http://otel-collector:4317
 ```
 Includes readiness/liveness probes, HorizontalPodAutoscaler (3–10 replicas), and
 secret-based config. Point `otel.endpoint` at any OTLP collector (Jaeger,

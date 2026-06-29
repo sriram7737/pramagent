@@ -35,7 +35,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -233,9 +235,16 @@ DEFAULT_GEMINI_DEMO_MODEL = "gemini-2.5-flash"
 
 
 def _demo_enabled() -> bool:
-    return os.environ.get("PRAMAGENT_DEMO_ENABLED", "").lower() in {
-        "1", "true", "yes", "on"
-    }
+    """Public demo is the product front door.
+
+    It is enabled by default for five-minute time-to-value and can be turned
+    off explicitly in hardened API-only deployments.
+    """
+    raw = os.environ.get(
+        "PRAMAGENT_DEMO_ENABLED",
+        os.environ.get("PRAMAGENT_ENABLE_DEMO", "true"),
+    )
+    return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
 
 
 def _demo_classifier_keyword_only() -> bool:
@@ -256,6 +265,109 @@ def _as_bool(value, default: bool) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+class DemoProductSignals:
+    """Privacy-preserving product signals for the public demo.
+
+    The demo only records events when the browser opts in. It never stores
+    prompts, model outputs, provider keys, IP addresses, or plaintext email.
+    """
+
+    def __init__(self, max_events: int = 2000) -> None:
+        self.max_events = max_events
+        self._salt = secrets.token_bytes(32)
+        self._lock = threading.Lock()
+        self._visitors: dict[str, dict] = {}
+        self._events: list[dict] = []
+        self._leads: list[dict] = []
+
+    def _digest(self, value: object, *, length: int = 24) -> str:
+        text = str(value or "").strip()
+        if not text:
+            text = "anonymous"
+        return hashlib.sha256(self._salt + text.encode("utf-8")).hexdigest()[:length]
+
+    @staticmethod
+    def _scrub_label(value: object) -> str:
+        text = str(value or "").strip()[:120]
+        text = re.sub(
+            r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+            "[redacted-email]",
+            text,
+        )
+        text = re.sub(
+            r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b",
+            "[redacted-phone]",
+            text,
+        )
+        return text
+
+    def record_run(
+        self,
+        *,
+        visitor_id: object,
+        provider_kind: str,
+        action: str,
+        verdict: str,
+        hitl_status: str,
+        payment_intent: bool,
+        aws_scope: str,
+        detection_tier: str,
+        response_tier: str,
+    ) -> bool:
+        visitor = self._digest(visitor_id)
+        now = time.time()
+        event = {
+            "visitor_hash": visitor,
+            "created_at": now,
+            "provider_kind": provider_kind,
+            "action": action,
+            "verdict": verdict,
+            "hitl_status": hitl_status,
+            "payment_intent": bool(payment_intent),
+            "aws_scope": aws_scope,
+            "detection_tier": detection_tier,
+            "response_tier": response_tier,
+        }
+        with self._lock:
+            profile = self._visitors.setdefault(
+                visitor,
+                {"first_seen": now, "last_seen": now, "runs": 0},
+            )
+            profile["last_seen"] = now
+            profile["runs"] += 1
+            self._events.append(event)
+            if len(self._events) > self.max_events:
+                del self._events[: len(self._events) - self.max_events]
+        return True
+
+    def record_lead(self, *, email: object, company: object, use_case: object) -> dict:
+        email_text = str(email or "").strip().lower()
+        lead = {
+            "lead_hash": self._digest(email_text or f"{company}:{use_case}"),
+            "email_hash": self._digest(email_text) if email_text else "",
+            "company_hash": self._digest(company) if company else "",
+            "use_case": self._scrub_label(use_case),
+            "created_at": time.time(),
+        }
+        with self._lock:
+            self._leads.append(lead)
+            if len(self._leads) > self.max_events:
+                del self._leads[: len(self._leads) - self.max_events]
+        return {"ok": True, "lead_hash": lead["lead_hash"]}
+
+    def summary(self) -> dict:
+        with self._lock:
+            repeat = sum(1 for profile in self._visitors.values()
+                         if profile.get("runs", 0) > 1)
+            return {
+                "opt_in_visitors": len(self._visitors),
+                "opt_in_runs": sum(profile.get("runs", 0)
+                                   for profile in self._visitors.values()),
+                "repeat_visitors": repeat,
+                "lead_count": len(self._leads),
+            }
 
 
 def build_default_armor() -> Pramagent:
@@ -320,6 +432,8 @@ def build_default_armor() -> Pramagent:
         provider = OllamaProvider(
             model=os.environ.get("OLLAMA_MODEL", "llama3.2:1b"),
             host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
+            max_tokens=int(os.environ.get("OLLAMA_MAX_TOKENS", "256")),
+            timeout_s=float(os.environ.get("OLLAMA_TIMEOUT_S", "60")),
         )
     else:
         provider = MockProvider(model="api-demo")
@@ -529,7 +643,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     app = FastAPI(
         title="Pramagent",
-        version="0.8.4",
+        version="0.8.5",
         description="Trust middleware for AI agents: deterministic guardrails, HITL, tool policy, tamper-evident traces.",
         lifespan=_lifespan,
     )
@@ -649,6 +763,7 @@ def create_app(armor: Optional[Pramagent] = None,
         capacity=demo_hourly_limit,
         refill_per_sec=demo_hourly_limit / 3600.0,
     )
+    app.state.demo_signals = DemoProductSignals()
 
     # P3-1: the old `request: Request = None` annotation lied about
     # nullability. FastAPI special-cases the bare Request annotation (it is
@@ -816,6 +931,8 @@ def create_app(armor: Optional[Pramagent] = None,
         key. It rejects obvious placeholders and short fake strings so bad-key
         tests and demos fail before a provider error can echo context.
         """
+        if api_key is None or api_key == "":
+            return True
         if not isinstance(api_key, str):
             return False
         if api_key.startswith("nvapi-"):
@@ -835,6 +952,8 @@ def create_app(armor: Optional[Pramagent] = None,
         return False
 
     def _demo_provider_kind(api_key: object) -> Optional[str]:
+        if api_key is None or api_key == "":
+            return "mock"
         if not isinstance(api_key, str):
             return None
         if api_key.startswith("nvapi-"):
@@ -1060,6 +1179,8 @@ def create_app(armor: Optional[Pramagent] = None,
                 model=os.environ.get("PRAMAGENT_DEMO_GEMINI_MODEL", DEFAULT_GEMINI_DEMO_MODEL),
                 api_key=api_key,
             )
+        elif provider_kind == "mock":
+            provider = MockProvider(model="demo-zero-config")
         else:
             provider = NvidiaProvider(model=model, api_key=api_key)
 
@@ -1166,10 +1287,15 @@ def create_app(armor: Optional[Pramagent] = None,
                 headers=_demo_cors_headers(),
             )
 
-        api_key = payload.get("nvidia_api_key")
+        api_key = str(payload.get("nvidia_api_key") or "").strip()
         if not _looks_like_demo_api_key(api_key):
             return JSONResponse(
-                {"detail": "valid NVIDIA NIM, OpenAI, or Gemini API key required"},
+                {
+                    "detail": (
+                        "valid NVIDIA NIM, OpenAI, or Gemini API key required, "
+                        "or leave the field blank for the deterministic demo"
+                    )
+                },
                 status_code=400,
                 headers=_demo_cors_headers(),
             )
@@ -1248,6 +1374,8 @@ def create_app(armor: Optional[Pramagent] = None,
             "call_id": trace.call_id,
             "action": action,
             "payment_intent": payment_intent,
+            "provider_kind": provider_kind,
+            "demo_mode": "deterministic" if provider_kind == "mock" else "live_provider",
             "output": result.output,
             "blocked": result.blocked,
             "block_reason": result.block_reason,
@@ -1280,7 +1408,50 @@ def create_app(armor: Optional[Pramagent] = None,
             "total_latency_ms": trace.total_latency_ms,
             "chain_valid": bool(armor.audit.verify_chain()),
         }
+        if _as_bool(payload.get("telemetry_opt_in"), False):
+            label = "blocked" if result.blocked else (
+                "held" if trace.hitl_status == "idle" else "allowed"
+            )
+            body["telemetry_recorded"] = app.state.demo_signals.record_run(
+                visitor_id=payload.get("visitor_id") or _demo_ip(request),
+                provider_kind=provider_kind or "unknown",
+                action=action,
+                verdict=label,
+                hitl_status=trace.hitl_status,
+                payment_intent=payment_intent,
+                aws_scope=trace.aws_scope,
+                detection_tier=trace.detection_tier,
+                response_tier=trace.response_tier,
+            )
+        else:
+            body["telemetry_recorded"] = False
         return JSONResponse(body, headers=_demo_cors_headers())
+
+    @app.post("/demo/request-access")
+    async def demo_request_access(request: Request):
+        if not _demo_enabled():
+            _demo_not_found()
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        email = str(payload.get("email") or "").strip()
+        company = str(payload.get("company") or "").strip()
+        use_case = str(payload.get("use_case") or "").strip()
+        if not email and not company and not use_case:
+            return JSONResponse(
+                {"detail": "email, company, or use case is required"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+        result = app.state.demo_signals.record_lead(
+            email=email,
+            company=company,
+            use_case=use_case,
+        )
+        return JSONResponse(result, headers=_demo_cors_headers())
 
     @app.post("/v1/auth/token", response_model=TokenResponse)
     async def issue_token(body: TokenRequest, request: Request):

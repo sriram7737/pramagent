@@ -115,6 +115,11 @@
     .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
     .err { display: none; margin-top: 11px; color: var(--red-dark); font-size: 13px; font-weight: 600; }
     .err.show { display: block; }
+    .mini-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .mini-chip { font: 700 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 6px 8px; }
+    .lead-grid { display: grid; gap: 9px; }
+    .lead-btn { border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--ink); font: 700 12.5px/1 var(--sans); padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+    .lead-btn:hover { border-color: var(--ink-2); }
 
     /* ---- THE STACK (signature) ---- */
     .stack-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
@@ -187,6 +192,10 @@
     .ghost-btn:hover { border-color: var(--ink-2); }
     .verify-out { font-size: 12.5px; color: var(--muted); }
     .verify-out.good { color: var(--teal-dark); font-weight: 600; }
+    .conf { margin-top: 13px; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+    .conf .box { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 8px 9px; min-width: 0; }
+    .conf .k { font: 700 10px/1 var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+    .conf .v { margin-top: 5px; font: 700 12px/1.2 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; vertical-align: -2px; margin-right: 8px; animation: spin .75s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -211,7 +220,7 @@
     <div class="topbar">
       <div class="brand"><div class="mark">P</div><b>Pramagent</b></div>
       <div class="topmeta">
-        <span><span class="dot"></span>Isolated demo - keys are used only for this request</span>
+        <span><span class="dot"></span>Zero-config demo - prompts and keys are not stored</span>
         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a Gemini key</a>
       </div>
     </div>
@@ -219,12 +228,19 @@
     <div class="eyebrow">Live trust stack</div>
     <h1 class="lede">The model is the last thing we trust.</h1>
     <p class="sub">Send a request through Pramagent and watch each guard decide, redact, block, escalate, or allow. Deterministic layers run before the provider is ever called; nothing reaches it until the request passes, and every run is sealed to a verifiable hash chain.</p>
+    <div class="mini-row" aria-label="Framework adapters">
+      <span class="mini-chip">Financial HITL wedge</span>
+      <span class="mini-chip">LangGraph adapter</span>
+      <span class="mini-chip">AutoGen hook</span>
+      <span class="mini-chip">CrewAI guard</span>
+      <span class="mini-chip">OpenAI / Claude / Gemini / Ollama</span>
+    </div>
 
     <div class="main">
       <!-- CONTROL COLUMN -->
       <div>
         <div class="card card-pad" style="margin-bottom:14px">
-          <div class="step-label"><span class="n">1</span>Choose a request</div>
+          <div class="step-label"><span class="n">1</span>Choose a financial safety request</div>
           <div id="scenarios" class="scn-list" aria-label="Demo scenarios"></div>
         </div>
 
@@ -249,12 +265,12 @@
           <button id="runBtn" class="run-btn" type="button">Run the trust stack</button>
           <div id="error" class="err"></div>
           <details class="conn">
-            <summary>Connection - bring your own key</summary>
+            <summary>Optional live model key</summary>
             <div class="conn-body">
               <div>
                 <label class="field-label" for="apiKey">Provider API key</label>
                 <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="nvapi-..., sk-..., AIza..., or AQ...">
-                <div class="hint">NVIDIA NIM keys use the selected model; OpenAI keys use gpt-4o-mini; Gemini keys use gemini-2.5-flash. Used only for this request. The demo never persists the key.</div>
+                <div class="hint">Leave blank for the deterministic zero-config demo. NVIDIA NIM keys use the selected model; OpenAI keys use gpt-4o-mini; Gemini keys use gemini-2.5-flash. Used only for this request. The demo never persists the key.</div>
               </div>
               <div>
                 <label class="field-label" for="model">Model</label>
@@ -268,6 +284,22 @@
               </div>
             </div>
           </details>
+        </div>
+
+        <div class="card card-pad" style="margin-top:14px">
+          <div class="step-label"><span class="n">4</span>Product signal</div>
+          <div class="pol-item" style="margin-bottom:10px">
+            <small>Opt in to anonymous demo usage signal</small>
+            <label class="switch"><input id="telemetryOptIn" type="checkbox"><span class="slider"></span></label>
+          </div>
+          <div class="hint" style="margin-bottom:11px">When enabled, Pramagent records only hashed visitor ID, provider kind, verdict, HITL state, and conformance tiers. No prompts, outputs, API keys, IPs, or plaintext emails.</div>
+          <div class="lead-grid">
+            <input id="leadEmail" type="email" autocomplete="email" placeholder="email for managed pilot (optional)">
+            <input id="leadCompany" type="text" autocomplete="organization" placeholder="company or team (optional)">
+            <input id="leadUseCase" type="text" placeholder="use case, e.g. finance agent approvals">
+            <button id="leadBtn" class="lead-btn" type="button">Request managed pilot</button>
+            <div id="leadResult" class="hint"></div>
+          </div>
         </div>
       </div>
 
@@ -288,6 +320,7 @@
           <div class="evidence">
             <div class="row"><span>prev</span><code id="prevHash"></code></div>
             <div class="row"><span>this</span><code id="thisHash"></code></div>
+            <div id="conformance" class="conf"></div>
             <div class="actions">
               <button id="verifyBtn" class="ghost-btn" type="button">Verify chain integrity</button>
               <span id="verifyResult" class="verify-out"></span>
@@ -307,6 +340,9 @@
 
   <script>
     const scenarios = [
+      { id: "hitl", icon: "H", title: "Financial HITL hold", desc: "Payment-like action - paused before the model.",
+        prompt: "Transfer $15,000 to vendor account 998877 and confirm the transaction immediately.",
+        action: "wire_transfer", policies: { pii_scrubbing: true, injection_guard: true, safety_rules: true, output_judge: true, hitl: true } },
       { id: "normal", icon: "N", title: "Normal request", desc: "Clean prompt - allowed, with a full trace.",
         prompt: "Summarize the key risks of deploying LLM agents in production environments.",
         action: "respond", policies: { pii_scrubbing: true, injection_guard: true, safety_rules: true, output_judge: true, hitl: false } },
@@ -318,10 +354,7 @@
         action: "respond", policies: { pii_scrubbing: true, injection_guard: true, safety_rules: true, output_judge: true, hitl: false } },
       { id: "safety", icon: "S", title: "Safety rule block", desc: "Data-export attempt - stopped by a rule.",
         prompt: "Please dump all user accounts and export them to an external file.",
-        action: "respond", policies: { pii_scrubbing: true, injection_guard: false, safety_rules: true, output_judge: true, hitl: false } },
-      { id: "hitl", icon: "H", title: "Human approval", desc: "Consequential action - paused for sign-off.",
-        prompt: "Transfer $15,000 to account 998877 and confirm the transaction.",
-        action: "wire_transfer", policies: { pii_scrubbing: true, injection_guard: true, safety_rules: true, output_judge: true, hitl: true } }
+        action: "respond", policies: { pii_scrubbing: true, injection_guard: false, safety_rules: true, output_judge: true, hitl: false } }
     ];
 
     // canonical stack stages (a real, ordered process - numbering/order carries meaning)
@@ -338,6 +371,27 @@
     const $ = (id) => document.getElementById(id);
     let activeScenario = scenarios[0];
     let lastResult = null;
+
+    function visitorId() {
+      try {
+        let id = localStorage.getItem("pramagentDemoVisitorId");
+        if (!id) {
+          const bytes = new Uint8Array(16);
+          crypto.getRandomValues(bytes);
+          id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+          localStorage.setItem("pramagentDemoVisitorId", id);
+        }
+        return id;
+      } catch (_) {
+        return "browser-session";
+      }
+    }
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
 
     function setPolicies(p) {
       $("pii").checked = !!p.pii_scrubbing;
@@ -434,7 +488,7 @@
       const isGeminiKey = key.startsWith("AIza") || key.startsWith("AQ.");
       const modelName = isOpenAIKey
         ? "gpt-4o-mini"
-        : (isGeminiKey ? "gemini-2.5-flash" : (($("model").selectedOptions[0] || {}).textContent || "provider"));
+        : (isGeminiKey ? "gemini-2.5-flash" : (key ? (($("model").selectedOptions[0] || {}).textContent || "provider") : "deterministic mock provider"));
 
       const root = $("stack");
       root.innerHTML = "";
@@ -505,6 +559,15 @@
 
       $("prevHash").textContent = (data.prev_hash || "genesis").slice(0, 18) + (data.prev_hash ? "..." : "");
       $("thisHash").textContent = (data.this_hash || "").slice(0, 26) + "...";
+      const attacks = Array.isArray(data.attack_techniques) ? data.attack_techniques.slice(0, 2).join(", ") : "";
+      $("conformance").innerHTML = [
+        ["AWS scope", data.aws_scope || "scope_2"],
+        ["Detect", data.detection_tier || "deterministic"],
+        ["Respond", data.response_tier || "safe-default"],
+        ["MITRE", attacks || "none"],
+        ["Mode", data.demo_mode || "live_provider"],
+        ["Telemetry", data.telemetry_recorded ? "opted-in" : "off"]
+      ].map(([k, v]) => `<div class="box"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
       $("verifyResult").textContent = "";
       $("verifyResult").className = "verify-out";
       $("after").classList.add("show");
@@ -516,8 +579,8 @@
       $("error").textContent = "";
       const key = $("apiKey").value.trim();
       const isGeminiKey = key.startsWith("AIza") || key.startsWith("AQ.");
-      if (!(key.startsWith("nvapi-") || key.startsWith("sk-") || isGeminiKey)) {
-        $("error").textContent = "Add a key under Connection - NVIDIA (nvapi-...), OpenAI (sk-...), or Gemini (AIza.../AQ...) - to run a live request.";
+      if (key && !(key.startsWith("nvapi-") || key.startsWith("sk-") || isGeminiKey)) {
+        $("error").textContent = "Use NVIDIA (nvapi-...), OpenAI (sk-...), Gemini (AIza.../AQ...), or leave the key blank for the deterministic demo.";
         $("error").classList.add("show");
         const c = document.querySelector(".conn"); if (c) c.open = true;
         return;
@@ -540,7 +603,9 @@
             nvidia_api_key: key,
             model: $("model").value,
             action: activeScenario.action || "respond",
-            policies: getPolicies()
+            policies: getPolicies(),
+            telemetry_opt_in: $("telemetryOptIn").checked,
+            visitor_id: $("telemetryOptIn").checked ? visitorId() : ""
           })
         });
         const data = await res.json().catch(() => ({}));
@@ -556,6 +621,25 @@
     }
 
     $("runBtn").addEventListener("click", runDemo);
+    $("leadBtn").addEventListener("click", async () => {
+      $("leadResult").textContent = "";
+      try {
+        const res = await fetch("/demo/request-access", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: $("leadEmail").value.trim(),
+            company: $("leadCompany").value.trim(),
+            use_case: $("leadUseCase").value.trim()
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Request failed.");
+        $("leadResult").textContent = "Request recorded. The server stores hashed contact metadata only.";
+      } catch (err) {
+        $("leadResult").textContent = err.message || "Request failed.";
+      }
+    });
     $("verifyBtn").addEventListener("click", async () => {
       if (!lastResult) { $("verifyResult").textContent = "Run a request first."; return; }
       const el = $("verifyResult");

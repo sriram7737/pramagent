@@ -49,13 +49,20 @@ Deferred controls and the reasoning behind them are tracked in
 walks from install to provider setup, agent wrapping, ToolGuard, HITL, trace
 storage, dashboard/API, and real workflow demos.
 
-**Try the public demo:** run the API with `PRAMAGENT_ENABLE_DEMO=1` and open
-`/demo`. The demo is bring-your-own-key: visitors enter an NVIDIA NIM
-`nvapi-*` key, OpenAI `sk-*` key, or Gemini API Studio key for that request
-only, choose a scenario, and watch the trust stack decide where the request
-stops. It shows PII
-scrubbing, injection blocking, deterministic safety rules, output judging,
-HITL holds, and hash-chain verification as one walkthrough.
+**Try the public demo:** run the API and open `/demo`. The front-door scenario
+is financial tool-calling safety: a payment-like action is held for HITL before
+any provider call and sealed into a verifiable trace. No provider key is needed
+for that zero-config path. Visitors can optionally enter an NVIDIA NIM
+`nvapi-*` key, OpenAI `sk-*` key, or Gemini API Studio key for live model
+answers; keys are used for that request only and never persisted.
+
+One-command local demo:
+
+```bash
+pip install "pramagent[api]"
+pramagent demo
+# open http://127.0.0.1:8080/demo
+```
 
 ## Bare Install Quickstart
 
@@ -194,28 +201,45 @@ Open:
 
 ## Public Live Demo
 
-The API can serve a single-page provider demo at `/demo`. It is disabled by
-default and is meant for public evaluation, not production traffic.
+The API serves a single-page product demo at `/demo`. It is enabled by default
+so a new evaluator reaches the trust-stack proof immediately; set
+`PRAMAGENT_DEMO_ENABLED=false` for API-only deployments.
 
 ```bash
-PRAMAGENT_DEMO_ENABLED=true
-PRAMAGENT_DEMO_RATE_LIMIT=60
-PRAMAGENT_ALLOW_MEMORY_STORE=1
-uvicorn pramagent.api.app:app --host 0.0.0.0 --port 8080
+pip install "pramagent[api]"
+pramagent demo
 ```
 
-The demo asks the visitor for their own provider key on each run: `nvapi-*` for
-NVIDIA NIM models, `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`, or an AI
-Studio Gemini key for `gemini-2.5-flash`. Pramagent uses that key only for the
-current provider call; it is not written to traces, logs, stores, usage
-records, or the hash-chain payload. Each demo run uses an isolated in-memory
-trace store and returns the output, trust-layer events, redactions, HITL state,
-latency, conformance fields, `this_hash`, `prev_hash`, and local chain
-verification.
+`pramagent demo` sets demo-safe local defaults in that process:
+`PRAMAGENT_DEMO_ENABLED=true`, `PRAMAGENT_ALLOW_MEMORY_STORE=1`, and
+`PRAMAGENT_PROVIDER=mock`.
+
+The first scenario needs no provider key: it routes a financial transfer
+request through deterministic policy, pauses it at HITL, and returns the trace
+plus `this_hash` / `prev_hash`. This is the five-minute wedge: financial
+side-effect safety before the model is trusted.
+
+Visitors can optionally bring a provider key on each run: `nvapi-*` for NVIDIA
+NIM models, `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`, or an AI Studio
+Gemini key for `gemini-2.5-flash`. Pramagent uses that key only for the current
+provider call; it is not written to traces, logs, stores, usage records, or the
+hash-chain payload. Each demo run uses an isolated in-memory trace store and
+returns the output, trust-layer events, redactions, HITL state, latency,
+DeepMind/AWS-style conformance fields, `this_hash`, `prev_hash`, and local
+chain verification.
+
+The demo also includes optional product signals. If a visitor checks the
+anonymous usage box, Pramagent records only a process-salted hashed visitor ID,
+provider kind, verdict, HITL state, and conformance tiers. It never records
+prompts, outputs, provider keys, IP addresses, or plaintext email. The
+managed-pilot form stores salted contact hashes plus a short use-case label
+with obvious email/phone values redacted, so demand can show up as data without
+turning the demo into a tracking surface.
 
 The public throttle is keyed by client IP plus a short in-memory SHA-256 hash
-of the visitor's provider key. If a visitor switches to a different key, they
-get a fresh demo bucket without Pramagent storing the plaintext key.
+of the visitor's provider key. The no-key deterministic path is throttled by
+IP. If a visitor switches to a different key, they get a fresh demo bucket
+without Pramagent storing the plaintext key.
 A `DEGRADED` demo result means the upstream model call failed and Pramagent
 returned its safe default with a trace. NVIDIA HTTP 403 usually means the
 NVIDIA organization lacks hosted Public API Endpoints access; changing models
