@@ -8,6 +8,20 @@
 > Severity scale: **P0** blocks deploy · **P1** fix before GA · **P2** fix before scale · **P3** hygiene.
 > Lens numbers refer to the ten audit lenses in the review brief.
 
+> **REMEDIATION STATUS — added 2026-06-29 (current package v0.8.5).**
+> This is a historical pre-production review of v0.7.0, retained as the
+> permanent finding record. **Both P0 deploy-blockers and the GA-gating P1
+> findings below were remediated in the v0.7.1 series** and verified present in
+> the current v0.8.5 source: persistent-store startup refusal (P0-1),
+> weak-secret startup denial (P0-2), blocking I/O moved off the async hot path
+> via `asyncio.to_thread` (P1-1/P1-8), single-writer chain append via
+> `SELECT … FOR UPDATE` (P1-5), GDPR erasure parity across SQLite / encrypted /
+> S3 stores (P1-2/P1-7), O(1) `/health/ready` (P1-3), per-trace RCA endpoints
+> (P1-4), Postgres protocol + tenant-scoped listing (P1-6/P1-9), and
+> compose/Helm hardening (P1-10). Read the findings below as *what was fixed*,
+> not as open issues. For the living status and remaining fix-before-scale
+> hygiene items see [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
+
 ---
 
 ## P0 FINDINGS — deploy blockers
