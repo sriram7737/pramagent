@@ -23,6 +23,38 @@ DeepMind/AWS-style conformance labels on every trace. It also includes an
 optional agent-memory integrity contract, structured decision-rationale schema,
 and a human-labeled overreach corpus for measuring valid-goal overreach.
 
+## What it's ready for (and what it isn't)
+
+Pramagent is an honest alpha. The core trust pipeline is real and tested; the
+gaps are around it. Use this to decide whether it fits your use case.
+
+**Ready for today:**
+
+- Developer evaluation and integration against the SDK and FastAPI sidecar
+- Single-tenant or trusted-network pilots **with a persistent store configured**
+  (`PRAMAGENT_POSTGRES_DSN` or `PRAMAGENT_DB`) — the API refuses to boot on
+  volatile memory unless you explicitly opt in
+- Design-partner deployments where you control the network boundary
+- Generating compliance *evidence* (control mappings, not certifications)
+
+**Not ready for yet — do not claim:**
+
+- Production banking / healthcare or other regulated environments
+- Multi-tenant SaaS at scale (no published HA/soak evidence, no backup/DR runbook,
+  no SLA)
+- Prompt-injection *immunity*, *certified* GDPR/SOC 2/HIPAA compliance, or
+  third-party-validated safety — none of these have been externally assessed
+
+**What backs this:** 720 passing integration-first tests across Python
+3.10–3.13, CI security scanning (Bandit, Semgrep, authenticated OWASP ZAP), and
+three prior engineering audits whose release-blocking findings are remediated
+and verified in the current source. Those audit reports are kept in the repo
+**with remediation banners** so you can read both the original findings and
+their fixes — see
+[Full audit](https://github.com/sriram7737/pramagent/blob/main/pramagent_full_audit.md),
+[Enterprise review](https://github.com/sriram7737/pramagent/blob/main/pramagent_enterprise_audit.md),
+and [Security assessment](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_assessment.md).
+
 ## Alpha Maturity Notice
 
 Pramagent is published as **Alpha software**. It has live smoke-test evidence

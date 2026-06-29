@@ -6,6 +6,18 @@
 **Current package note:** v0.7.3 includes the v0.7.1 enterprise remediation,
 the v0.7.2 CI/dependency cleanup, and the v0.7.3 security-prompt remediation.
 Current local suite: **558 passed, 1 skipped**.
+
+> **REMEDIATION STATUS — added 2026-06-29 (current package v0.8.5).**
+> This is a historical, point-in-time audit of v0.5.20, retained as the
+> permanent finding record. **All ten findings below were remediated in the
+> v0.7.1 enterprise-audit remediation series**, and the fixes are verified
+> present in the current v0.8.5 source. Read the findings below as *what was
+> fixed*, not as open issues. For the living, per-fix status see
+> [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md). Items
+> genuinely still deferred (none of them release-blocking) are tracked there:
+> keyset pagination, Redis quota Lua atomicity, chain-verification watermark,
+> Prometheus-specific metrics, `jti` denylist, dependency lockfile/SBOM, CI SHA
+> pinning, and organizational artifacts (breach runbook, DPA, VDP).
 **Ground truth:** `docs/Pramagent-Design-Document.docx` (the "ten-layer trust stack" design)
 **Method:** Full read of every Python module in `pramagent/`, `deploy/`, and `tests/`; the
 design document read in full first; runtime verification of the highest-severity findings
