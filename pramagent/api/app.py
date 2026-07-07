@@ -108,6 +108,9 @@ class RunResponse(BaseModel):
     this_hash: str
     prev_hash: str
     total_latency_ms: float
+    enforcement_mode: str = "enforce"
+    would_block: bool = False
+    would_block_reason: str = ""
     aws_scope: str = "undeclared"
     detection_tier: str = ""
     response_tier: str = ""
@@ -199,6 +202,9 @@ class TraceModel(BaseModel):
     hitl_status: str
     layer_events: list[LayerEventModel]
     total_latency_ms: float
+    enforcement_mode: str = "enforce"
+    would_block: bool = False
+    would_block_reason: str = ""
     prev_hash: str
     this_hash: str
     anchor_tx_id: str
@@ -523,6 +529,7 @@ def build_default_armor() -> Pramagent:
         escalate_policy={"pre": "hitl"},
         output_judge=output_judge,
         agent_scope=os.environ.get("PRAMAGENT_AGENT_SCOPE", "scope_2"),
+        enforcement_mode=os.environ.get("PRAMAGENT_ENFORCEMENT_MODE", "enforce"),
         audit=audit,
         store=store,
     )
@@ -1537,6 +1544,9 @@ def create_app(armor: Optional[Pramagent] = None,
             provider_model=t.provider_model, used_fallback=t.used_fallback,
             this_hash=t.this_hash, prev_hash=t.prev_hash,
             total_latency_ms=t.total_latency_ms,
+            enforcement_mode=t.enforcement_mode,
+            would_block=t.would_block,
+            would_block_reason=t.would_block_reason,
             aws_scope=t.aws_scope,
             detection_tier=t.detection_tier,
             response_tier=t.response_tier,

@@ -40,8 +40,8 @@ from .layers.tool_guard import ToolDecision
 from .providers import BaseProvider, MockProvider
 from .store import MemoryStore
 from .telemetry import trace_layer, span_from_headers
-from .types import (AgentResponse, AgentScope, EscalatePolicy, HITLStatus,
-                    LayerEvent, Provenance, TraceEvent, Verdict)
+from .types import (AgentResponse, AgentScope, EnforcementMode, EscalatePolicy,
+                    HITLStatus, LayerEvent, Provenance, TraceEvent, Verdict)
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,8 @@ class Pramagent:
         consent=None,
         consent_purpose: str = "service_provision",
         escalate_policy=None,
+        enforcement_mode=None,
+        mode=None,
         output_judge=None,
         agent_scope=None,
     ):
@@ -101,6 +103,11 @@ class Pramagent:
         # stage. Default ("log", "log") records the verdict without gating —
         # see EscalatePolicy. Accepts a str, dict, or EscalatePolicy.
         self.escalate_policy = EscalatePolicy.from_config(escalate_policy)
+        # Shadow/dry-run rollout mode for deterministic policy decisions.
+        # ``mode`` is accepted as a developer-friendly alias, but the stored
+        # trace field is explicit: enforcement_mode.
+        self.enforcement_mode = EnforcementMode.from_config(
+            enforcement_mode if enforcement_mode is not None else mode)
         # Optional LLM-as-judge on the model OUTPUT (OutputJudgeLayer). None =
         # disabled (zero overhead). When set, every output that clears the
         # deterministic checks is evaluated semantically before it is returned.
@@ -174,11 +181,28 @@ class Pramagent:
         tr = TraceEvent(tenant_id=tenant_id, session_id=session_id)
         tr.input_hash = hashlib.sha256(prompt.encode()).hexdigest()
         tr.aws_scope = self.agent_scope.value
+        tr.enforcement_mode = self.enforcement_mode.value
 
         def mark(layer, decision, detail, t0, **data):
             tr.layer_events.append(LayerEvent(
                 layer=layer, decision=decision, detail=detail,
                 latency_ms=(time.perf_counter() - t0) * 1000, data=data))
+
+        def observe_or_enforce(layer: str, reason: str, t0, **data) -> bool:
+            """Return True when the caller must enforce the block.
+
+            Observe mode is deliberately limited to policy gates. Consent,
+            size caps, and injection isolation are still hard gates elsewhere
+            in the pipeline because letting them through can leak data or
+            route known attack payloads to a provider.
+            """
+            if self.enforcement_mode != EnforcementMode.OBSERVE:
+                return True
+            tr.would_block = True
+            if not tr.would_block_reason:
+                tr.would_block_reason = reason
+            mark(layer, "would_block", reason, t0, **data)
+            return False
 
         with span_from_headers(trace_headers or {}, span_name="pramagent.request") as root_span:
             root_span.set_attribute("tenant.id", tenant_id)
@@ -250,6 +274,9 @@ class Pramagent:
                     span.set_attribute("injection_hits", len(iso_meta["injection_hits"]))
                     mark("IsolationLayer", "ok", scope, t0,
                          injection_hits=iso_meta["injection_hits"],
+                         classifier_flagged=iso_meta.get("classifier_flagged"),
+                         classifier_meta=iso_meta.get("classifier_meta", {}),
+                         provenance=iso_meta.get("provenance"),
                          input_bytes=iso_meta["input_bytes"])
                 except Exception as exc:
                     reason = "isolation: " + (
@@ -282,12 +309,17 @@ class Pramagent:
                  ",".join(r.rule_id for r in pre_rules if r.fired) or "no rules fired", t0)
 
             if pre_verdict == Verdict.BLOCK:
-                response = await self._finalize(tr, output="", blocked=True,
-                                          reason="blocked by input safety rule", t_start=t_start)
-                self.observability.record_result(blocked=True,
-                    latency_ms=response.trace.total_latency_ms,
-                    block_reason="blocked by input safety rule")
-                return response
+                reason = "blocked by input safety rule"
+                if observe_or_enforce(
+                    "SafetyLayer.pre.observe", reason, time.perf_counter(),
+                    rules_fired=fired,
+                ):
+                    response = await self._finalize(tr, output="", blocked=True,
+                                              reason=reason, t_start=t_start)
+                    self.observability.record_result(blocked=True,
+                        latency_ms=response.trace.total_latency_ms,
+                        block_reason=reason)
+                    return response
 
             # 3a) escalate_policy for the input pass. A pre escalation is
             # handled BEFORE the model runs (default "log" is a no-op).
@@ -326,18 +358,29 @@ class Pramagent:
                     mark("ScopePolicy", "blocked", reason, t_scope,
                          aws_scope=self.agent_scope.value,
                          side_effect=td.side_effect)
-                    response = await self._finalize(tr, output="", blocked=True,
-                                              reason=reason, t_start=t_start)
-                    self.observability.record_result(blocked=True,
-                        latency_ms=response.trace.total_latency_ms, block_reason=reason)
-                    return response
+                    if observe_or_enforce(
+                        "ScopePolicy.observe", reason, time.perf_counter(),
+                        aws_scope=self.agent_scope.value,
+                        side_effect=td.side_effect,
+                    ):
+                        response = await self._finalize(tr, output="", blocked=True,
+                                                  reason=reason, t_start=t_start)
+                        self.observability.record_result(blocked=True,
+                            latency_ms=response.trace.total_latency_ms, block_reason=reason)
+                        return response
                 if td.verdict == Verdict.BLOCK:
                     reason = f"tool blocked by policy: {td.reason}"
-                    response = await self._finalize(tr, output="", blocked=True,
-                                              reason=reason, t_start=t_start)
-                    self.observability.record_result(blocked=True,
-                        latency_ms=response.trace.total_latency_ms, block_reason=reason)
-                    return response
+                    if observe_or_enforce(
+                        "ToolGuardLayer.observe", reason, time.perf_counter(),
+                        tool_name=tool_name,
+                        side_effect=td.side_effect,
+                        decision_id=td.decision_id,
+                    ):
+                        response = await self._finalize(tr, output="", blocked=True,
+                                                  reason=reason, t_start=t_start)
+                        self.observability.record_result(blocked=True,
+                            latency_ms=response.trace.total_latency_ms, block_reason=reason)
+                        return response
                 scope2_requires_approval = (
                     self.agent_scope == AgentScope.SCOPE_2_HUMAN_APPROVED
                     and not is_read_only_side_effect(td.side_effect)
@@ -392,11 +435,16 @@ class Pramagent:
                 mark("ScopePolicy", "blocked", reason, t0,
                      aws_scope=self.agent_scope.value,
                      action=action)
-                response = await self._finalize(tr, output="", blocked=True,
-                                          reason=reason, t_start=t_start)
-                self.observability.record_result(blocked=True,
-                    latency_ms=response.trace.total_latency_ms, block_reason=reason)
-                return response
+                if observe_or_enforce(
+                    "ScopePolicy.observe", reason, time.perf_counter(),
+                    aws_scope=self.agent_scope.value,
+                    action=action,
+                ):
+                    response = await self._finalize(tr, output="", blocked=True,
+                                              reason=reason, t_start=t_start)
+                    self.observability.record_result(blocked=True,
+                        latency_ms=response.trace.total_latency_ms, block_reason=reason)
+                    return response
 
             # 4) Reliability-guarded provider call
             t0 = time.perf_counter()

@@ -11,6 +11,42 @@ Package status: **Alpha**. PyPI metadata, README, and release notes should keep
 this maturity label until external security review and real pilot evidence
 exist.
 
+## 2026-07-07 product-hardening slice
+
+Implemented from the YC-readiness gap list:
+
+- Added `enforcement_mode="observe"` / `PRAMAGENT_ENFORCEMENT_MODE=observe`
+  for shadow rollout of Safety/ToolGuard/Scope policy. Traces now carry
+  `would_block` and `would_block_reason` when a policy would have blocked.
+- Kept observe mode intentionally narrow: consent, size caps, and injection
+  isolation still fail closed.
+- Surfaced structured classifier metadata (`score`, `threshold`, layer,
+  matched exemplar/pattern, provenance adjustments) on the IsolationLayer trace
+  event.
+- Added policy-as-code loading via `pramagent.policies.load_tool_guard()` for
+  JSON, with optional YAML support through `pramagent[policy]`.
+- Added `pramagent backtest policies.json --cases cases.jsonl` for explicit
+  tool-call case replay in CI.
+- Added `@guarded_tool(armor, policy="...")` and tightened generic
+  `protect_tool()` so `ESCALATE` stops execution before side effects.
+- Added `docs/ENTERPRISE_READINESS_ROADMAP.md` for the bigger proof/enterprise
+  items that are not yet implemented or externally proven.
+
+Focused verification for this slice:
+
+```bash
+python -m pytest tests\test_product_hardening.py `
+  tests\test_rules_and_extensions.py::test_generic_protect_tool_blocks_unregistered `
+  tests\test_rules_and_extensions.py::test_generic_protect_tool_allows_registered `
+  tests\test_pipeline.py::test_block_rule_stops_call -q
+python -m pytest tests\test_conformance.py -q
+python -m compileall -q pramagent
+python -m pramagent.cli backtest --help
+```
+
+Result: **13 focused tests passed**, compileall clean, and the backtest CLI
+help path imports cleanly.
+
 ## Test status
 
 `python -m pytest -q --tb=short` -> **720 passing, 2 skipped**. The skipped

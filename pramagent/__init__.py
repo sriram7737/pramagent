@@ -33,12 +33,16 @@ from .memory import (AgentMemoryStore, InMemoryBackend, IntegrityMemoryStore,
 from .rationale import DecisionRationale
 from .overreach import (OverreachVerdict, authorized_ceiling, evaluate_corpus,
                         load_cases, overreach_v0)
+from .policies import (BacktestCase, BacktestResult, PolicyLoadError,
+                       backtest_policy_file, backtest_tool_guard_async,
+                       load_backtest_cases, load_tool_guard,
+                       load_tool_policies, tool_policy_from_dict)
 from .auth import APIKeyRegistry, JWTManager, PostgresAPIKeyRegistry
 from .otel import OpenTelemetryExporter, OpenTelemetryNotInstalled
 from .anchoring import EthereumAnchor, EthereumAnchorReceipt
 from .redteam import RedTeamReport, run_injection_benchmark
-from .types import (AgentResponse, AgentScope, EscalatePolicy, HITLStatus,
-                    TraceEvent, Verdict)
+from .types import (AgentResponse, AgentScope, EnforcementMode, EscalatePolicy,
+                    HITLStatus, TraceEvent, Verdict)
 from .conformance import (
     attack_techniques_for_side_effect,
     finalize_trace_conformance,
@@ -64,6 +68,7 @@ __all__ = [
     "AgentResponse",
     "TraceEvent",
     "AgentScope",
+    "EnforcementMode",
     "Verdict",
     "HITLStatus",
     "EscalatePolicy",
@@ -92,6 +97,15 @@ __all__ = [
     "authorized_ceiling",
     "evaluate_corpus",
     "load_cases",
+    "PolicyLoadError",
+    "BacktestCase",
+    "BacktestResult",
+    "tool_policy_from_dict",
+    "load_tool_policies",
+    "load_tool_guard",
+    "load_backtest_cases",
+    "backtest_tool_guard_async",
+    "backtest_policy_file",
     "APIKeyRegistry",
     "PostgresAPIKeyRegistry",
     "JWTManager",

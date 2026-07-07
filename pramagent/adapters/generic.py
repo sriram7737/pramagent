@@ -6,6 +6,7 @@ your stack — or when you want to reuse the same guard inside a custom loop.
 
     protect(armor, fn)          # wrap an async LLM-call coroutine
     protect_tool(armor, fn)     # wrap a tool function (sync or async)
+    guarded_tool(...)           # alias/decorator for existing Python tools
 """
 from __future__ import annotations
 
@@ -80,6 +81,14 @@ def protect_tool(armor: Pramagent, fn: Optional[Callable[..., Any]] = None,
     name = tool_name or getattr(fn, "__name__", "tool")
     is_coro = asyncio.iscoroutinefunction(fn)
 
+    def _raise_if_not_allowed(decision):
+        if decision.verdict == Verdict.BLOCK:
+            raise PermissionError(f"tool blocked by Pramagent: {decision.reason}")
+        if decision.verdict == Verdict.ESCALATE:
+            raise PermissionError(
+                "tool requires human approval before execution: "
+                f"{decision.reason}")
+
     @functools.wraps(fn)
     def sync_wrapper(*args, tenant_id: str = "default",
                      session_id: str = "default", **kwargs):
@@ -88,8 +97,7 @@ def protect_tool(armor: Pramagent, fn: Optional[Callable[..., Any]] = None,
             tenant_id=tenant_id, session_id=session_id,
             action_label=action_label,
         )
-        if decision.verdict == Verdict.BLOCK:
-            raise PermissionError(f"tool blocked by Pramagent: {decision.reason}")
+        _raise_if_not_allowed(decision)
         return fn(*args, **kwargs)
 
     @functools.wraps(fn)
@@ -100,8 +108,38 @@ def protect_tool(armor: Pramagent, fn: Optional[Callable[..., Any]] = None,
             tenant_id=tenant_id, session_id=session_id,
             action_label=action_label,
         )
-        if decision.verdict == Verdict.BLOCK:
-            raise PermissionError(f"tool blocked by Pramagent: {decision.reason}")
+        _raise_if_not_allowed(decision)
         return await fn(*args, **kwargs)
 
     return async_wrapper if is_coro else sync_wrapper
+
+
+def guarded_tool(armor: Pramagent, fn: Optional[Callable[..., Any]] = None,
+                 *, policy: Optional[str] = None,
+                 tool_name: Optional[str] = None,
+                 action_label: str = "tool_call"):
+    """One-line decorator for existing Python tools.
+
+    ``policy`` names the ToolPolicy/tool entry to evaluate. It is an alias for
+    ``tool_name`` so application code can read naturally::
+
+        @guarded_tool(armor, policy="finance_payment")
+        def send_wire(amount_usd: float, destination: str): ...
+
+    BLOCK and ESCALATE both stop execution. Use the full HITL queue / dashboard
+    path when a human needs to approve and then re-run the side effect.
+    """
+    selected_name = tool_name or policy
+    if fn is None:
+        return lambda real_fn: guarded_tool(
+            armor,
+            real_fn,
+            policy=selected_name,
+            action_label=action_label,
+        )
+    return protect_tool(
+        armor,
+        fn,
+        tool_name=selected_name,
+        action_label=action_label,
+    )

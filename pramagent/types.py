@@ -22,6 +22,41 @@ class Verdict(str, Enum):
     REDACT = "redact"        # proceed but with content removed
 
 
+class EnforcementMode(str, Enum):
+    """Whether policy gates stop execution or only record what they would do.
+
+    ENFORCE is the production default. OBSERVE is a shadow/dry-run mode for
+    policy rollout: deterministic policy blocks are recorded on the trace but
+    the request continues so teams can tune policies before switching traffic
+    to enforcement.
+    """
+    ENFORCE = "enforce"
+    OBSERVE = "observe"
+
+    @classmethod
+    def from_config(cls, value) -> "EnforcementMode":
+        if value is None or value == "":
+            return cls.ENFORCE
+        if isinstance(value, cls):
+            return value
+        key = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "enforce": cls.ENFORCE,
+            "enforced": cls.ENFORCE,
+            "block": cls.ENFORCE,
+            "blocking": cls.ENFORCE,
+            "observe": cls.OBSERVE,
+            "shadow": cls.OBSERVE,
+            "shadow_mode": cls.OBSERVE,
+            "dry_run": cls.OBSERVE,
+            "dryrun": cls.OBSERVE,
+        }
+        try:
+            return aliases[key]
+        except KeyError as exc:
+            raise ValueError(f"unknown enforcement mode: {value!r}") from exc
+
+
 class Provenance(str, Enum):
     """Source provenance for input content.
 
@@ -219,6 +254,14 @@ class TraceEvent:
     hitl_status: str = HITLStatus.NOT_REQUIRED.value
     layer_events: list[LayerEvent] = field(default_factory=list)
     total_latency_ms: float = 0.0
+
+    # Shadow rollout metadata. In observe mode, policy gates can record that
+    # they would have blocked without stopping execution. Isolation and consent
+    # gates still fail closed because allowing those through can leak data or
+    # send known injection to the provider.
+    enforcement_mode: str = EnforcementMode.ENFORCE.value
+    would_block: bool = False
+    would_block_reason: str = ""
 
     # Framework-conformance labels. Populated by the orchestrator at finalize
     # time so every persisted trace can be read through DeepMind/AWS vocabulary

@@ -258,6 +258,33 @@ def cmd_version(args) -> int:
     return 0
 
 
+def cmd_backtest(args) -> int:
+    from .policies import PolicyLoadError, backtest_policy_file
+
+    try:
+        result = backtest_policy_file(args.policy_file, args.cases)
+    except PolicyLoadError as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    data = result.to_dict()
+    if args.json:
+        print(json.dumps(data, indent=2, sort_keys=True))
+    else:
+        print("Pramagent policy backtest")
+        print(f"  cases:      {result.total}")
+        print(f"  allow:      {result.allowed}")
+        print(f"  block:      {result.blocked}")
+        print(f"  escalate:   {result.escalated}")
+        print(f"  mismatches: {len(result.mismatches)}")
+        for mismatch in result.mismatches:
+            print(
+                "    - "
+                f"{mismatch['case_id']}: expected {mismatch['expected']}, "
+                f"got {mismatch['actual']} ({mismatch['reason']})"
+            )
+    return 1 if result.mismatches else 0
+
+
 def cmd_demo(args) -> int:
     """Run the zero-config public demo locally."""
     import os
@@ -345,6 +372,22 @@ def main():
         help="Exit non-zero if bypass rate exceeds this fraction",
     )
 
+    p_backtest = sub.add_parser(
+        "backtest",
+        help="Backtest a ToolGuard policy file against JSON/JSONL cases",
+    )
+    p_backtest.add_argument("policy_file", help="ToolPolicy JSON/YAML file")
+    p_backtest.add_argument(
+        "--cases",
+        required=True,
+        help="JSON or JSONL tool-call cases with expected verdicts",
+    )
+    p_backtest.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON",
+    )
+
     sub.add_parser("version", help="Print version")
 
     p_demo = sub.add_parser(
@@ -361,6 +404,7 @@ def main():
         "validate":    cmd_validate,
         "test-inject": cmd_test_inject,
         "redteam":     cmd_redteam,
+        "backtest":    cmd_backtest,
         "version":     cmd_version,
         "demo":        cmd_demo,
     }

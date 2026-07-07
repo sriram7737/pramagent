@@ -10,6 +10,9 @@ and tamper-evident audit traces. **Alpha** - read the
 [implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
 before customer-facing pilots.
 
+The wedge is narrow by design: Pramagent does not prevent your model from being
+wrong; it prevents your model from doing damage when it is wrong.
+
 ![Pramagent trust stack](https://raw.githubusercontent.com/sriram7737/pramagent/main/docs/stack.png)
 
 Pramagent wraps OpenAI, Anthropic, Gemini, Ollama, local, and
@@ -75,6 +78,8 @@ The DeepMind/AWS agent-security mapping is tracked in
 [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md).
 Deferred controls and the reasoning behind them are tracked in
 [Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md).
+The YC/product-readiness gap list and commercial hardening roadmap are tracked
+in [Enterprise readiness roadmap](https://github.com/sriram7737/pramagent/blob/main/docs/ENTERPRISE_READINESS_ROADMAP.md).
 
 **Start here:** [Getting Started With Pramagent](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
 walks from install to provider setup, agent wrapping, ToolGuard, HITL, trace
@@ -182,6 +187,21 @@ model — strong defense-in-depth, not a guarantee.
 Use `ToolGuardLayer` with `ToolPolicy`. Pramagent validates JSON Schema,
 tenant/action allow-lists, side-effect class, call frequency, argument
 injection, and dangerous chains before any side effect can execute.
+
+**Can I trial policies without breaking production workflows?**
+Yes. Construct `Pramagent(enforcement_mode="observe")` or set
+`PRAMAGENT_ENFORCEMENT_MODE=observe` for the API sidecar. Observe mode records
+`trace.would_block=True`, `trace.would_block_reason`, and a `*.observe`
+LayerEvent, but lets Safety/ToolGuard/Scope policy decisions continue so teams
+can tune policies. Consent, size caps, and injection isolation still fail
+closed.
+
+**Can security teams review policies without editing Python?**
+Yes. `pramagent.policies.load_tool_guard("policies.json")` loads ToolPolicy
+definitions from JSON, and YAML is supported with `pip install pyyaml` or
+`pramagent[policy]`. `pramagent backtest policies.json --cases cases.jsonl`
+runs proposed policy changes against explicit tool-call cases and exits
+nonzero on expected-verdict mismatches.
 
 **How do I add human approval to AI agent actions?**  
 Use `HITLLayer` or a ToolGuard policy with `Verdict.ESCALATE`. Silence is never
@@ -367,6 +387,75 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Policy-As-Code And Backtesting
+
+Security teams can review ToolGuard definitions as JSON/YAML files instead of
+hardcoding them in application code.
+
+`policies.json`:
+
+```json
+{
+  "policies": [
+    {
+      "name": "send_payment",
+      "side_effect": "payment",
+      "action": "escalate",
+      "allowed_tenants": ["finance_team"],
+      "schema": {
+        "type": "object",
+        "required": ["amount_usd", "destination"],
+        "properties": {
+          "amount_usd": {"type": "number", "minimum": 0.01, "maximum": 5000},
+          "destination": {"type": "string", "pattern": "acct-\\d{6,}"}
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}
+```
+
+```python
+from pramagent import Pramagent
+from pramagent.policies import load_tool_guard
+
+armor = Pramagent(tool_guard=load_tool_guard("policies.json"))
+```
+
+Backtest before merging a policy PR:
+
+```bash
+pramagent backtest policies.json --cases cases.jsonl
+```
+
+`cases.jsonl` uses one JSON object per historical/proposed tool call:
+
+```json
+{"case_id":"pay-001","tool_name":"send_payment","arguments":{"amount_usd":250,"destination":"acct-123456"},"tenant_id":"finance_team","expected":"escalate"}
+```
+
+This v0 backtest contract is explicit case replay. Stored-trace replay over the
+last 30 days is on the roadmap once deployments have a stable tool-call export
+shape.
+
+## Drop-In Tool Decorator
+
+For custom Python agents, wrap existing tools without rewriting the execution
+loop:
+
+```python
+from pramagent.adapters import guarded_tool
+
+@guarded_tool(armor, policy="send_payment")
+def send_payment(amount_usd: float, destination: str):
+    ...
+```
+
+`BLOCK` and `ESCALATE` both stop the function before the side effect runs.
+Use the persistent HITL queue/dashboard path to approve and then re-run the
+side effect intentionally; the decorator never treats escalation as consent.
 
 ## Built-In Rule Corpora
 
