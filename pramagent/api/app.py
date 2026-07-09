@@ -686,6 +686,28 @@ def create_app(armor: Optional[Pramagent] = None,
     )
 
     # ── Security headers + structured request logging ─────────────────────
+    # CSP for /demo: script-src/style-src pinned to sha256 hashes of the
+    # inline <script>/<style> blocks actually shipped in demo_page.html.
+    # If that HTML's inline script or style content changes, regenerate
+    # these hashes or the browser will block them.
+    _DEMO_CSP = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'sha256-iKSq6o6K61AlCgDYs3+exAWFG7cw7zBCoPG2cFPlX6M='; "
+        "script-src 'self' 'sha256-tOs3xBGIOdc/4HwSnPzLdiUeM4VoPRCpvteaM3FHjwM='; "
+        "connect-src 'self'"
+    )
+    # Start in report-only mode: logs violations via the browser console
+    # without blocking anything. Flip the header name to
+    # "Content-Security-Policy" once you've confirmed a day or two of clean
+    # traffic with no console violations.
+    _CSP_HEADER_NAME = os.environ.get(
+        "PRAMAGENT_CSP_HEADER_NAME", "Content-Security-Policy-Report-Only"
+    )
+
     @app.middleware("http")
     async def security_and_logging(request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
@@ -702,6 +724,7 @@ def create_app(armor: Optional[Pramagent] = None,
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["Cache-Control"] = "no-store"
             response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+            response.headers[_CSP_HEADER_NAME] = _DEMO_CSP
             return response
         try:
             response: Response = await call_next(request)
@@ -722,6 +745,7 @@ def create_app(armor: Optional[Pramagent] = None,
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.headers[_CSP_HEADER_NAME] = _DEMO_CSP
         if request.url.scheme == "https":
             response.headers["Strict-Transport-Security"] = (
                 "max-age=63072000; includeSubDomains"
