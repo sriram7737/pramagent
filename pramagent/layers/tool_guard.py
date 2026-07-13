@@ -178,7 +178,7 @@ _ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str]] = [
     ("shell_injection",
      re.compile(r"(\|\s*\w|&&|\|\||;\s*\w+\b|>\s*/|>>\s*/)"),
      ["curl", "wget", "netcat", " nc ", "chmod 777", "rm -rf",
-      "/etc/passwd", "/etc/shadow", "base64 -d", "0.0.0.0", "/dev/tcp"],
+      "/etc/passwd", "/etc/shadow", "base64 -d", "0.0.0.0", "/dev/tcp"],  # nosec B104
      "shell chaining/redirection near a known dangerous command"),
     # Demoted from the unconditional list above (SEC hardening pass): the
     # bare shape matches ANY JS/TS template literal or Ruby interpolation,
@@ -217,7 +217,9 @@ _BACKTICK_PRONE_FIELDS = {"content", "pattern", "instruction", "new_string", "ol
 
 _BACKTICK_PAIR = re.compile(r"`[^`]*`")
 
-_BACKTICK_DANGEROUS_KEYWORDS = ['curl', 'wget', 'netcat', ' nc ', 'chmod 777', 'rm -rf', '/etc/passwd', '/etc/shadow', 'base64 -d', '0.0.0.0', '/dev/tcp', 'sh -c', 'bash -c', 'eval(', 'exec(']
+# The blocked payload literals include bind-looking strings, but they are
+# match targets, not sockets opened by this code.
+_BACKTICK_DANGEROUS_KEYWORDS = ['curl', 'wget', 'netcat', ' nc ', 'chmod 777', 'rm -rf', '/etc/passwd', '/etc/shadow', 'base64 -d', '0.0.0.0', '/dev/tcp', 'sh -c', 'bash -c', 'eval(', 'exec(']  # nosec B104
 
 
 def _field_name(path):

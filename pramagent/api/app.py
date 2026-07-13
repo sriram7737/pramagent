@@ -376,7 +376,8 @@ def _looks_like_public_runtime() -> bool:
     sole signal.
     """
     host = _public_bind_host()
-    if host in {"0.0.0.0", "::", "*", "[::]"}:
+    # Detection only; this branch refuses public unauthenticated binds.
+    if host in {"0.0.0.0", "::", "*", "[::]"}:  # nosec B104
         return True
     if _cli_bind_host_looks_public():
         return True

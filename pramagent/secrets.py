@@ -69,9 +69,8 @@ def _fetch_aws_secret(secret_id: str) -> str:
         import boto3
     except ImportError:
         log.error(
-            "%s references an AWS secret id but boto3 is not installed; "
+            "AWS secret-manager indirection is configured but boto3 is not installed; "
             "install with: pip install 'pramagent[s3]' (or boto3 directly)",
-            secret_id,
         )
         return ""
     try:
@@ -82,7 +81,10 @@ def _fetch_aws_secret(secret_id: str) -> str:
         response = client.get_secret_value(SecretId=secret_id)
         return response.get("SecretString", "") or ""
     except Exception as exc:
-        log.error("failed to fetch AWS secret %s: %s", secret_id, exc)
+        log.error(
+            "AWS manager fetch failed; provider_error=%s",
+            exc.__class__.__name__,
+        )
         return ""
 
 
@@ -97,8 +99,8 @@ def _fetch_vault_secret(path: str) -> str:
     vault_token = os.environ.get("VAULT_TOKEN", "").strip()
     if not vault_addr or not vault_token:
         log.error(
-            "%s references a Vault path but VAULT_ADDR/VAULT_TOKEN are not "
-            "set; cannot reach Vault", path,
+            "Vault secret-manager indirection is configured but "
+            "VAULT_ADDR/VAULT_TOKEN are not set; cannot reach Vault",
         )
         return ""
 
@@ -122,9 +124,12 @@ def _fetch_vault_secret(path: str) -> str:
         req = urllib.request.Request(url, headers={"X-Vault-Token": vault_token})
         # Vault address is validated above; token comes from the trusted
         # environment, never from user input.
-        with urllib.request.urlopen(req, timeout=5.0) as resp:  # nosec B310
+        with urllib.request.urlopen(req, timeout=5.0) as resp:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             body = json.loads(resp.read().decode("utf-8"))
         return str(body.get("data", {}).get("data", {}).get("value", "") or "")
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        log.error("failed to fetch Vault secret %s: %s", path, exc)
+        log.error(
+            "Vault manager fetch failed; provider_error=%s",
+            exc.__class__.__name__,
+        )
         return ""
