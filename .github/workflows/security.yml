@@ -63,6 +63,34 @@ jobs:
           name: semgrep-security-report
           path: security-artifacts/semgrep.*
 
+  pip-audit:
+    name: Dependency vulnerability scan (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package + supply-chain tooling
+        run: |
+          python -m pip install -U pip setuptools wheel
+          python -m pip install -c requirements-security.txt ".[all,dev]"
+      - name: Full pip-audit report
+        run: |
+          mkdir -p security-artifacts
+          python -m pip_audit -f json -o security-artifacts/pip-audit.json || true
+          python -m pip_audit -f columns -o security-artifacts/pip-audit.txt || true
+          python -m cyclonedx_py environment -o security-artifacts/sbom.cdx.json
+      - name: Gate on known vulnerabilities
+        run: python -m pip_audit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-report
+          path: |
+            security-artifacts/pip-audit.*
+            security-artifacts/sbom.cdx.json
+
   zap:
     name: OWASP ZAP Authenticated OpenAPI Scan
     runs-on: ubuntu-latest

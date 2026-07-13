@@ -54,39 +54,40 @@ Author = "https://sriram7737.github.io"
 
 # Floors exclude published advisories:
 #   python-multipart >= 0.0.27 (multipart parser advisories)
-#   aiohttp          >= 3.14.0 (request smuggling / parser advisories)
+#   aiohttp          >= 3.14.1 (request smuggling / parser advisories)
 # Upper caps on fast-moving majors (fastapi, web3) prevent silent breaking
 # resolutions. psycopg[binary] v3 replaces psycopg2-binary, which its
 # maintainers do not recommend for production.
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.39"]
-ollama = ["aiohttp>=3.14.0"]
+ollama = ["aiohttp>=3.14.1"]
 api = ["fastapi>=0.110,<1.0", "uvicorn>=0.29"]
 dashboard = ["fastapi>=0.110,<1.0", "uvicorn>=0.29", "jinja2>=3.1", "python-multipart>=0.0.27", "httpx>=0.27", "bcrypt>=4.1"]
-encrypted = ["cryptography>=42"]
+encrypted = ["cryptography>=48.0.1"]
 otel = ["opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25"]
 redis = ["redis>=5.0"]
 postgres = ["psycopg[binary]>=3.1"]
 ethereum = ["web3>=7.0,<8"]
-s3 = ["boto3>=1.34", "cryptography>=42"]
+s3 = ["boto3>=1.34", "cryptography>=48.0.1"]
 policy = ["pyyaml>=6.0"]
 # Embedding-based injection classifier (EmbeddingInjectionClassifier) and
 # DeBERTa fine-tuned classifier (DeBERTaInjectionClassifier).
 # Heavy (pulls torch) — deliberately NOT part of `all`. Without it the
 # classifier falls back to keyword matching.
 ml = ["sentence-transformers>=3.0", "transformers>=4.40"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27", "cryptography>=42", "jinja2>=3.1", "python-multipart>=0.0.27", "bcrypt>=4.1"]
+supply-chain = ["pip-audit>=2.8", "cyclonedx-bom>=5"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27", "cryptography>=48.0.1", "jinja2>=3.1", "python-multipart>=0.0.27", "bcrypt>=4.1", "pip-audit>=2.8", "cyclonedx-bom>=5"]
 all = [
     "jsonschema>=4.23",
     "anthropic>=0.39",
-    "aiohttp>=3.14.0",
+    "aiohttp>=3.14.1",
     "fastapi>=0.110,<1.0",
     "uvicorn>=0.29",
     "jinja2>=3.1",
     "python-multipart>=0.0.27",
     "httpx>=0.27",
     "bcrypt>=4.1",
-    "cryptography>=42",
+    "cryptography>=48.0.1",
     "opentelemetry-api>=1.25",
     "opentelemetry-sdk>=1.25",
     "redis>=5.0",
@@ -104,13 +105,16 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "deploy.dashboard" = ["templates/*.html", "static/*.svg"]
-"pramagent.api" = ["demo_page.html"]
+"pramagent.api" = ["demo_page.html", "demo_signals_admin.html"]
 
 [tool.setuptools.data-files]
 "share/pramagent" = ["README.md", "CHANGELOG.md", "llms.txt", "pramagent_full_audit.md", "pramagent_security_test_results.md"]
 "share/pramagent/docs" = [
     "docs/IMPLEMENTATION_STATUS.md",
     "docs/HARDENING_GUIDE.md",
+    "docs/INCIDENT_RESPONSE_RUNBOOK.md",
+    "docs/BACKUP_DR_RUNBOOK.md",
+    "docs/SUPPLY_CHAIN.md",
     "docs/LIVE_TEST_RESULTS.md",
     "docs/REDTEAM_RESULTS.md",
     "docs/LOAD_TEST_RESULTS.md",
@@ -132,6 +136,9 @@ include-package-data = true
 "share/pramagent/corpus/overreach" = [
     "corpus/overreach/README.md",
     "corpus/overreach/cases.jsonl",
+]
+"share/pramagent/deploy/postgres" = [
+    "deploy/postgres/hardening_rls.sql",
 ]
 
 [tool.pytest.ini_options]

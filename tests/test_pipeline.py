@@ -66,6 +66,42 @@ def test_gdpr_erase_redacts_memory_chain_and_reanchors():
     assert armor.audit.head == armor.audit.records()[-1]["this_hash"]
 
 
+def test_gdpr_redaction_covers_rule_detail_and_layer_event_data():
+    """A rule or layer can echo the offending content back into its own
+    `detail` string or a layer_event's free-form `data` dict — redaction
+    only scrubbing input_text/output_text would leave that PII behind."""
+    from pramagent.audit import redact_chain_payload
+
+    payload = {
+        "tenant_id": "erase-me",
+        "input_text": "my SSN is 123-45-6789",
+        "output_text": "got it",
+        "would_block_reason": "blocked: contains SSN 123-45-6789",
+        "rules_evaluated": [
+            {"rule_id": "pii-ssn", "fired": True, "action": "block",
+             "detail": "matched SSN 123-45-6789 in input"},
+        ],
+        "layer_events": [
+            {"layer": "SafetyLayer", "decision": "block",
+             "detail": "input contained SSN 123-45-6789",
+             "data": {"tool_argument": "transfer to account for SSN 123-45-6789"}},
+        ],
+    }
+
+    changed = redact_chain_payload(payload)
+
+    assert changed is True
+    assert payload["gdpr_erased"] is True
+    blob = json.dumps(payload)
+    assert "123-45-6789" not in blob
+    assert payload["rules_evaluated"][0]["detail"].startswith("[ERASED-GDPR-ART17")
+    assert payload["layer_events"][0]["detail"].startswith("[ERASED-GDPR-ART17")
+    assert payload["layer_events"][0]["data"]["tool_argument"].startswith("[ERASED-GDPR-ART17")
+
+    # Idempotent: a second call on an already-erased payload is a no-op.
+    assert redact_chain_payload(payload) is False
+
+
 def test_block_rule_stops_call():
     armor = Pramagent(
         provider=MockProvider(),

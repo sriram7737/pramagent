@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|Read|LS|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/claude_code_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

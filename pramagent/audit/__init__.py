@@ -9,7 +9,10 @@ retroactive edit to an old record breaks every hash after it. This is the
 EthereumBackend / HyperledgerBackend implement the same interface and anchor
 the chain head to an external ledger. Ethereum can submit real Sepolia
 transactions when configured with web3 credentials; otherwise it keeps the
-local chain semantics and returns a local pseudo-anchor.
+local chain semantics and returns a local pseudo-anchor. When an external
+Ethereum anchor is configured, failures are fail-closed by default; pass
+``fail_open=True`` only for dev/demo deployments that knowingly accept local
+chain-only evidence during chain outages.
 """
 from __future__ import annotations
 
@@ -64,7 +67,12 @@ def canonical_hash(payload: dict, prev_hash: str) -> str:
 
 # Chain-payload fields that can carry user content and must be tombstoned on
 # GDPR Art. 17 erasure. pii_redactions holds only pattern labels, never values.
-GDPR_TOMBSTONE_FIELDS = ("input_text", "output_text")
+GDPR_TOMBSTONE_FIELDS = ("input_text", "output_text", "would_block_reason")
+
+
+def _tombstone_value(value) -> str:
+    digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+    return f"[ERASED-GDPR-ART17 sha256:{digest[:16]}]"
 
 
 def redact_chain_payload(payload: dict) -> bool:
@@ -74,6 +82,14 @@ def redact_chain_payload(payload: dict) -> bool:
     the chain still proves *that* content existed (and can match it if the
     subject re-presents it) without retaining the content itself. Idempotent —
     already-erased payloads are left alone. Returns True if anything changed.
+
+    Covers more than the top-level input/output text: a rule or layer can
+    quote the offending content back into its own `detail` string (e.g. "SSN
+    123-45-6789 matched pattern X"), and layer_events[*].data is a free-form
+    dict that can carry tool arguments or output snippets. Blanket-tombstones
+    every value found there rather than trying to distinguish which specific
+    strings actually echo user content — under-redacting on a GDPR erasure
+    path is the wrong failure mode to risk.
     """
     if payload.get("gdpr_erased"):
         return False
@@ -81,9 +97,25 @@ def redact_chain_payload(payload: dict) -> bool:
     for field in GDPR_TOMBSTONE_FIELDS:
         value = payload.get(field)
         if value:
-            digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
-            payload[field] = f"[ERASED-GDPR-ART17 sha256:{digest[:16]}]"
+            payload[field] = _tombstone_value(value)
             changed = True
+
+    for rule in payload.get("rules_evaluated") or []:
+        if isinstance(rule, dict) and rule.get("detail"):
+            rule["detail"] = _tombstone_value(rule["detail"])
+            changed = True
+
+    for event in payload.get("layer_events") or []:
+        if not isinstance(event, dict):
+            continue
+        if event.get("detail"):
+            event["detail"] = _tombstone_value(event["detail"])
+            changed = True
+        data = event.get("data")
+        if isinstance(data, dict) and data:
+            event["data"] = {key: _tombstone_value(val) for key, val in data.items()}
+            changed = True
+
     if changed:
         payload["gdpr_erased"] = True
     return changed
@@ -142,12 +174,26 @@ class HashChainBackend:
         then re-anchor — every link from the first redaction onward is
         re-hashed so verify_chain() still succeeds without the erased content.
         Returns the number of payloads redacted."""
+        return self._redact_matching(lambda payload: payload.get("tenant_id") == tenant_id)
+
+    def redact_for_session(self, tenant_id: str, session_id: str) -> int:
+        """Same as redact_for_tenant, scoped to one session — the practical
+        per-end-user erasure unit given the schema has no separate
+        per-user column."""
+        return self._redact_matching(
+            lambda payload: (
+                payload.get("tenant_id") == tenant_id
+                and payload.get("session_id") == session_id
+            )
+        )
+
+    def _redact_matching(self, predicate) -> int:
         redacted = 0
         rehash = False
         prev = self.GENESIS
         for rec in self._records:
             payload = rec["payload"]
-            if payload.get("tenant_id") == tenant_id and redact_chain_payload(payload):
+            if predicate(payload) and redact_chain_payload(payload):
                 redacted += 1
                 rehash = True
             if rehash:
@@ -173,7 +219,7 @@ class EthereumBackend:
         private_key: str = "",
         chain_id: int = 11155111,
         anchor: EthereumAnchor | None = None,
-        fail_open: bool = True,
+        fail_open: bool = False,
     ):
         self.rpc_url = rpc_url
         self.contract = contract
@@ -229,6 +275,9 @@ class EthereumBackend:
 
     def redact_for_tenant(self, tenant_id: str) -> int:
         return self._chain.redact_for_tenant(tenant_id)
+
+    def redact_for_session(self, tenant_id: str, session_id: str) -> int:
+        return self._chain.redact_for_session(tenant_id, session_id)
 
     def records(self) -> list[dict]:
         return self._chain.records()
@@ -289,6 +338,9 @@ class HyperledgerBackend:
 
     def redact_for_tenant(self, tenant_id: str) -> int:
         return self._chain.redact_for_tenant(tenant_id)
+
+    def redact_for_session(self, tenant_id: str, session_id: str) -> int:
+        return self._chain.redact_for_session(tenant_id, session_id)
 
     def records(self) -> list[dict]:
         return self._chain.records()

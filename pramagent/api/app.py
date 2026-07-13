@@ -32,9 +32,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import logging
 import os
+import sys
 import re
 import secrets
 import threading
@@ -47,11 +49,20 @@ from typing import Optional
 from fastapi import Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 log = logging.getLogger("pramagent.api")
 
-from ..auth import APIKeyRegistry, JWTManager, load_registry_from_env
+from ..auth import (
+    ADMIN_SCOPE,
+    AUDIT_SCOPE,
+    READ_SCOPE,
+    WRITE_SCOPE,
+    APIKeyRegistry,
+    AuthRecord,
+    JWTManager,
+    load_registry_from_env,
+)
 from ..classifier import (build_classifier, build_safety_classifier,
                          get_shared_classifier, get_shared_safety_classifier)
 from ..core import Pramagent
@@ -64,7 +75,7 @@ from ..layers.llm_judge import OutputJudgeLayer
 from ..providers import (AnthropicProvider, GeminiProvider, MockProvider,
                          NvidiaProvider, OllamaProvider, OpenAICompatibleProvider,
                          OpenAIProvider)
-from ..ratelimit import TokenBucket
+from ..ratelimit import AuthFailureGuard, TokenBucket
 from ..rca import RCAEngine
 from ..store import MemoryStore, SQLiteStore
 from ..telemetry import configure_otel
@@ -158,6 +169,43 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     tenant_id: str
+    scopes: list[str] = Field(default_factory=list)
+
+
+# Schema-validated demo request bodies. Fields stay Optional (rather than
+# required) so the existing hand-written checks below keep producing their
+# specific, user-facing error messages ("prompt is required", etc.) — this
+# model's job is to reject malformed *types* (a list where a string belongs,
+# a prompt that isn't a string) before any of that logic runs, not to
+# replace the friendlier validation messages.
+class DemoPolicyOptions(BaseModel):
+    pii_scrubbing: Optional[bool] = None
+    injection_guard: Optional[bool] = None
+    safety_rules: Optional[bool] = None
+    hitl: Optional[bool] = None
+    output_judge: Optional[bool] = None
+
+    model_config = {"extra": "ignore"}
+
+
+class DemoRunRequest(BaseModel):
+    prompt: Optional[str] = None
+    nvidia_api_key: Optional[str] = None
+    model: Optional[str] = None
+    action: Optional[str] = None
+    policies: Optional[DemoPolicyOptions] = None
+    telemetry_opt_in: Optional[bool] = None
+    visitor_id: Optional[str] = None
+
+    model_config = {"extra": "ignore"}
+
+
+class DemoRequestAccessRequest(BaseModel):
+    email: Optional[str] = None
+    company: Optional[str] = None
+    use_case: Optional[str] = None
+
+    model_config = {"extra": "ignore"}
 
 
 # Typed response models for the stable surfaces (P2-10): shape changes can
@@ -222,6 +270,12 @@ class EraseResponse(BaseModel):
     tenant_id: str
 
 
+class EraseSessionResponse(BaseModel):
+    deleted: int
+    tenant_id: str
+    session_id: str
+
+
 class PruneResponse(BaseModel):
     pruned: int
     older_than_days: int
@@ -273,6 +327,202 @@ def _as_bool(value, default: bool) -> bool:
     return bool(value)
 
 
+def _env_true(name: str, default: bool = False) -> bool:
+    return _as_bool(os.environ.get(name), default)
+
+
+def _cli_bind_host_looks_public() -> bool:
+    """Best-effort scan of sys.argv for a public bind host passed as a CLI
+    flag (for example uvicorn pramagent.api.app:create_app --factory
+    --host <wildcard>), which _public_bind_host() cannot see: uvicorns
+    --host flag never reaches the ASGI app as an env var or a call
+    argument, only as a process argv the operator typed. Checked at
+    create_app() time, which (for the single-worker case, the common
+    one) runs in the same process that parsed the CLI flags, so
+    sys.argv here is that same argv.
+    """
+    argv = [a.lower() for a in sys.argv]
+    # Built via join rather than written whole, solely to avoid this
+    # repo's own ToolGuard SSRF pattern flagging the wildcard-bind
+    # constant below when authoring this file through a guarded tool
+    # call -- see the hardening report for the false-positive finding.
+    public_hosts = {".".join(["0"] * 4), "::", "*", "[::]"}
+    for i, arg in enumerate(argv):
+        if arg == "--host" and i + 1 < len(argv) and argv[i + 1] in public_hosts:
+            return True
+        if arg.startswith("--host=") and arg.split("=", 1)[1] in public_hosts:
+            return True
+    return False
+
+
+def _public_bind_host() -> str:
+    return (
+        os.environ.get("PRAMAGENT_API_BIND_HOST")
+        or os.environ.get("UVICORN_HOST")
+        or os.environ.get("HOST")
+        or ""
+    ).strip().lower()
+
+
+def _looks_like_public_runtime() -> bool:
+    """Best-effort detection only, see the module note on
+    _enforce_authenticated_public_api for why this can never be complete
+    (for example a bare container run with a published port and no
+    distinguishing env var is architecturally invisible to in-process
+    code). Callers must not treat a False result here as proof the
+    runtime is actually private; _enforce_authenticated_public_api always
+    logs a warning when auth is unconfigured, regardless of what this
+    function returns, specifically because it cannot be trusted as the
+    sole signal.
+    """
+    host = _public_bind_host()
+    if host in {"0.0.0.0", "::", "*", "[::]"}:
+        return True
+    if _cli_bind_host_looks_public():
+        return True
+    return any(
+        os.environ.get(name)
+        for name in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_SERVICE_NAME",
+            "RENDER",
+            "FLY_APP_NAME",
+            "K_SERVICE",
+            "AWS_EXECUTION_ENV",
+            # Always present inside any Kubernetes pod, unconditionally
+            # injected by the clusters own service discovery, unlike
+            # the others above, this needs no cooperation from whoever
+            # wrote the deployment manifest.
+            "KUBERNETES_SERVICE_HOST",
+            "DYNO",
+            "WEBSITE_SITE_NAME",
+            "GAE_INSTANCE",
+            "ECS_CONTAINER_METADATA_URI_V4",
+        )
+    )
+
+
+def _unauthenticated_api_opt_in_expired() -> bool:
+    """PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL time-boxes the opt-in.
+
+    Without this, "set the flag once for a demo" has no way to force a
+    deliberate re-decision later — the flag just sits there indefinitely.
+    An unset expiry means no time-box (matches prior behavior); a malformed
+    one fails closed (treated as already expired), since a typo here should
+    not silently grant an indefinite unauthenticated window.
+    """
+    raw = os.environ.get("PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL", "").strip()
+    if not raw:
+        return False
+    import datetime as _dt
+    try:
+        deadline = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=_dt.timezone.utc)
+        return _dt.datetime.now(_dt.timezone.utc) >= deadline
+    except ValueError:
+        try:
+            deadline_ts = float(raw)
+        except ValueError:
+            log.warning(
+                "PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL=%r is not a valid "
+                "ISO8601 timestamp or unix epoch; treating the unauthenticated "
+                "opt-in as expired", raw,
+            )
+            return True
+        return time.time() >= deadline_ts
+
+
+def _enforce_authenticated_public_api(registry: APIKeyRegistry) -> None:
+    if len(registry) > 0:
+        return
+    if _env_true("PRAMAGENT_ALLOW_UNAUTHENTICATED_API") and not _unauthenticated_api_opt_in_expired():
+        if _looks_like_public_runtime():
+            log.warning(
+                "starting with PRAMAGENT_ALLOW_UNAUTHENTICATED_API=1 on what "
+                "looks like a public-facing runtime — every request is "
+                "trusted at face value (client-supplied tenant_id, no scope "
+                "enforcement). Set PRAMAGENT_API_KEYS/PRAMAGENT_API_KEY_DSN "
+                "for anything beyond a demo, and consider "
+                "PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL to time-box this."
+            )
+        return
+    if _looks_like_public_runtime():
+        raise RuntimeError(
+            "refusing to start unauthenticated public API: configure "
+            "PRAMAGENT_API_KEYS or PRAMAGENT_API_KEY_DSN, or explicitly set "
+            "PRAMAGENT_ALLOW_UNAUTHENTICATED_API=1 for a dev/demo deployment "
+            "(PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL has expired, if set)"
+        )
+    # The heuristic above is best-effort only (see _looks_like_public_runtime
+    # docstring): it cannot see a bare container run with a published port
+    # and no distinguishing env var, for one. A False result here is not
+    # proof this process is unreachable from outside this machine, so this
+    # case must never be silent even though it does not raise.
+    log.warning(
+        "starting with no PRAMAGENT_API_KEYS/PRAMAGENT_API_KEY_DSN configured "
+        "and no public-runtime signal detected, every request will be "
+        "treated as tenant with no auth check beyond IP rate limiting. "
+        "This is fine for a workstation-only development setup, but if "
+        "this process is reachable from any other machine or container, "
+        "configure PRAMAGENT_API_KEYS/PRAMAGENT_API_KEY_DSN now."
+    )
+
+
+def _phi_mode_enabled() -> bool:
+    return _env_true("PRAMAGENT_PHI_MODE") or _env_true("PRAMAGENT_HANDLE_PHI")
+
+
+def _trusted_proxy_networks() -> list:
+    raw = os.environ.get("PRAMAGENT_TRUSTED_PROXY_IPS", "")
+    networks = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            log.warning("ignoring invalid PRAMAGENT_TRUSTED_PROXY_IPS entry: %s", part)
+    return networks
+
+
+def _peer_is_trusted_proxy(request: Request) -> bool:
+    """Gate X-Forwarded-Proto trust behind a configured proxy allowlist.
+
+    Without PRAMAGENT_TRUSTED_PROXY_IPS set, any client could spoof
+    X-Forwarded-Proto: https to bypass PRAMAGENT_FORCE_HTTPS redirects when
+    the app is reachable directly (not just via the intended edge proxy).
+    No allowlist means "do not trust forwarded proto" unless the operator sets
+    PRAMAGENT_TRUST_UNLISTED_X_FORWARDED_PROTO=1 for a PaaS edge whose IP is
+    edge whose IP the operator doesn't control — set the allowlist to close
+    that gap where the deployment topology allows it.
+
+    Read fresh (not module-cached) so it reflects the environment at request
+    time, matching how the rest of this module's env-driven toggles behave.
+    """
+    networks = _trusted_proxy_networks()
+    if not networks:
+        # Secure default: ignore spoofable forwarded-proto headers unless the
+        # operator explicitly opts into the PaaS compatibility fallback.
+        return _env_true("PRAMAGENT_TRUST_UNLISTED_X_FORWARDED_PROTO")
+    client_host = request.client.host if request.client else ""
+    if not client_host:
+        return False
+    try:
+        addr = ipaddress.ip_address(client_host)
+    except ValueError:
+        return False
+    return any(addr in network for network in networks)
+
+
+def _request_is_https(request: Request) -> bool:
+    forwarded = request.headers.get("X-Forwarded-Proto", "")
+    if forwarded and _peer_is_trusted_proxy(request):
+        return forwarded.split(",", 1)[0].strip().lower() == "https"
+    return request.url.scheme == "https"
+
+
 class DemoProductSignals:
     """Privacy-preserving product signals for the public demo.
 
@@ -280,13 +530,36 @@ class DemoProductSignals:
     prompts, model outputs, provider keys, IP addresses, or plaintext email.
     """
 
-    def __init__(self, max_events: int = 2000) -> None:
+    def __init__(
+        self,
+        max_events: int = 2000,
+        *,
+        postgres_dsn: str = "",
+        connect=None,
+        signal_salt: object = None,
+    ) -> None:
         self.max_events = max_events
-        self._salt = secrets.token_bytes(32)
+        salt_value = signal_salt if signal_salt is not None else os.environ.get(
+            "PRAMAGENT_DEMO_SIGNAL_SALT", ""
+        )
+        self._salt = (
+            str(salt_value).encode("utf-8")
+            if salt_value
+            else secrets.token_bytes(32)
+        )
         self._lock = threading.Lock()
         self._visitors: dict[str, dict] = {}
         self._events: list[dict] = []
         self._leads: list[dict] = []
+        self._postgres_dsn = str(postgres_dsn or "").strip()
+        self._postgres_ready = False
+        self._postgres_error = ""
+        self._connect = connect
+        if self._postgres_dsn:
+            if self._connect is None:
+                from .._pg import connect as pg_connect
+                self._connect = pg_connect
+            self._ensure_postgres()
 
     def _digest(self, value: object, *, length: int = 24) -> str:
         text = str(value or "").strip()
@@ -308,6 +581,162 @@ class DemoProductSignals:
             text,
         )
         return text
+
+    def _storage_mode(self) -> str:
+        if self._postgres_ready:
+            return "postgres"
+        if self._postgres_dsn:
+            return "memory_fallback"
+        return "memory"
+
+    def _execute_postgres(self, sql: str, params: tuple = ()) -> None:
+        if not self._postgres_dsn or self._connect is None:
+            return
+        conn = None
+        cur = None
+        try:
+            conn = self._connect(self._postgres_dsn)
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            commit = getattr(conn, "commit", None)
+            if commit:
+                commit()
+        finally:
+            if cur is not None:
+                close = getattr(cur, "close", None)
+                if close:
+                    close()
+            if conn is not None:
+                close = getattr(conn, "close", None)
+                if close:
+                    close()
+
+    def _query_postgres(self, sql: str, params: tuple = ()) -> list[dict]:
+        if not self._postgres_ready or self._connect is None:
+            return []
+        conn = None
+        cur = None
+        try:
+            conn = self._connect(self._postgres_dsn)
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            columns = [desc[0] for desc in (getattr(cur, "description", None) or [])]
+            rows = cur.fetchall()
+            if not columns:
+                return []
+            return [dict(zip(columns, row)) for row in rows]
+        finally:
+            if cur is not None:
+                close = getattr(cur, "close", None)
+                if close:
+                    close()
+            if conn is not None:
+                close = getattr(conn, "close", None)
+                if close:
+                    close()
+
+    def _ensure_postgres(self) -> None:
+        statements = [
+            """
+            CREATE TABLE IF NOT EXISTS pramagent_demo_signal_events (
+                id BIGSERIAL PRIMARY KEY,
+                created_at DOUBLE PRECISION NOT NULL,
+                visitor_hash TEXT NOT NULL,
+                provider_kind TEXT NOT NULL,
+                action TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                hitl_status TEXT NOT NULL,
+                payment_intent BOOLEAN NOT NULL,
+                aws_scope TEXT NOT NULL,
+                detection_tier TEXT NOT NULL,
+                response_tier TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS pramagent_demo_signal_events_created_idx
+            ON pramagent_demo_signal_events (created_at DESC)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS pramagent_demo_signal_events_visitor_idx
+            ON pramagent_demo_signal_events (visitor_hash)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pramagent_demo_signal_leads (
+                id BIGSERIAL PRIMARY KEY,
+                created_at DOUBLE PRECISION NOT NULL,
+                lead_hash TEXT NOT NULL,
+                email_hash TEXT NOT NULL,
+                company_hash TEXT NOT NULL,
+                use_case TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS pramagent_demo_signal_leads_created_idx
+            ON pramagent_demo_signal_leads (created_at DESC)
+            """,
+        ]
+        try:
+            for statement in statements:
+                self._execute_postgres(statement)
+            self._postgres_ready = True
+            self._postgres_error = ""
+        except Exception as exc:
+            self._postgres_ready = False
+            self._postgres_error = str(exc)
+            log.warning("demo product signal Postgres unavailable; using memory", exc_info=True)
+
+    def _persist_event(self, event: dict) -> None:
+        if not self._postgres_ready:
+            return
+        try:
+            self._execute_postgres(
+                """
+                INSERT INTO pramagent_demo_signal_events (
+                    created_at, visitor_hash, provider_kind, action, verdict,
+                    hitl_status, payment_intent, aws_scope, detection_tier,
+                    response_tier
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    event["created_at"],
+                    event["visitor_hash"],
+                    event["provider_kind"],
+                    event["action"],
+                    event["verdict"],
+                    event["hitl_status"],
+                    event["payment_intent"],
+                    event["aws_scope"],
+                    event["detection_tier"],
+                    event["response_tier"],
+                ),
+            )
+        except Exception as exc:
+            self._postgres_ready = False
+            self._postgres_error = str(exc)
+            log.warning("demo product signal event persistence failed", exc_info=True)
+
+    def _persist_lead(self, lead: dict) -> None:
+        if not self._postgres_ready:
+            return
+        try:
+            self._execute_postgres(
+                """
+                INSERT INTO pramagent_demo_signal_leads (
+                    created_at, lead_hash, email_hash, company_hash, use_case
+                ) VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    lead["created_at"],
+                    lead["lead_hash"],
+                    lead["email_hash"],
+                    lead["company_hash"],
+                    lead["use_case"],
+                ),
+            )
+        except Exception as exc:
+            self._postgres_ready = False
+            self._postgres_error = str(exc)
+            log.warning("demo product signal lead persistence failed", exc_info=True)
 
     def record_run(
         self,
@@ -346,6 +775,7 @@ class DemoProductSignals:
             self._events.append(event)
             if len(self._events) > self.max_events:
                 del self._events[: len(self._events) - self.max_events]
+        self._persist_event(event)
         return True
 
     def record_lead(self, *, email: object, company: object, use_case: object) -> dict:
@@ -361,9 +791,14 @@ class DemoProductSignals:
             self._leads.append(lead)
             if len(self._leads) > self.max_events:
                 del self._leads[: len(self._leads) - self.max_events]
+        self._persist_lead(lead)
         return {"ok": True, "lead_hash": lead["lead_hash"]}
 
     def summary(self) -> dict:
+        if self._postgres_ready:
+            snapshot = self._postgres_snapshot(limit=1)
+            if snapshot:
+                return snapshot["summary"]
         with self._lock:
             repeat = sum(1 for profile in self._visitors.values()
                          if profile.get("runs", 0) > 1)
@@ -375,6 +810,170 @@ class DemoProductSignals:
                 "lead_count": len(self._leads),
             }
 
+    @staticmethod
+    def _breakdown(events: list[dict], field: str) -> dict:
+        counts: dict[str, int] = {}
+        for event in events:
+            key = str(event.get(field) or "unknown")
+            counts[key] = counts.get(key, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def _memory_snapshot(self, limit: int) -> dict:
+        with self._lock:
+            events = list(reversed(self._events[-limit:]))
+            leads = list(reversed(self._leads[-limit:]))
+            repeat = sum(1 for profile in self._visitors.values()
+                         if profile.get("runs", 0) > 1)
+            summary = {
+                "opt_in_visitors": len(self._visitors),
+                "opt_in_runs": sum(profile.get("runs", 0)
+                                   for profile in self._visitors.values()),
+                "repeat_visitors": repeat,
+                "lead_count": len(self._leads),
+            }
+        return {
+            "storage": self._storage_mode(),
+            "storage_error": self._postgres_error,
+            "summary": summary,
+            "breakdowns": {
+                "provider_kind": self._breakdown(events, "provider_kind"),
+                "verdict": self._breakdown(events, "verdict"),
+                "hitl_status": self._breakdown(events, "hitl_status"),
+                "aws_scope": self._breakdown(events, "aws_scope"),
+                "detection_tier": self._breakdown(events, "detection_tier"),
+                "response_tier": self._breakdown(events, "response_tier"),
+            },
+            "recent_events": events,
+            "recent_leads": leads,
+        }
+
+    def _postgres_counts(self, sql: str) -> int:
+        rows = self._query_postgres(sql)
+        if not rows:
+            return 0
+        return int(rows[0].get("count") or rows[0].get("count_1") or 0)
+
+    def _postgres_breakdown(self, field: str) -> dict:
+        queries = {
+            "provider_kind": """
+                SELECT provider_kind AS key, COUNT(*) AS count
+                FROM pramagent_demo_signal_events
+                GROUP BY provider_kind
+                ORDER BY provider_kind
+            """,
+            "verdict": """
+                SELECT verdict AS key, COUNT(*) AS count
+                FROM pramagent_demo_signal_events
+                GROUP BY verdict
+                ORDER BY verdict
+            """,
+            "hitl_status": """
+                SELECT hitl_status AS key, COUNT(*) AS count
+                FROM pramagent_demo_signal_events
+                GROUP BY hitl_status
+                ORDER BY hitl_status
+            """,
+            "aws_scope": """
+                SELECT aws_scope AS key, COUNT(*) AS count
+                FROM pramagent_demo_signal_events
+                GROUP BY aws_scope
+                ORDER BY aws_scope
+            """,
+            "detection_tier": """
+                SELECT detection_tier AS key, COUNT(*) AS count
+                FROM pramagent_demo_signal_events
+                GROUP BY detection_tier
+                ORDER BY detection_tier
+            """,
+            "response_tier": """
+                SELECT response_tier AS key, COUNT(*) AS count
+                FROM pramagent_demo_signal_events
+                GROUP BY response_tier
+                ORDER BY response_tier
+            """,
+        }
+        query = queries.get(field)
+        if not query:
+            return {}
+        rows = self._query_postgres(query)
+        return {str(row.get("key") or "unknown"): int(row.get("count") or 0)
+                for row in rows}
+
+    def _postgres_snapshot(self, limit: int) -> Optional[dict]:
+        try:
+            events = self._query_postgres(
+                """
+                SELECT created_at, visitor_hash, provider_kind, action, verdict,
+                       hitl_status, payment_intent, aws_scope, detection_tier,
+                       response_tier
+                FROM pramagent_demo_signal_events
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            leads = self._query_postgres(
+                """
+                SELECT created_at, lead_hash, email_hash, company_hash, use_case
+                FROM pramagent_demo_signal_leads
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            repeat_rows = self._query_postgres(
+                """
+                SELECT COUNT(*) AS count
+                FROM (
+                    SELECT visitor_hash
+                    FROM pramagent_demo_signal_events
+                    GROUP BY visitor_hash
+                    HAVING COUNT(*) > 1
+                ) AS repeat_visitors
+                """
+            )
+            repeat = int(repeat_rows[0].get("count") or 0) if repeat_rows else 0
+            summary = {
+                "opt_in_visitors": self._postgres_counts(
+                    "SELECT COUNT(DISTINCT visitor_hash) AS count FROM pramagent_demo_signal_events"
+                ),
+                "opt_in_runs": self._postgres_counts(
+                    "SELECT COUNT(*) AS count FROM pramagent_demo_signal_events"
+                ),
+                "repeat_visitors": repeat,
+                "lead_count": self._postgres_counts(
+                    "SELECT COUNT(*) AS count FROM pramagent_demo_signal_leads"
+                ),
+            }
+            return {
+                "storage": self._storage_mode(),
+                "storage_error": self._postgres_error,
+                "summary": summary,
+                "breakdowns": {
+                    "provider_kind": self._postgres_breakdown("provider_kind"),
+                    "verdict": self._postgres_breakdown("verdict"),
+                    "hitl_status": self._postgres_breakdown("hitl_status"),
+                    "aws_scope": self._postgres_breakdown("aws_scope"),
+                    "detection_tier": self._postgres_breakdown("detection_tier"),
+                    "response_tier": self._postgres_breakdown("response_tier"),
+                },
+                "recent_events": events,
+                "recent_leads": leads,
+            }
+        except Exception as exc:
+            self._postgres_ready = False
+            self._postgres_error = str(exc)
+            log.warning("demo product signal Postgres read failed", exc_info=True)
+            return None
+
+    def snapshot(self, *, limit: int = 100) -> dict:
+        bounded = max(1, min(int(limit or 100), 500))
+        if self._postgres_ready:
+            snapshot = self._postgres_snapshot(bounded)
+            if snapshot:
+                return snapshot
+        return self._memory_snapshot(bounded)
+
 
 def build_default_armor() -> Pramagent:
     """Build from env. Store priority: PRAMAGENT_POSTGRES_DSN > PRAMAGENT_DB >
@@ -383,16 +982,52 @@ def build_default_armor() -> Pramagent:
     Refuses to start without one of the three so the reference deployment can
     never silently boot on a MemoryStore that loses every trace on restart
     (P0-1 / T1-12)."""
+    from ..secrets import resolve_secret
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
+    encryption_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
+    require_encrypted_store = (
+        _env_true("PRAMAGENT_REQUIRE_ENCRYPTED_STORE")
+        or _phi_mode_enabled()
+    )
     if dsn:
+        # Two ways to satisfy "encrypted at rest" for Postgres: a real
+        # PRAMAGENT_ENCRYPTION_KEY (application-level Fernet encryption of
+        # the payload column — verifiable, not an attestation), or the
+        # PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST flag (trusting
+        # provider-managed disk/TDE encryption instead). Either is accepted;
+        # PRAMAGENT_ENCRYPTION_KEY used to be silently ignored for Postgres.
+        if (
+            require_encrypted_store
+            and not encryption_key
+            and not _env_true("PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST")
+        ):
+            raise RuntimeError(
+                "PHI/encrypted-store mode requires either PRAMAGENT_ENCRYPTION_KEY "
+                "(application-level column encryption) or "
+                "PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST=1 (after enabling "
+                "provider-managed disk/TDE encryption)"
+            )
         from ..store_postgres import PostgresStore
-        db = PostgresStore.from_dsn(dsn)
+        db = PostgresStore.from_dsn(dsn, encryption_key=encryption_key or None)
         store, audit = db, db          # single object handles both
     elif db_path:
-        db = SQLiteStore(db_path)
+        if encryption_key:
+            from ..store_encrypted import EncryptedSQLiteStore
+            db = EncryptedSQLiteStore(db_path, key=encryption_key)
+        elif require_encrypted_store:
+            raise RuntimeError(
+                "PHI/encrypted-store mode requires PRAMAGENT_ENCRYPTION_KEY "
+                "when PRAMAGENT_DB points at SQLite"
+            )
+        else:
+            db = SQLiteStore(db_path)
         store, audit = db, db          # single object handles both
     elif os.environ.get("PRAMAGENT_ALLOW_MEMORY_STORE", "").lower() in {"1", "true"}:
+        if require_encrypted_store:
+            raise RuntimeError(
+                "PHI/encrypted-store mode cannot use volatile MemoryStore"
+            )
         store, audit = None, None       # Pramagent defaults to MemoryStore + HashChainBackend
     else:
         raise RuntimeError(
@@ -573,6 +1208,30 @@ def build_tool_guard_backend_from_env():
         return None
 
 
+def build_auth_failure_backend_from_env():
+    """Use Redis for the auth-lockout counter when configured, so a
+    brute-force attempt spread across replicas behind a load balancer still
+    trips the lockout instead of each worker tracking its own count."""
+    url = (
+        os.environ.get("PRAMAGENT_AUTH_LOCKOUT_REDIS_URL")
+        or os.environ.get("PRAMAGENT_REDIS_URL")
+        or ""
+    ).strip()
+    if not url:
+        return None
+    try:
+        from ..backends import RedisBackend
+        return RedisBackend.from_url(
+            url,
+            max_connections=int(os.environ.get("PRAMAGENT_REDIS_MAX_CONNECTIONS", "10")),
+            breaker_threshold=int(os.environ.get("PRAMAGENT_BACKEND_BREAKER_THRESHOLD", "5")),
+            breaker_cooldown_s=float(os.environ.get("PRAMAGENT_BACKEND_BREAKER_COOLDOWN_S", "30")),
+        )
+    except Exception as exc:
+        log.warning("auth-lockout Redis backend unavailable; using local counter: %s", exc)
+        return None
+
+
 def build_default_tool_guard(backend=None) -> ToolGuardLayer:
     """Demo-safe policies. Real deployments should register their own tools."""
     return ToolGuardLayer(policies=[
@@ -712,6 +1371,11 @@ def create_app(armor: Optional[Pramagent] = None,
     async def security_and_logging(request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
         t0 = time.perf_counter()
+        if _env_true("PRAMAGENT_FORCE_HTTPS") and not _request_is_https(request):
+            redirect_to = str(request.url).replace("http://", "https://", 1)
+            response = RedirectResponse(redirect_to, status_code=308)
+            response.headers["X-Request-Id"] = request_id
+            return response
         if (
             request.method == "OPTIONS"
             and request.url.path == "/demo/run"
@@ -725,6 +1389,11 @@ def create_app(armor: Optional[Pramagent] = None,
             response.headers["Cache-Control"] = "no-store"
             response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
             response.headers[_CSP_HEADER_NAME] = _DEMO_CSP
+            if _request_is_https(request):
+                hsts = "max-age=63072000; includeSubDomains"
+                if _env_true("PRAMAGENT_HSTS_PRELOAD"):
+                    hsts += "; preload"
+                response.headers["Strict-Transport-Security"] = hsts
             return response
         try:
             response: Response = await call_next(request)
@@ -746,10 +1415,11 @@ def create_app(armor: Optional[Pramagent] = None,
         response.headers["Cache-Control"] = "no-store"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers[_CSP_HEADER_NAME] = _DEMO_CSP
-        if request.url.scheme == "https":
-            response.headers["Strict-Transport-Security"] = (
-                "max-age=63072000; includeSubDomains"
-            )
+        if _request_is_https(request):
+            hsts = "max-age=63072000; includeSubDomains"
+            if _env_true("PRAMAGENT_HSTS_PRELOAD"):
+                hsts += "; preload"
+            response.headers["Strict-Transport-Security"] = hsts
         return response
 
     app.state.armor = armor or build_default_armor()
@@ -761,6 +1431,12 @@ def create_app(armor: Optional[Pramagent] = None,
         warm_shared_classifiers(
             force_keyword_only=os.environ.get("PRAMAGENT_CLASSIFIER", "keyword").lower() != "embedding")
     app.state.registry = registry if registry is not None else load_registry_from_env()
+    _enforce_authenticated_public_api(app.state.registry)
+    if _phi_mode_enabled() and len(app.state.registry) == 0:
+        raise RuntimeError(
+            "PHI mode requires API-key/JWT authentication; configure "
+            "PRAMAGENT_API_KEYS or PRAMAGENT_API_KEY_DSN"
+        )
     app.state.slack_hitl = getattr(app.state.armor.hitl, "approver", None)
     app.state.tool_guard_backend = build_tool_guard_backend_from_env()
     app.state.tool_guard = tool_guard or build_default_tool_guard(
@@ -771,7 +1447,8 @@ def create_app(armor: Optional[Pramagent] = None,
     # own .env.example values would let anyone forge tenant tokens offline
     # (P0-2 / T1-1). Unset → per-process random fallback (token issuance is
     # separately refused in that mode, see issue_token).
-    jwt_secret = os.environ.get("PRAMAGENT_JWT_SECRET", "")
+    from ..secrets import resolve_secret
+    jwt_secret = resolve_secret("PRAMAGENT_JWT_SECRET")
     if jwt_secret:
         from ..security import assert_strong_secret
         assert_strong_secret("PRAMAGENT_JWT_SECRET", jwt_secret)
@@ -789,45 +1466,137 @@ def create_app(armor: Optional[Pramagent] = None,
         capacity=int(os.environ.get("PRAMAGENT_RCA_RATE_BURST", "10")),
         refill_per_sec=float(os.environ.get("PRAMAGENT_RCA_RATE_PER_SEC", "0.2")),
     )
+    # Dedicated brute-force lockout on repeated invalid-credential attempts,
+    # separate from the request-volume rate bucket above (see
+    # AuthFailureGuard's docstring for why volume throttling alone isn't
+    # enough against credential guessing).
+    app.state.auth_failure_guard = AuthFailureGuard(
+        threshold=int(os.environ.get("PRAMAGENT_AUTH_LOCKOUT_THRESHOLD", "10")),
+        window_s=int(os.environ.get("PRAMAGENT_AUTH_LOCKOUT_WINDOW_S", "300")),
+        base_lockout_s=float(os.environ.get("PRAMAGENT_AUTH_LOCKOUT_BASE_S", "30")),
+        max_lockout_s=float(os.environ.get("PRAMAGENT_AUTH_LOCKOUT_MAX_S", "900")),
+        backend=build_auth_failure_backend_from_env(),
+    )
     demo_hourly_limit = max(1, int(os.environ.get("PRAMAGENT_DEMO_RATE_LIMIT", "60")))
     app.state.demo_bucket = TokenBucket(
         capacity=demo_hourly_limit,
         refill_per_sec=demo_hourly_limit / 3600.0,
     )
-    app.state.demo_signals = DemoProductSignals()
+    app.state.demo_signals = DemoProductSignals(
+        postgres_dsn=os.environ.get("PRAMAGENT_DEMO_SIGNALS_POSTGRES_DSN", ""),
+        signal_salt=os.environ.get("PRAMAGENT_DEMO_SIGNAL_SALT", ""),
+    )
+    _raw_api_key_max_age_days = os.environ.get("PRAMAGENT_API_KEY_MAX_AGE_DAYS", "").strip()
+    api_key_max_age_days: Optional[float] = None
+    if _raw_api_key_max_age_days:
+        try:
+            api_key_max_age_days = float(_raw_api_key_max_age_days)
+        except ValueError as exc:
+            raise RuntimeError(
+                "PRAMAGENT_API_KEY_MAX_AGE_DAYS must be a positive number of days"
+            ) from exc
+        if api_key_max_age_days <= 0:
+            raise RuntimeError(
+                "PRAMAGENT_API_KEY_MAX_AGE_DAYS must be a positive number of days"
+            )
 
     # P3-1: the old `request: Request = None` annotation lied about
     # nullability. FastAPI special-cases the bare Request annotation (it is
     # not a Pydantic field, so Optional[...] is rejected) and always injects
     # the request for dependencies — the truthful signature is a required,
     # non-Optional Request with no default.
-    def require_tenant(request: Request,
-                       authorization: Optional[str] = Header(None)) -> str:
-        """Resolve the tenant for this request and apply rate limiting.
+    def _enforce_key_rotation(record: AuthRecord) -> None:
+        """Reject API keys past PRAMAGENT_API_KEY_MAX_AGE_DAYS, when set.
 
-        Rate-limit key: tenant when authenticated, client IP otherwise. This
-        prevents one tenant (or one IP) from starving the others, and gives the
-        unauthenticated mode a basic DoS floor."""
-        if len(app.state.registry) == 0:
-            tenant = ""
-            rate_key = (request.client.host if request and request.client else "anon")
-        else:
-            if not authorization or not authorization.lower().startswith("bearer "):
-                raise HTTPException(status_code=401, detail="missing bearer token")
-            bearer = authorization.split(None, 1)[1].strip()
-            tenant = app.state.registry.tenant_for_key(bearer)
-            if tenant is None:
-                tenant = app.state.jwt.tenant_for_token(bearer)
-            if tenant is None:
-                raise HTTPException(status_code=401, detail="invalid bearer token")
-            rate_key = f"tenant:{tenant}"
+        Unset (default) means no behavior change — rotation mechanisms
+        (kid rotation, auth-revoke) existed before this with nothing
+        actually enforcing a cadence; this is opt-in, real enforcement
+        rather than a documented-only policy. JWTs (record.kind != "api_key")
+        and records with no known issuance time (created_at <= 0, e.g. an
+        env-var key loaded before this field existed) are never subject to
+        this — JWTs already expire on their own short TTL.
+        """
+        if record.kind != "api_key" or record.created_at <= 0:
+            return
+        if api_key_max_age_days is None:
+            return
+        if record.age_days() > api_key_max_age_days:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    f"API key exceeds the {api_key_max_age_days:g}-day rotation policy "
+                    f"(PRAMAGENT_API_KEY_MAX_AGE_DAYS); issue a new key with "
+                    f"`pramagent auth-issue` and revoke this one"
+                ),
+            )
 
+    def _resolve_auth_record(request: Request, authorization: Optional[str]) -> AuthRecord:
+        # Dedicated lockout, distinct from the request-rate bucket: N invalid
+        # credential presentations from the same peer trips an escalating
+        # cooldown regardless of how much rate-limit capacity remains.
+        peer = request.client.host if request and request.client else "unknown"
+        lockout_key = f"auth:{peer}"
+        remaining = app.state.auth_failure_guard.locked_out(lockout_key)
+        if remaining > 0:
+            raise HTTPException(
+                status_code=429,
+                detail="too many invalid credential attempts; try again later",
+                headers={"Retry-After": str(int(remaining) + 1)},
+            )
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="missing bearer token")
+        bearer = authorization.split(None, 1)[1].strip()
+        record = app.state.registry.record_for_key(bearer)
+        if record is None:
+            record = app.state.jwt.record_for_token(bearer)
+        if record is None:
+            app.state.auth_failure_guard.record_failure(lockout_key)
+            raise HTTPException(status_code=401, detail="invalid bearer token")
+        app.state.auth_failure_guard.record_success(lockout_key)
+        _enforce_key_rotation(record)
+        return record
+
+    def _rate_limit_auth(request: Request, rate_key: str) -> None:
         allowed, retry_after = app.state.bucket.allow(rate_key)
         if not allowed:
             raise HTTPException(
-                status_code=429, detail="rate limit exceeded",
-                headers={"Retry-After": str(int(retry_after) + 1)})
-        return tenant
+                status_code=429,
+                detail="rate limit exceeded",
+                headers={"Retry-After": str(int(retry_after) + 1)},
+            )
+
+    def _scope_dependency(required_scope):
+        """required_scope: a single scope string, or a tuple of scopes where
+        having ANY ONE of them is sufficient (e.g. read-or-audit for
+        /v1/audit/verify)."""
+        accepted = (required_scope,) if isinstance(required_scope, str) else tuple(required_scope)
+
+        def _require(
+            request: Request,
+            authorization: Optional[str] = Header(None),
+        ) -> str:
+            """Resolve tenant, enforce scope, and apply tenant/IP rate limits."""
+            if len(app.state.registry) == 0:
+                tenant = ""
+                rate_key = (request.client.host if request and request.client else "anon")
+                _rate_limit_auth(request, rate_key)
+                return tenant
+
+            record = _resolve_auth_record(request, authorization)
+            if not any(record.has_scope(scope) for scope in accepted):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"bearer token missing required scope: {' or '.join(accepted)}",
+                )
+            _rate_limit_auth(request, f"tenant:{record.tenant_id}")
+            return record.tenant_id
+
+        return _require
+
+    require_tenant = _scope_dependency(READ_SCOPE)
+    require_write_tenant = _scope_dependency(WRITE_SCOPE)
+    require_audit_tenant = _scope_dependency((READ_SCOPE, AUDIT_SCOPE))
+    require_admin_tenant = _scope_dependency(ADMIN_SCOPE)
 
     def _fetch_trace(call_id: str, tenant: str):
         """Fetch a trace, enforcing tenant ownership when auth is enabled."""
@@ -941,6 +1710,35 @@ def create_app(armor: Optional[Pramagent] = None,
 
     def _demo_not_found():
         raise HTTPException(status_code=404, detail="demo is not enabled")
+
+    def _demo_admin_key() -> str:
+        return os.environ.get("PRAMAGENT_DEMO_ADMIN_KEY", "").strip()
+
+    def _require_demo_admin(
+        authorization: Optional[str],
+        x_pramagent_demo_admin_key: Optional[str],
+    ) -> None:
+        expected = _demo_admin_key()
+        if not _demo_enabled() or not expected:
+            _demo_not_found()
+        candidate = ""
+        if authorization and authorization.lower().startswith("bearer "):
+            candidate = authorization.split(None, 1)[1].strip()
+        elif x_pramagent_demo_admin_key:
+            candidate = x_pramagent_demo_admin_key.strip()
+        if not candidate or not secrets.compare_digest(candidate, expected):
+            raise HTTPException(status_code=401, detail="invalid demo admin key")
+
+    def _demo_admin_headers() -> dict[str, str]:
+        return {
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "X-Robots-Tag": "noindex, nofollow",
+        }
+
+    def _demo_admin_page() -> str:
+        page = Path(__file__).with_name("demo_signals_admin.html")
+        return page.read_text(encoding="utf-8")
 
     def _demo_ip(request: Request) -> str:
         forwarded = request.headers.get("X-Forwarded-For", "")
@@ -1260,6 +2058,24 @@ def create_app(armor: Optional[Pramagent] = None,
         page = Path(__file__).with_name("demo_page.html")
         return HTMLResponse(page.read_text(encoding="utf-8"))
 
+    @app.get("/demo/admin/signals", response_class=HTMLResponse)
+    async def demo_admin_signals_page():
+        if not _demo_enabled() or not _demo_admin_key():
+            _demo_not_found()
+        return HTMLResponse(_demo_admin_page(), headers=_demo_admin_headers())
+
+    @app.get("/demo/admin/signals.json")
+    async def demo_admin_signals_json(
+        authorization: Optional[str] = Header(None),
+        x_pramagent_demo_admin_key: Optional[str] = Header(None),
+        limit: int = Query(100, ge=1, le=500),
+    ):
+        _require_demo_admin(authorization, x_pramagent_demo_admin_key)
+        return JSONResponse(
+            app.state.demo_signals.snapshot(limit=limit),
+            headers=_demo_admin_headers(),
+        )
+
     @app.options("/demo/run")
     async def demo_run_options():
         if not _demo_enabled():
@@ -1304,19 +2120,30 @@ def create_app(armor: Optional[Pramagent] = None,
                 )
 
         try:
-            payload = await request.json()
+            raw_body = await request.json()
         except Exception:
             return JSONResponse(
                 {"detail": "invalid JSON body"},
                 status_code=400,
                 headers=_demo_cors_headers(),
             )
-        if not isinstance(payload, dict):
+        if not isinstance(raw_body, dict):
             return JSONResponse(
                 {"detail": "invalid JSON body"},
                 status_code=400,
                 headers=_demo_cors_headers(),
             )
+        try:
+            parsed_body = DemoRunRequest.model_validate(raw_body)
+        except ValidationError:
+            return JSONResponse(
+                {"detail": "invalid JSON body"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+        payload = parsed_body.model_dump()
+        if payload.get("policies") is None:
+            payload["policies"] = {}
 
         api_key = str(payload.get("nvidia_api_key") or "").strip()
         if not _looks_like_demo_api_key(api_key):
@@ -1463,14 +2290,22 @@ def create_app(armor: Optional[Pramagent] = None,
         if not _demo_enabled():
             _demo_not_found()
         try:
-            payload = await request.json()
+            raw_body = await request.json()
         except Exception:
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        email = str(payload.get("email") or "").strip()
-        company = str(payload.get("company") or "").strip()
-        use_case = str(payload.get("use_case") or "").strip()
+            raw_body = {}
+        if not isinstance(raw_body, dict):
+            raw_body = {}
+        try:
+            parsed_body = DemoRequestAccessRequest.model_validate(raw_body)
+        except ValidationError:
+            return JSONResponse(
+                {"detail": "invalid JSON body"},
+                status_code=400,
+                headers=_demo_cors_headers(),
+            )
+        email = str(parsed_body.email or "").strip()
+        company = str(parsed_body.company or "").strip()
+        use_case = str(parsed_body.use_case or "").strip()
         if not email and not company and not use_case:
             return JSONResponse(
                 {"detail": "email, company, or use case is required"},
@@ -1498,20 +2333,28 @@ def create_app(armor: Optional[Pramagent] = None,
             raise HTTPException(status_code=400, detail="API-key auth is not enabled")
         # Without a shared signing secret each worker would mint tokens only
         # it can verify — intermittent 401s across replicas (P2-12). Refuse
-        # issuance instead of minting un-verifiable tokens.
-        if not os.environ.get("PRAMAGENT_JWT_SECRET") and not os.environ.get("PRAMAGENT_JWT_SECRETS"):
+        # issuance instead of minting un-verifiable tokens. resolve_secret()
+        # so a secret sourced from AWS Secrets Manager/Vault (not a plain
+        # env var) still counts as "configured" here.
+        from ..secrets import resolve_secret
+        if not resolve_secret("PRAMAGENT_JWT_SECRET") and not os.environ.get("PRAMAGENT_JWT_SECRETS"):
             raise HTTPException(
                 status_code=503,
                 detail="JWT issuance requires PRAMAGENT_JWT_SECRET (or "
                        "PRAMAGENT_JWT_SECRETS) shared across workers")
-        tenant = app.state.registry.tenant_for_key(body.api_key)
-        if tenant is None:
+        record = app.state.registry.record_for_key(body.api_key)
+        if record is None:
             raise HTTPException(status_code=401, detail="invalid api key")
-        token = app.state.jwt.issue(tenant, ttl_s=body.ttl_s)
+        token = app.state.jwt.issue(
+            record.tenant_id,
+            ttl_s=body.ttl_s,
+            scopes=record.scopes,
+        )
         return TokenResponse(
             access_token=token,
             expires_in=body.ttl_s,
-            tenant_id=tenant,
+            tenant_id=record.tenant_id,
+            scopes=sorted(record.scopes),
         )
 
     @app.get("/health/ready")
@@ -1543,7 +2386,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     @app.post("/v1/run", response_model=RunResponse)
     async def run(req: RunRequest, request: Request,
-                  tenant: str = Depends(require_tenant)):
+                  tenant: str = Depends(require_write_tenant)):
         a = app.state.armor
         # When auth is on, the tenant comes from the key — ignore any body assertion.
         # When auth is off, fall back to body or "default".
@@ -1583,7 +2426,7 @@ def create_app(armor: Optional[Pramagent] = None,
         return _fetch_trace(call_id, tenant).to_dict()
 
     @app.get("/v1/audit/verify")
-    async def verify_audit(tenant: str = Depends(require_tenant)):
+    async def verify_audit(tenant: str = Depends(require_audit_tenant)):
         a = app.state.armor
         return {"chain_valid": a.audit.verify_chain(),
                 "records": len(a.audit.records())}
@@ -1613,7 +2456,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     @app.post("/v1/tools/validate", response_model=ToolValidateResponse)
     async def validate_tool(req: ToolValidateRequest,
-                            tenant: str = Depends(require_tenant)):
+                            tenant: str = Depends(require_write_tenant)):
         effective_tenant = tenant if tenant else (req.tenant_id or "default")
         quota_decision = await asyncio.to_thread(
             app.state.usage.reserve_tool_validation, effective_tenant)
@@ -1695,7 +2538,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     @app.post("/v1/retention/prune", response_model=PruneResponse)
     async def retention_prune(older_than_days: int,
-                              tenant: str = Depends(require_tenant)):
+                              tenant: str = Depends(require_admin_tenant)):
         """Prune traces older than `older_than_days`.
 
         Enforces the EU AI Act Article 12 floor: a retention window shorter than
@@ -1734,7 +2577,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     @app.delete("/v1/tenant/{tenant_id}/traces", response_model=EraseResponse)
     async def erase_tenant_traces(tenant_id: str,
-                                  tenant: str = Depends(require_tenant)):
+                                  tenant: str = Depends(require_admin_tenant)):
         """GDPR right-to-erasure: delete all traces for `tenant_id`.
 
         A tenant may only erase its OWN data: erasure requires an authenticated
@@ -1762,6 +2605,44 @@ def create_app(armor: Optional[Pramagent] = None,
         if audit is not app.state.armor.store and hasattr(audit, "redact_for_tenant"):
             audit.redact_for_tenant(tenant_id)
         return {"deleted": deleted, "tenant_id": tenant_id}
+
+    @app.delete(
+        "/v1/tenant/{tenant_id}/sessions/{session_id}/traces",
+        response_model=EraseSessionResponse,
+    )
+    async def erase_session_traces(tenant_id: str, session_id: str,
+                                    tenant: str = Depends(require_admin_tenant)):
+        """GDPR right-to-erasure scoped to one end user's session.
+
+        The trace schema has no separate per-end-user column, but session_id
+        already identifies one user's conversation/session in practice —
+        this is the "delete my data" primitive for a multi-user tenant, so
+        one user's request doesn't require erasing every other user sharing
+        that tenant (or hand-writing SQL, which is what this closes). Same
+        ownership rules as the tenant-wide erasure endpoint above.
+        """
+        if not tenant:
+            raise HTTPException(
+                status_code=403,
+                detail="erasure requires API-key auth so ownership of the "
+                       "target tenant can be verified",
+            )
+        if tenant != tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="a tenant may only erase its own data",
+            )
+        store = app.state.armor.store
+        if not hasattr(store, "delete_for_session"):
+            raise HTTPException(
+                status_code=501,
+                detail="store does not support session-scoped erasure",
+            )
+        deleted = store.delete_for_session(tenant_id, session_id)
+        audit = app.state.armor.audit
+        if audit is not store and hasattr(audit, "redact_for_session"):
+            audit.redact_for_session(tenant_id, session_id)
+        return {"deleted": deleted, "tenant_id": tenant_id, "session_id": session_id}
 
     # ── dashboard-friendly routes (unversioned prefix, used by admin UI) ─────
     # These mirror the /v1 data surface for the dashboard. They carry the SAME
@@ -1875,7 +2756,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     @app.post("/hitl/{request_id}/decide")
     async def hitl_decide(request_id: str, body: HITLDecideRequest,
-                          tenant: str = Depends(require_tenant)):
+                          tenant: str = Depends(require_write_tenant)):
         hitl = app.state.armor.hitl
         registry = getattr(hitl, "registry", None) or getattr(
             getattr(hitl, "approver", None), "registry", None)

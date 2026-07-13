@@ -29,9 +29,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-pramagent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-pramagent}
+      # Consumed by init.sh to create the non-superuser app role the API
+      # actually connects as (POSTGRES_USER is a superuser and would make
+      # the pramagent_traces RLS policy a no-op).
+      PRAMAGENT_APP_DB_PASSWORD: ${PRAMAGENT_APP_DB_PASSWORD:?PRAMAGENT_APP_DB_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     # internal-only: never published to the host (P1-10/T2-9)
     expose:
       - "5432"
@@ -95,7 +99,11 @@ services:
       # Store priority: PRAMAGENT_POSTGRES_DSN > PRAMAGENT_DB > opt-in memory.
       # The API refuses to start without one of the three (P0-1), so this DSN
       # is what makes the stack actually persist traces + the audit chain.
-      PRAMAGENT_POSTGRES_DSN: "postgresql://${POSTGRES_USER:-pramagent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pramagent}"
+      # Connects as pramagent_app (see deploy/postgres/init.sh), not
+      # POSTGRES_USER: POSTGRES_USER is a superuser and would silently defeat
+      # the pramagent_traces row-level-security policy PostgresStore's DDL
+      # sets up (superusers bypass RLS regardless of FORCE).
+      PRAMAGENT_POSTGRES_DSN: "postgresql://pramagent_app:${PRAMAGENT_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-pramagent}"
       PRAMAGENT_API_KEY: ${PRAMAGENT_API_KEY:?PRAMAGENT_API_KEY is required}
       PRAMAGENT_API_KEYS: "default:${PRAMAGENT_API_KEY}"
       PRAMAGENT_SIGNING_KEY: ${PRAMAGENT_SIGNING_KEY:?PRAMAGENT_SIGNING_KEY is required}
@@ -105,6 +113,11 @@ services:
       PRAMAGENT_RATE_LIMIT_REFILL: ${PRAMAGENT_RATE_LIMIT_REFILL:-10}
       PRAMAGENT_RATE_BURST: ${PRAMAGENT_RATE_LIMIT_CAPACITY:-100}
       PRAMAGENT_RATE_PER_SEC: ${PRAMAGENT_RATE_LIMIT_REFILL:-10}
+      PRAMAGENT_AUTH_LOCKOUT_THRESHOLD: ${PRAMAGENT_AUTH_LOCKOUT_THRESHOLD:-10}
+      PRAMAGENT_AUTH_LOCKOUT_WINDOW_S: ${PRAMAGENT_AUTH_LOCKOUT_WINDOW_S:-300}
+      PRAMAGENT_AUTH_LOCKOUT_BASE_S: ${PRAMAGENT_AUTH_LOCKOUT_BASE_S:-30}
+      PRAMAGENT_AUTH_LOCKOUT_MAX_S: ${PRAMAGENT_AUTH_LOCKOUT_MAX_S:-900}
+      PRAMAGENT_AUTH_LOCKOUT_REDIS_URL: ${PRAMAGENT_AUTH_LOCKOUT_REDIS_URL:-}
       PRAMAGENT_QUOTA_CALLS: ${PRAMAGENT_QUOTA_CALLS:-}
       PRAMAGENT_QUOTA_TOOL_VALIDATIONS: ${PRAMAGENT_QUOTA_TOOL_VALIDATIONS:-}
       PRAMAGENT_QUOTA_COST_USD: ${PRAMAGENT_QUOTA_COST_USD:-}
@@ -144,7 +157,11 @@ services:
       PRAMAGENT_JWT_SECRET: ${PRAMAGENT_JWT_SECRET:?PRAMAGENT_JWT_SECRET is required}
       PRAMAGENT_DASHBOARD_TENANT: ${PRAMAGENT_DASHBOARD_TENANT:-default}
       PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN: ${PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN:-false}
-      PRAMAGENT_DASHBOARD_SECURE_COOKIE: ${PRAMAGENT_DASHBOARD_SECURE_COOKIE:-false}
+      # Default true, matching the app-level default — this compose file
+      # must not silently override that back to false for anyone who leaves
+      # it unset in .env.
+      PRAMAGENT_DASHBOARD_SECURE_COOKIE: ${PRAMAGENT_DASHBOARD_SECURE_COOKIE:-true}
+      PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN: ${PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN:-false}
       DASHBOARD_PORT: ${DASHBOARD_PORT:-8501}
     ports:
       - "${DASHBOARD_PORT:-8501}:8501"
@@ -156,6 +173,113 @@ services:
       start_period: 20s
     mem_limit: 512m
     cpus: 0.5
+    logging: *default-logging
+
+  # ── Postgres backup (opt-in) ─────────────────────────────────────────────
+  # Scheduled pg_dump -> object storage, closing the "no backup automation"
+  # gap. Off by default so existing deployments aren't forced to configure
+  # S3 before `docker compose up` — enable with:
+  #   docker compose --profile backup up -d
+  backup:
+    profiles: ["backup"]
+    build:
+      context: .
+      dockerfile: deploy/postgres/Dockerfile.backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PRAMAGENT_POSTGRES_DSN: "postgresql://pramagent_app:${PRAMAGENT_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-pramagent}"
+      # Soft default here, not `:?required` — compose validates every
+      # service's interpolation on every `docker compose up`, even ones
+      # gated by an inactive profile, so a hard requirement on an opt-in
+      # service would break the default (no --profile) stack for everyone.
+      # backup.py's own _require_env() enforces this for real once the
+      # profile is actually enabled and the container runs.
+      PRAMAGENT_BACKUP_S3_BUCKET: ${PRAMAGENT_BACKUP_S3_BUCKET:-}
+      PRAMAGENT_BACKUP_S3_PREFIX: ${PRAMAGENT_BACKUP_S3_PREFIX:-pramagent/backups}
+      PRAMAGENT_BACKUP_RETENTION_DAYS: ${PRAMAGENT_BACKUP_RETENTION_DAYS:-30}
+      PRAMAGENT_BACKUP_KMS_KEY_ID: ${PRAMAGENT_BACKUP_KMS_KEY_ID:-}
+      PRAMAGENT_BACKUP_INTERVAL_S: ${PRAMAGENT_BACKUP_INTERVAL_S:-3600}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while true; do
+          python backup.py || echo "backup run failed, will retry next interval" >&2
+          sleep "$$PRAMAGENT_BACKUP_INTERVAL_S"
+        done
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *default-logging
+
+  # ── Audit-chain tamper detection (opt-in) ────────────────────────────────
+  # Runs `pramagent audit-verify-watch` on a loop, closing the "detection is
+  # entirely manual" gap. Reuses the api image/build (the CLI ships in the
+  # same package) rather than a separate Dockerfile. Enable with:
+  #   docker compose --profile audit-watch up -d
+  audit-watch:
+    profiles: ["audit-watch"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PRAMAGENT_POSTGRES_DSN: "postgresql://pramagent_app:${PRAMAGENT_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-pramagent}"
+      PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL: ${PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL:-}
+      PRAMAGENT_AUDIT_ALERT_WEBHOOK_SECRET: ${PRAMAGENT_AUDIT_ALERT_WEBHOOK_SECRET:-}
+      PRAMAGENT_AUDIT_ALERT_TIMEOUT_S: ${PRAMAGENT_AUDIT_ALERT_TIMEOUT_S:-5.0}
+      PRAMAGENT_AUDIT_WATCH_INTERVAL_S: ${PRAMAGENT_AUDIT_WATCH_INTERVAL_S:-900}
+    entrypoint:
+      - sh
+      - -c
+      - 'pramagent audit-verify-watch --interval-s "$$PRAMAGENT_AUDIT_WATCH_INTERVAL_S"'
+    mem_limit: 256m
+    cpus: 0.25
+    logging: *default-logging
+
+  # ── Scheduled retention pruning (opt-in) ─────────────────────────────────
+  # Runs `pramagent retention-prune` on a loop instead of leaving it purely
+  # manual/external-cron. Scoped to ONE tenant per instance (retention-prune
+  # refuses unscoped pruning by design) — for multi-tenant deployments, run
+  # one instance per tenant (e.g. via `docker compose run` from an external
+  # per-tenant scheduler) rather than trying to loop tenants here. Enable
+  # with: docker compose --profile retention-prune up -d
+  retention-prune:
+    profiles: ["retention-prune"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PRAMAGENT_POSTGRES_DSN: "postgresql://pramagent_app:${PRAMAGENT_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-pramagent}"
+      PRAMAGENT_RETENTION_TENANT_ID: ${PRAMAGENT_RETENTION_TENANT_ID:-}
+      PRAMAGENT_RETENTION_DAYS: ${PRAMAGENT_RETENTION_DAYS:-365}
+      PRAMAGENT_RETENTION_INTERVAL_S: ${PRAMAGENT_RETENTION_INTERVAL_S:-86400}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -z "$$PRAMAGENT_RETENTION_TENANT_ID" ]; then
+          echo "PRAMAGENT_RETENTION_TENANT_ID is required for the retention-prune profile" >&2
+          exit 1
+        fi
+        pramagent retention-prune --tenant-id "$$PRAMAGENT_RETENTION_TENANT_ID" \
+          --days "$$PRAMAGENT_RETENTION_DAYS" --interval-s "$$PRAMAGENT_RETENTION_INTERVAL_S"
+    mem_limit: 256m
+    cpus: 0.25
     logging: *default-logging
 
 volumes:

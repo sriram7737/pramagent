@@ -1,0 +1,27 @@
+# Backup/restore-drill sidecar: pg_dump/pg_restore + boto3 + the pramagent
+# package (restore_verify.py calls PostgresStore.verify() directly).
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# postgresql-client provides pg_dump/pg_restore. Custom-format dumps are
+# compatible across nearby major versions, but keep this client within a
+# version or two of the postgres:16-alpine service in docker-compose.yml.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client libpq-dev gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# pyproject.toml's data-files list (CHANGELOG.md, docs/, corpus/) means a
+# partial file COPY breaks the wheel build the same way the main Dockerfile's
+# builder stage would — mirror its full-context COPY instead of hand-picking.
+COPY . ./
+RUN pip install --no-cache-dir ".[postgres,s3]"
+
+RUN cp deploy/postgres/backup.py deploy/postgres/restore_verify.py .
+
+RUN useradd -r -u 1001 -g root pramagent && chown -R 1001:0 /app
+USER 1001
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+CMD ["python", "backup.py"]

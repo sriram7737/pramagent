@@ -195,11 +195,36 @@ class EncryptedSQLiteStore:
             self._conn.commit()
             return cur.rowcount
 
+    def delete_for_session(self, tenant_id: str, session_id: str) -> int:
+        """GDPR erasure scoped to one session within a tenant — see
+        SQLiteStore.delete_for_session for why session_id is the practical
+        per-end-user erasure unit given the current schema."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM traces WHERE tenant_id = ? AND session_id = ?",
+                (tenant_id, session_id),
+            )
+            self.redact_for_session(tenant_id, session_id)
+            self._conn.commit()
+            return cur.rowcount
+
     def redact_for_tenant(self, tenant_id: str) -> int:
         """Tombstone PII fields in this tenant's chain payloads, then
         re-anchor: every link from the first redaction onward gets recomputed
         prev/this hashes (over the plaintext payload, exactly as append hashes
         it) so verify_chain() still passes. Returns payloads redacted."""
+        return self._redact_matching(lambda payload: payload.get("tenant_id") == tenant_id)
+
+    def redact_for_session(self, tenant_id: str, session_id: str) -> int:
+        """Same as redact_for_tenant, scoped to one session."""
+        return self._redact_matching(
+            lambda payload: (
+                payload.get("tenant_id") == tenant_id
+                and payload.get("session_id") == session_id
+            )
+        )
+
+    def _redact_matching(self, predicate) -> int:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT seq, payload_enc, prev_hash, this_hash FROM audit_chain ORDER BY seq"
@@ -207,7 +232,7 @@ class EncryptedSQLiteStore:
             prev, redacted, rehash = GENESIS, 0, False
             for seq, payload_enc, _stored_prev, stored_hash in rows:
                 payload = json.loads(self._decrypt(payload_enc))
-                if payload.get("tenant_id") == tenant_id and redact_chain_payload(payload):
+                if predicate(payload) and redact_chain_payload(payload):
                     redacted += 1
                     rehash = True
                 if rehash:

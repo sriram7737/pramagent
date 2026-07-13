@@ -439,6 +439,13 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   the prompt, injection/HITL cases do not call the provider, provider failures
   return explicit `DEGRADED` details, and the per-IP/per-key demo throttle
   returns `429` without storing plaintext keys.
+- Optional product signals now have an operator surface: set
+  `PRAMAGENT_DEMO_ADMIN_KEY` to enable `/demo/admin/signals`, and set
+  `PRAMAGENT_DEMO_SIGNALS_POSTGRES_DSN` plus `PRAMAGENT_DEMO_SIGNAL_SALT` to
+  persist repeat-visitor and managed-pilot hashes across restarts. The stored
+  fields remain hashed/scrubbed only: provider kind, verdict, HITL state,
+  conformance tiers, and redacted use-case labels; no prompts, outputs, keys,
+  IPs, or plaintext contacts are collected.
 - Local verification: **568 passed, 1 skipped**; Bandit returned no findings.
 
 2026-06-11 v0.7.3 security remediation:

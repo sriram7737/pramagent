@@ -63,6 +63,30 @@ count in `docs/LIVE_TEST_RESULTS.md`.
 
 ## Safety Hardening
 
+Current state:
+
+- Injection defense is layered: `IsolationLayer`/`classifier.py` pre-scan
+  input before it ever reaches a prompt (provenance-aware — tool
+  output/retrieved content gets stricter thresholds than direct user input),
+  and the LLM-judge prompts themselves (`pramagent/layers/llm_judge.py`) now
+  fence untrusted content (tool arguments, prior model output) in
+  `<untrusted_...>` tags with explicit instruction-hierarchy language,
+  escaping any attacker-supplied text that tries to forge a fake closing tag.
+  This is defense-in-depth, not a replacement for the pre-scan: a fenced
+  prompt still relies on the judge model actually respecting the fence.
+- **Classifier default tier is a deliberate choice, not an oversight**:
+  keyword-only pattern matching is the default and the supported baseline —
+  zero extra dependencies, works everywhere `pramagent` installs. The
+  embedding (`sentence-transformers`) and DeBERTa fine-tuned classifiers are
+  a real, higher-assurance upgrade, but pull in `torch` (gigabytes, slow cold
+  start), which is why they stay behind the separate `pramagent[ml]` extra
+  instead of being bundled into `all`. Set `PRAMAGENT_CLASSIFIER=embedding`
+  (or `PRAMAGENT_DEMO_CLASSIFIER=embedding` for the demo) to opt in — this is
+  the recommended upgrade for deployments handling PHI or high-value tool
+  calls. Whichever tier is actually active is logged at startup
+  (`build_classifier()` in `pramagent/classifier.py`), so this is visible in
+  logs, not just inferred from config.
+
 Do next:
 
 - Expand the red-team corpus with third-party jailbreak sets, indirect prompt
@@ -124,6 +148,48 @@ Next:
 - Add SSO/OIDC/RBAC for dashboard and approval admin workflows.
 - Add verified email/SMS delivery for account activation and key regeneration.
 
+## Multi-Tenancy And Data Isolation
+
+Current state:
+
+- `pramagent_traces` has row-level security (`ENABLE`/`FORCE ROW LEVEL
+  SECURITY` + a tenant-scoped policy) applied by `PostgresStore`'s own DDL on
+  every startup — not an opt-in migration. It only has teeth when the DSN
+  connects as a non-superuser role: Postgres superusers and `BYPASSRLS`
+  roles bypass RLS unconditionally, `FORCE` included. `deploy/postgres/init.sh`
+  provisions a dedicated `pramagent_app` role for exactly this reason, and
+  `PostgresStore` logs a startup warning if the connected role can't actually
+  enforce the policy.
+- `pramagent_chain` (the audit hash chain) is **deliberately not** RLS-scoped.
+  Its rows aren't tenant-partitioned — a GDPR erasure tombstones a tenant's
+  fields in place (see `redact_chain_payload`) rather than deleting rows,
+  because the hash chain needs every row to still exist for `verify()` to
+  walk it. Row-level tenant isolation doesn't apply to a table where "which
+  tenant does this row belong to" isn't how access is gated in the first
+  place; the isolation guarantee for chain data is that `redact_for_tenant()`
+  only rewrites rows matching the target tenant, verified by the redaction
+  test suite, not a DB-level RLS policy.
+- `pramagent_chain` does have DB-level append-only enforcement: a trigger
+  rejects all `DELETE`s and any `UPDATE` that doesn't come through the GDPR
+  redaction path. This is a real, verified control (works regardless of
+  table ownership), not just a `GRANT` omission — but it does not stop a
+  fully privileged Postgres credential holder who reads the trigger logic
+  and replicates its marker; that residual risk is what external chain
+  anchoring (`EthereumBackend`/`HyperledgerBackend` in `pramagent/audit`)
+  exists for.
+- `deploy/postgres/hardening_rls.sql` remains as an *additional*, optional
+  lockdown step (tighter migration-vs-runtime role split) for deployments
+  that want it — it is no longer what makes tenant isolation or append-only
+  semantics work at all.
+
+Next:
+
+- Add a stricter two-role deployment mode (separate migration/owner role
+  from the runtime role) as a documented, tested path, not just the
+  `hardening_rls.sql` GRANT/REVOKE sketch.
+- Extend RLS-style tenant scoping to any future tenant-partitioned tables
+  before they ship, not as a follow-up migration.
+
 ## Observability And Operations
 
 Current state:
@@ -133,6 +199,16 @@ Current state:
 - Load-test runbook exists.
 - JWT signing keys can be rotated with `kid` headers, but this is still not a
   full enterprise identity plane.
+- API key age is tracked (`AuthRecord.created_at`) and rotation is
+  enforceable, not just documented: `PRAMAGENT_API_KEY_MAX_AGE_DAYS` rejects
+  keys past the configured age (off by default). A dedicated
+  `AuthFailureGuard` locks out repeated invalid-credential attempts per peer
+  with an escalating cooldown, separate from the request-rate limiter.
+- Audit-chain tamper detection is automated: `pramagent audit-verify-watch`
+  (or the opt-in `docker compose --profile audit-watch` service) runs
+  `verify()` on a loop and POSTs to `PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL` on any
+  broken link. Everything else (auth-failure spikes, unusual traffic
+  patterns) is still manual/log-review based.
 
 Next:
 
@@ -140,9 +216,43 @@ Next:
 - Add SSO/OIDC/RBAC and a full admin workflow for API-key/session
   administration.
 - Add alert thresholds for block-rate spikes, HITL timeout spikes, quota-store
-  failures, provider fallback rate, and audit anchoring failures.
+  failures, provider fallback rate, and auth-failure spikes (audit-chain
+  tamper alerting itself is done — see Current state).
 - Add chaos tests for Redis/Postgres outages and provider timeouts.
-- Maintain an incident-response runbook with rollback and data-export steps.
+- Keep the operational runbooks current:
+  `docs/INCIDENT_RESPONSE_RUNBOOK.md`, `docs/BACKUP_DR_RUNBOOK.md`, and
+  `docs/SUPPLY_CHAIN.md`.
+
+## Secrets Management
+
+Current state:
+
+- No hardcoded secrets repo-wide; a shared weak-secret denylist
+  (`pramagent/security.py`) refuses every published placeholder spelling at
+  startup, in both the API and dashboard.
+- `pramagent/secrets.py` adds optional AWS Secrets Manager / HashiCorp Vault
+  backing for `PRAMAGENT_JWT_SECRET`, `PRAMAGENT_ENCRYPTION_KEY`,
+  `PRAMAGENT_API_KEY`, and `PRAMAGENT_DASHBOARD_KEY` — set
+  `<NAME>_AWS_SECRET_ID` or `<NAME>_VAULT_PATH` and leave the plain env var
+  empty. A secret found directly in the environment still always wins
+  (unchanged default path); this was previously env-var-only with no
+  secret-manager integration at all.
+- API keys track issuance time (`AuthRecord.created_at`); rotation can be
+  enforced, not just documented, via `PRAMAGENT_API_KEY_MAX_AGE_DAYS`.
+- JWT signing keys rotate via `kid` (`PRAMAGENT_JWT_SECRETS` /
+  `PRAMAGENT_JWT_ACTIVE_KID`) — that multi-key format is not yet wired into
+  the secret-manager resolver, only the singular `PRAMAGENT_JWT_SECRET` path
+  is.
+
+Next:
+
+- Extend secret-manager resolution to the `PRAMAGENT_JWT_SECRETS` multi-kid
+  format and to `POSTGRES_PASSWORD`/`PRAMAGENT_POSTGRES_DSN`'s embedded
+  credential.
+- Automate rotation (a scheduled job that issues a new key and revokes the
+  old one after a grace period), rather than requiring an operator to run
+  `auth-issue`/`auth-revoke` by hand.
+- Add GCP Secret Manager as a third backend alongside AWS/Vault.
 
 ## Compliance Evidence
 
@@ -151,9 +261,18 @@ Current state:
 - Compliance mapping docs exist.
 - Retention, erasure, consent, purpose limitation, S3 archive, and audit export
   primitives exist.
-- `ComplianceReporter.generate()` can render point-in-time evidence packages
-  from traces, HITL approvals, redaction counts, audit-chain verification, and
-  framework control mappings.
+- Erasure has two granularities: `DELETE /v1/tenant/{tenant_id}/traces` (whole
+  tenant) and `DELETE /v1/tenant/{tenant_id}/sessions/{session_id}/traces`
+  (one end user within a multi-user tenant), across all three store backends
+  (Postgres, SQLite, encrypted SQLite). Previously only tenant-wide erasure
+  existed, so a single end user's request within a shared tenant required
+  hand-written SQL.
+- GDPR tombstoning covers more than input_text/output_text: rule and layer
+  event `detail` strings and `layer_events[*].data` are redacted too, since a
+  rule can echo the offending content back into its own explanation.
+- `pramagent audit-verify-watch` can run on a scheduled interval, but
+  retention pruning (`pramagent retention-prune`) is still invoked manually
+  or via an external cron/scheduler, not run on a loop by the app itself.
 
 Next:
 

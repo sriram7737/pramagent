@@ -9,6 +9,7 @@ include examples/demo.py
 include examples/dynamic_feed_agent.py
 include examples/live_payment_agent.py
 include pramagent/api/demo_page.html
+include pramagent/api/demo_signals_admin.html
 include deploy/dashboard/Dockerfile
 include docs/COMPLIANCE_MAPPING.md
 include docs/CONFORMANCE.md
@@ -16,6 +17,9 @@ include docs/DEMO_SCRIPT.md
 include docs/DEPLOYMENT.md
 include docs/DESIGN_DECISIONS.md
 include docs/HARDENING_GUIDE.md
+include docs/INCIDENT_RESPONSE_RUNBOOK.md
+include docs/BACKUP_DR_RUNBOOK.md
+include docs/SUPPLY_CHAIN.md
 include docs/IMPLEMENTATION_STATUS.md
 include docs/LIVE_TEST_RESULTS.md
 include docs/LIVE_WORKFLOW_DEMO.md
@@ -29,5 +33,7 @@ include docs/SECURITY_SCAN_REPORT_2026-06-07.md
 include docs/TECHNICAL_MARKETING_POST.md
 include corpus/overreach/README.md
 include corpus/overreach/cases.jsonl
+include requirements-security.txt
+include deploy/postgres/hardening_rls.sql
 recursive-include docs *.png
 recursive-include tests/data *.json

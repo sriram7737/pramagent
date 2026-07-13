@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pramagent demo signals</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#667085; --line:#d9e1ec; --soft:#f6f8fb; --brand:#0f766e; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; color:var(--ink); background:#eef3f8; }
+    main { max-width:1120px; margin:0 auto; padding:32px 20px 48px; }
+    header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:22px; }
+    h1 { margin:0; font-size:26px; letter-spacing:0; }
+    p { margin:6px 0 0; color:var(--muted); }
+    .auth, .panel, .card { background:white; border:1px solid var(--line); border-radius:8px; box-shadow:0 16px 40px rgba(21,35,55,.08); }
+    .auth { display:flex; gap:10px; padding:14px; align-items:center; }
+    .auth input { min-width:260px; border:1px solid var(--line); border-radius:6px; padding:10px 11px; font:inherit; }
+    button { border:0; border-radius:6px; background:var(--brand); color:white; font-weight:700; padding:10px 14px; cursor:pointer; }
+    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0; }
+    .card { padding:16px; box-shadow:none; }
+    .k { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .v { display:block; font-size:26px; font-weight:800; margin-top:4px; }
+    .panel { margin-top:14px; overflow:hidden; }
+    .panel h2 { margin:0; padding:14px 16px; border-bottom:1px solid var(--line); font-size:15px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:10px 12px; border-bottom:1px solid #edf1f6; vertical-align:top; }
+    th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; background:var(--soft); }
+    code { font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .pill { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:2px 8px; background:#fff; }
+    .notice { padding:12px 14px; background:#f8fafc; border:1px solid var(--line); border-radius:8px; color:var(--muted); }
+    .error { color:#9f1239; font-weight:700; }
+    @media (max-width: 840px) { header { display:block; } .auth { margin-top:16px; } .grid { grid-template-columns:repeat(2,1fr); } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Demo product signals</h1>
+      <p>Opt-in usage and managed-pilot demand. No prompts, outputs, provider keys, IPs, or plaintext emails are stored.</p>
+    </div>
+    <form class="auth" id="authForm">
+      <input id="adminKey" type="password" autocomplete="current-password" placeholder="Demo admin key">
+      <button type="submit">Load</button>
+    </form>
+  </header>
+  <div id="status" class="notice">Enter <code>PRAMAGENT_DEMO_ADMIN_KEY</code> to load the signal snapshot.</div>
+  <section class="grid" id="summary"></section>
+  <section class="panel">
+    <h2>Recent opt-in runs</h2>
+    <table>
+      <thead><tr><th>When</th><th>Visitor</th><th>Provider</th><th>Verdict</th><th>HITL</th><th>Conformance</th></tr></thead>
+      <tbody id="events"><tr><td colspan="6">No data loaded.</td></tr></tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <h2>Managed-pilot requests</h2>
+    <table>
+      <thead><tr><th>When</th><th>Lead</th><th>Company</th><th>Use case</th></tr></thead>
+      <tbody id="leads"><tr><td colspan="4">No data loaded.</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const when = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "";
+function card(label, value) { return `<div class="card"><span class="k">${label}</span><span class="v">${value}</span></div>`; }
+function render(data) {
+  const s = data.summary || {};
+  $("status").innerHTML = `Storage: <span class="pill">${esc(data.storage)}</span>${data.storage_error ? ` <span class="error">${esc(data.storage_error)}</span>` : ""}`;
+  $("summary").innerHTML = [
+    card("Opt-in runs", s.opt_in_runs || 0),
+    card("Visitors", s.opt_in_visitors || 0),
+    card("Repeat visitors", s.repeat_visitors || 0),
+    card("Pilot requests", s.lead_count || 0),
+  ].join("");
+  const events = data.recent_events || [];
+  $("events").innerHTML = events.length ? events.map(e => `
+    <tr>
+      <td>${esc(when(e.created_at))}</td>
+      <td><code>${esc(e.visitor_hash)}</code></td>
+      <td>${esc(e.provider_kind)}</td>
+      <td><span class="pill">${esc(e.verdict)}</span></td>
+      <td>${esc(e.hitl_status)}</td>
+      <td>${esc(e.aws_scope)} / ${esc(e.detection_tier)} / ${esc(e.response_tier)}</td>
+    </tr>`).join("") : '<tr><td colspan="6">No opt-in runs yet.</td></tr>';
+  const leads = data.recent_leads || [];
+  $("leads").innerHTML = leads.length ? leads.map(l => `
+    <tr>
+      <td>${esc(when(l.created_at))}</td>
+      <td><code>${esc(l.lead_hash)}</code></td>
+      <td><code>${esc(l.company_hash)}</code></td>
+      <td>${esc(l.use_case)}</td>
+    </tr>`).join("") : '<tr><td colspan="4">No managed-pilot requests yet.</td></tr>';
+}
+$("authForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("status").textContent = "Loading...";
+  const res = await fetch("/demo/admin/signals.json", {
+    headers: { "Authorization": `Bearer ${$("adminKey").value}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    $("status").innerHTML = `<span class="error">Unable to load: ${res.status}</span>`;
+    return;
+  }
+  render(await res.json());
+});
+</script>
+</body>
+</html>

@@ -56,6 +56,15 @@ class _FakeCursor:
         params = params or ()
         if "create table" in sql_norm or "create index" in sql_norm:
             return
+        if "set_config('pramagent.tenant_id'" in sql_norm:
+            return
+        if "set_config('pramagent.tenant_rls_bypass'" in sql_norm:
+            return
+        if "set_config('pramagent.chain_redaction_in_progress'" in sql_norm:
+            return
+        if "rolsuper, rolbypassrls from pg_roles" in sql_norm:
+            self._rows = []
+            return
         if sql_norm == "select 1":
             self._rows = [(1,)]
             return
@@ -87,6 +96,13 @@ class _FakeCursor:
                     if r["tenant_id"] == tenant_id]
             self._rows = [(r["payload"],) for r in rows[: int(limit)]]
             return
+        if "select count(*) from pramagent_traces where tenant_id" in sql_norm:
+            tenant_id = params[0]
+            self._rows = [(sum(1 for r in self.db.traces.values() if r["tenant_id"] == tenant_id),)]
+            return
+        if "select count(*) from pramagent_traces" in sql_norm:
+            self._rows = [(len(self.db.traces),)]
+            return
         if "select payload from pramagent_traces order by created_at desc" in sql_norm:
             rows = self.db.traces_by_recency()
             if params:
@@ -96,6 +112,14 @@ class _FakeCursor:
         if "select payload from pramagent_traces order by created_at asc" in sql_norm:
             rows = list(reversed(self.db.traces_by_recency()))
             self._rows = [(r["payload"],) for r in rows]
+            return
+        if "delete from pramagent_traces where tenant_id = %s and session_id = %s" in sql_norm:
+            tenant_id, session_id = params
+            doomed = [tid for tid, r in self.db.traces.items()
+                      if r["tenant_id"] == tenant_id and r["session_id"] == session_id]
+            for tid in doomed:
+                del self.db.traces[tid]
+            self.rowcount = len(doomed)
             return
         if "delete from pramagent_traces where tenant_id" in sql_norm:
             doomed = [tid for tid, r in self.db.traces.items()
@@ -369,6 +393,28 @@ def test_redact_for_tenant_is_idempotent(pg):
     assert store.redact_for_tenant("x") == 1
     assert store.redact_for_tenant("x") == 0
     assert store.verify() == []
+
+
+def test_delete_for_session_scoped_within_tenant(pg):
+    """One end user's erasure request must not touch another user sharing
+    the same tenant — the practical per-user erasure unit given the schema
+    has no separate user-id column."""
+    store, db = pg
+    store.save(_trace("acme", "SSN 123-45-6789", session="user-a"))
+    store.save(_trace("acme", "unrelated data", session="user-b"))
+    store.append({"tenant_id": "acme", "session_id": "user-a", "input_text": "SSN 123-45-6789"})
+    store.append({"tenant_id": "acme", "session_id": "user-b", "input_text": "unrelated data"})
+
+    deleted = store.delete_for_session("acme", "user-a")
+
+    assert deleted == 1
+    assert store.count(tenant_id="acme") == 1
+    remaining = store.list_for_tenant("acme")
+    assert remaining[0]["session_id"] == "user-b"
+    assert store.verify() == []
+    chain = json.dumps([r["payload"] for r in db.chain])
+    assert "123-45-6789" not in chain
+    assert "unrelated data" in chain
 
 
 # ───────────────────────────── failure modes ──────────────────────────────

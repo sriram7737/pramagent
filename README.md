@@ -287,6 +287,16 @@ managed-pilot form stores salted contact hashes plus a short use-case label
 with obvious email/phone values redacted, so demand can show up as data without
 turning the demo into a tracking surface.
 
+Set `PRAMAGENT_DEMO_ADMIN_KEY` to enable the protected operator view at
+`/demo/admin/signals`. The browser page asks for that key and then calls
+`/demo/admin/signals.json` with an `Authorization: Bearer ...` header; the key
+is never placed in a URL. By default these signals are process-local memory.
+Set `PRAMAGENT_DEMO_SIGNALS_POSTGRES_DSN` to persist them to Postgres, and set
+`PRAMAGENT_DEMO_SIGNAL_SALT` when you want hashed visitor/contact identifiers
+to remain stable across restarts. The persisted schema still stores only
+hashed/scrubbed fields, not prompts, outputs, provider keys, IPs, or plaintext
+contacts.
+
 The public throttle is keyed by client IP plus a short in-memory SHA-256 hash
 of the visitor's provider key. The no-key deterministic path is throttled by
 IP. If a visitor switches to a different key, they get a fresh demo bucket

@@ -2,6 +2,79 @@
 
 ## Unreleased
 
+### Added
+
+- Row-level tenant isolation on `pramagent_traces` is applied by default DDL
+  (no longer an opt-in `hardening_rls.sql` migration), backed by a real
+  non-superuser `pramagent_app` Postgres role (`deploy/postgres/init.sh`) —
+  RLS is inert against a superuser/BYPASSRLS connection, so `PostgresStore`
+  now warns at startup if the connected role can't actually enforce it.
+- Application-level column encryption (Fernet) for Postgres: setting
+  `PRAMAGENT_ENCRYPTION_KEY` with `PRAMAGENT_POSTGRES_DSN` now encrypts the
+  trace/chain payload columns (`BYTEA` instead of `JSONB`), matching the
+  existing `EncryptedSQLiteStore` behavior — previously the key was silently
+  ignored for Postgres.
+- Append-only enforcement on `pramagent_chain` via a DB trigger
+  (`pramagent_chain_append_only_guard`): DELETE is always rejected, UPDATE
+  only through the GDPR redaction path — real enforcement, not just a GRANT
+  omission a table owner could route around.
+- `pramagent audit-verify-watch` CLI command: verifies the audit hash chain
+  and posts to `PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL` on tamper detection; runs
+  once or on a loop (`--interval-s`), also available as the opt-in
+  `docker compose --profile audit-watch` service.
+- Scheduled Postgres backup (`deploy/postgres/backup.py`) and an automated
+  restore drill (`deploy/postgres/restore_verify.py`), both wired as the
+  opt-in `docker compose --profile backup` service.
+- `pramagent retention-prune --interval-s` loops instead of running once,
+  and is available as the opt-in `docker compose --profile retention-prune`
+  service.
+- Session-scoped GDPR erasure (`delete_for_session`/`redact_for_session`
+  across all three store backends; `DELETE
+  /v1/tenant/{tenant_id}/sessions/{session_id}/traces`) — erasure was
+  previously tenant-wide only, requiring hand-written SQL to erase one end
+  user within a multi-user tenant.
+- GDPR tombstoning now covers rule/layer-event `detail` strings and
+  `layer_events[*].data`, not just `input_text`/`output_text` — a rule can
+  echo the offending content back into its own explanation.
+- `AuthFailureGuard`: escalating lockout on repeated invalid-credential
+  attempts per peer, distinct from the request-rate limiter.
+- API key rotation is enforceable: `AuthRecord.created_at` tracks issuance,
+  and `PRAMAGENT_API_KEY_MAX_AGE_DAYS` rejects keys past the configured age.
+- `PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL` time-boxes the unauthenticated
+  dev/demo opt-in so it can't stay silently in effect indefinitely.
+- Dashboard shared-key login (password field == `PRAMAGENT_DASHBOARD_KEY`)
+  is now gated behind `PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN` (off by
+  default) and logs loudly when used.
+- `AUDIT_SCOPE`: a dedicated scope for `/v1/audit/verify` so a monitoring
+  integration can be issued a key that checks chain integrity without
+  general read access to trace content (additive — `READ_SCOPE` still works).
+- `pramagent/secrets.py`: optional AWS Secrets Manager / HashiCorp Vault
+  backing for `PRAMAGENT_JWT_SECRET`, `PRAMAGENT_ENCRYPTION_KEY`,
+  `PRAMAGENT_API_KEY`, and `PRAMAGENT_DASHBOARD_KEY` — previously env-var
+  only.
+- LLM-judge prompts (`pramagent/layers/llm_judge.py`) fence untrusted content
+  (tool arguments, prior model output) in `<untrusted_...>` XML tags with
+  explicit instruction-hierarchy language, escaping any attempt to inject a
+  fake closing tag. `OutputJudgeLayer` now prefers structured JSON
+  (`{"safe": bool, "reason": str}`) over a bare SAFE/UNSAFE word, falling
+  back to the legacy single-word parse for backward compatibility.
+- `pip-audit` dependency-vulnerability scanning gates CI on every push/PR and
+  weekly, alongside the existing Bandit/Semgrep/ZAP jobs.
+- A trusted-proxy allowlist (`PRAMAGENT_TRUSTED_PROXY_IPS`) gates whether
+  `X-Forwarded-Proto` is honored, closing an HTTPS-redirect bypass.
+
+### Changed
+
+- Dashboard session cookies default to `secure=true` (was `false`).
+- Demo endpoints (`/demo/run`, `/demo/request-access`) validate request
+  bodies through Pydantic models instead of hand-rolled dict checks.
+
+### Fixed
+
+- `docker-compose.yml` had its own hardcoded `PRAMAGENT_DASHBOARD_SECURE_COOKIE`
+  fallback of `false`, silently overriding the app-level secure-by-default
+  change for anyone who left it unset in `.env`.
+
 ## v0.8.5 - 2026-06-29
 
 ### Added

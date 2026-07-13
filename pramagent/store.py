@@ -91,6 +91,18 @@ class MemoryStore:
         self._traces = [t for t in self._traces if t.tenant_id != tenant_id]
         return before - len(self._traces)
 
+    def delete_for_session(self, tenant_id: str, session_id: str) -> int:
+        """Same as delete_for_tenant, scoped to one session — the practical
+        per-end-user erasure unit given the schema has no separate
+        per-user column. Pair with the audit backend's redact_for_session()
+        exactly as delete_for_tenant pairs with redact_for_tenant."""
+        before = len(self._traces)
+        self._traces = [
+            t for t in self._traces
+            if not (t.tenant_id == tenant_id and t.session_id == session_id)
+        ]
+        return before - len(self._traces)
+
     def count(self, tenant_id: str | None = None) -> int:
         if tenant_id:
             return sum(1 for t in self._traces if t.tenant_id == tenant_id)
@@ -228,11 +240,40 @@ class SQLiteStore:
             self._conn.commit()
             return cur.rowcount
 
+    def delete_for_session(self, tenant_id: str, session_id: str) -> int:
+        """GDPR erasure scoped to one session within a tenant.
+
+        The schema has no separate per-end-user column, but session_id
+        already identifies one user's conversation in practice — this is
+        the "delete my data" primitive for a multi-user tenant, so a request
+        from one end user doesn't require erasing (or hand-writing SQL
+        against) every other user sharing that tenant."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM traces WHERE tenant_id = ? AND session_id = ?",
+                (tenant_id, session_id),
+            )
+            self.redact_for_session(tenant_id, session_id)
+            self._conn.commit()
+            return cur.rowcount
+
     def redact_for_tenant(self, tenant_id: str) -> int:
         """Tombstone PII fields in this tenant's chain payloads (see
         pramagent.audit.redact_chain_payload), then re-anchor the chain:
         every link from the first redaction onward gets recomputed prev/this
         hashes so verify_chain() still passes. Returns payloads redacted."""
+        return self._redact_matching(lambda payload: payload.get("tenant_id") == tenant_id)
+
+    def redact_for_session(self, tenant_id: str, session_id: str) -> int:
+        """Same as redact_for_tenant, scoped to one session."""
+        return self._redact_matching(
+            lambda payload: (
+                payload.get("tenant_id") == tenant_id
+                and payload.get("session_id") == session_id
+            )
+        )
+
+    def _redact_matching(self, predicate) -> int:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT seq, payload, prev_hash, this_hash FROM audit_chain ORDER BY seq"
@@ -242,7 +283,7 @@ class SQLiteStore:
             rehash = False
             for seq, payload_json, _stored_prev, stored_hash in rows:
                 payload = json.loads(payload_json)
-                if payload.get("tenant_id") == tenant_id and redact_chain_payload(payload):
+                if predicate(payload) and redact_chain_payload(payload):
                     redacted += 1
                     rehash = True
                 if rehash:

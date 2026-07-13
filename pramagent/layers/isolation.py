@@ -47,8 +47,29 @@ class InjectionSuspected(Exception):
 
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
     ("instruction_override",
-     re.compile(r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)",
-                re.IGNORECASE),
+     re.compile(
+         # SEC-2026-07-10: widened filler words ("the"/"everything" alongside
+         # "all") and vocabulary ("guidance"/"directives" alongside
+         # "instructions/rules/guidelines", "preceding" alongside
+         # "previous/prior/above/earlier") to close a paraphrase gap found in
+         # live testing: "disregard prior guidance", "ignore the previous
+         # instructions", and "the new instructions are/is to <verb>" (not
+         # just "new instructions:") previously slipped through. Deliberately
+         # NOT relaxed to match a bare reference word with no following
+         # instruction-noun (e.g. "disregard the above and comply") since
+         # that risks false positives on ordinary "ignore the above
+         # calculation" phrasing; the pre-scan classifier and other patterns
+         # in this list are the backstop for that class of phrasing instead.
+         r"(?:ignore|disregard)\s+(?:all\s+|everything\s+|the\s+)?"
+         r"(previous|prior|above|earlier|preceding)\s+"
+         r"(instructions?|prompts?|rules?|guidelines?|guidance|directives?)|"
+         r"forget\s+(?:all\s+|everything\s+)?(?:your\s+)?"
+         r"((?:previous|prior|above|earlier|preceding)\s+)?"
+         r"(instructions?|prompts?|rules?|guidelines?|guidance|directives?)|"
+         r"new\s+instructions?\s*(?::|is|are)\s*(?:to\s+)?"
+         r"(ignore|disregard|forget|override|bypass|reveal|leak|dump|show)\b",
+         re.IGNORECASE,
+     ),
      "classic prompt-injection override"),
     ("role_hijack",
      re.compile(

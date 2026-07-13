@@ -22,6 +22,9 @@ def _login_dashboard(monkeypatch, tenant: str = "tenant_a"):
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_TENANT", tenant)
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_SECURE_COOKIE", False)
+    # Shared-key login is opt-in (off by default) since a de facto backdoor
+    # shouldn't be silently available — these tests exercise that path.
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN", True)
     dashboard._revoked_sessions.clear()
     client = TestClient(dashboard.app)
     csrf = _csrf_from(client, "/login")
@@ -163,6 +166,7 @@ def test_dashboard_login_cookie_uses_configured_tenant_and_secure_flag(monkeypat
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_TENANT", "tenant_a")
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_SECURE_COOKIE", True)
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN", True)
     client = TestClient(dashboard.app, base_url="https://testserver")
     csrf = _csrf_from(client, "/login")
 
@@ -214,6 +218,7 @@ def test_dashboard_preauth_csrf_rejects_tampered_token(monkeypatch):
 
 def test_dashboard_preauth_csrf_accepts_stale_signed_form_token(monkeypatch):
     monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN", True)
     monkeypatch.setattr(dashboard, "_rate_limit", lambda request: None)
     client = TestClient(dashboard.app)
     csrf = _csrf_from(client, "/login")
@@ -636,6 +641,27 @@ def test_dashboard_sql_user_login_takes_precedence_over_shared_key(tmp_path, mon
     payload = dashboard._verify(response.cookies["pramagent_session"])
     assert payload["tenant"] == "tenant_sql"
     assert payload["role"] == "auditor"
+
+
+def test_dashboard_shared_key_login_rejected_without_explicit_opt_in(monkeypatch):
+    """The shared-key password fallback must be off by default — anyone who
+    knows PRAMAGENT_DASHBOARD_KEY otherwise gets an admin browser session
+    for any username, with no per-user accountability."""
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_KEY", "secret")
+    monkeypatch.setattr(dashboard, "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN", False)
+    monkeypatch.setattr(dashboard, "_rate_limit", lambda request: None)
+    client = TestClient(dashboard.app)
+    csrf = _csrf_from(client, "/login")
+
+    response = client.post(
+        "/login",
+        data={"username": "attacker", "password": "secret", "csrf_token": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "pramagent_session" not in response.cookies
+    assert response.headers["location"] == "/login?error=Invalid+credentials"
 
 
 def test_dashboard_signup_accepts_phone_only_identity(tmp_path, monkeypatch):

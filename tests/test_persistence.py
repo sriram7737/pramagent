@@ -1,5 +1,6 @@
 """Tests for SQLiteStore: persistence, chain integrity, and survival across restarts."""
 import asyncio
+import json
 import os
 import tempfile
 
@@ -7,6 +8,7 @@ from pramagent import Pramagent, Verdict
 from pramagent.layers import ComplianceLayer, SafetyLayer, Rule
 from pramagent.providers import MockProvider
 from pramagent.store import SQLiteStore
+from pramagent.types import TraceEvent
 
 
 def run(coro):
@@ -145,6 +147,35 @@ def test_sqlite_redact_for_tenant_is_idempotent():
         head_after_first = db.head
         assert db.redact_for_tenant("x") == 0          # already tombstoned
         assert db.head == head_after_first             # no double re-anchor
+        assert db.verify_chain()
+        db.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_delete_for_session_scoped_within_tenant():
+    """One end user's erasure request must not touch another user's data
+    sharing the same tenant — the whole point of session-scoped erasure."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = SQLiteStore(path)
+        db.save(TraceEvent(call_id="c1", tenant_id="acme", session_id="user-a",
+                            input_text="SSN 123-45-6789"))
+        db.save(TraceEvent(call_id="c2", tenant_id="acme", session_id="user-b",
+                            input_text="unrelated data"))
+        db.append({"tenant_id": "acme", "session_id": "user-a", "input_text": "SSN 123-45-6789"})
+        db.append({"tenant_id": "acme", "session_id": "user-b", "input_text": "unrelated data"})
+
+        deleted = db.delete_for_session("acme", "user-a")
+
+        assert deleted == 1
+        assert db.count(tenant_id="acme") == 1
+        remaining = db.list_by_tenant("acme")
+        assert remaining[0].session_id == "user-b"
+        chain = json.dumps(db.records())
+        assert "123-45-6789" not in chain
+        assert "unrelated data" in chain
         assert db.verify_chain()
         db.close()
     finally:

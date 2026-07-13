@@ -56,20 +56,37 @@ def _normalize_dashboard_tenant(raw_tenant: str, allow_super_admin: bool) -> str
 
 _DEFAULT_JWT_SECRET = "change-me-in-production"  # nosec B105 — sentinel, refused at startup
 
+from pramagent.secrets import resolve_secret
+
+# resolve_secret() falls back to AWS Secrets Manager/Vault when
+# <NAME>_AWS_SECRET_ID / <NAME>_VAULT_PATH is set, otherwise behaves exactly
+# like plain os.environ.get() — no change for existing env-var deployments.
 PRAMAGENT_API_URL       = os.environ.get("PRAMAGENT_API_URL", "http://localhost:8080")
-PRAMAGENT_API_KEY       = os.environ.get("PRAMAGENT_API_KEY", "")
-PRAMAGENT_DASHBOARD_KEY = os.environ.get("PRAMAGENT_DASHBOARD_KEY", PRAMAGENT_API_KEY)  # shared key for browser
-PRAMAGENT_JWT_SECRET    = os.environ.get("PRAMAGENT_JWT_SECRET", _DEFAULT_JWT_SECRET)
+PRAMAGENT_API_KEY       = resolve_secret("PRAMAGENT_API_KEY")
+PRAMAGENT_DASHBOARD_KEY = resolve_secret("PRAMAGENT_DASHBOARD_KEY", PRAMAGENT_API_KEY)  # shared key for browser
+PRAMAGENT_JWT_SECRET    = resolve_secret("PRAMAGENT_JWT_SECRET", _DEFAULT_JWT_SECRET)
 PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN = os.environ.get(
     "PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN", "false"
+).lower() in {"1", "true", "yes", "on"}
+# The shared-key LOGIN FORM fallback (password field == PRAMAGENT_DASHBOARD_KEY)
+# is a single bearer secret that logs anyone who knows it in as an admin
+# session — a de facto backdoor alongside the per-user bcrypt store. Off by
+# default; the X-API-Key header path (a separate, documented CLI/curl
+# mechanism, not a browser login) is unaffected by this flag.
+PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN = os.environ.get(
+    "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN", "false"
 ).lower() in {"1", "true", "yes", "on"}
 _PRAMAGENT_DASHBOARD_TENANT_RAW = os.environ.get("PRAMAGENT_DASHBOARD_TENANT", "default")
 PRAMAGENT_DASHBOARD_TENANT = _normalize_dashboard_tenant(
     _PRAMAGENT_DASHBOARD_TENANT_RAW,
     PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN,
 )
+# Defaults to true: session/CSRF cookies require HTTPS unless an operator
+# explicitly opts out (e.g. plain-http local dev). Chrome/Firefox already
+# treat http://localhost as a trustworthy origin for Secure cookies, so this
+# does not break the common local-dev path.
 PRAMAGENT_DASHBOARD_SECURE_COOKIE = os.environ.get(
-    "PRAMAGENT_DASHBOARD_SECURE_COOKIE", "false"
+    "PRAMAGENT_DASHBOARD_SECURE_COOKIE", "true"
 ).lower() in {"1", "true", "yes", "on"}
 SESSION_TTL_S    = int(os.environ.get("PRAMAGENT_SESSION_TTL_S", "3600"))
 PRAMAGENT_DASHBOARD_REDIS_URL = os.environ.get(
@@ -115,6 +132,14 @@ def validate_dashboard_config() -> None:
     """
     from pramagent.security import assert_strong_secret
     assert_strong_secret("PRAMAGENT_JWT_SECRET", PRAMAGENT_JWT_SECRET)
+    if PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN:
+        log.warning(
+            "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN=1: the browser login "
+            "form accepts PRAMAGENT_DASHBOARD_KEY as a password for ANY "
+            "username, logging that person in as an admin session not tied "
+            "to a real account. Meant for single-team alpha pilots only — "
+            "configure a real dashboard user store instead for anything else."
+        )
 
 
 from contextlib import asynccontextmanager
@@ -713,14 +738,23 @@ async def login(
         if user is not None:
             return _session_response(user)
 
-    # Fallback: password == PRAMAGENT_DASHBOARD_KEY (hashed compare).
-    # This remains useful for single-team alpha pilots.
+    # Fallback: password == PRAMAGENT_DASHBOARD_KEY (hashed compare). Off
+    # unless explicitly enabled — anyone holding the shared key otherwise
+    # gets an admin browser session, not just the documented X-API-Key
+    # header path this flag does not affect.
+    if not PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN:
+        return RedirectResponse("/login?error=Invalid+credentials", status_code=302)
     if not PRAMAGENT_DASHBOARD_KEY or not hmac.compare_digest(
         hashlib.sha256(password.encode()).hexdigest(),
         hashlib.sha256(PRAMAGENT_DASHBOARD_KEY.encode()).hexdigest(),
     ):
         return RedirectResponse("/login?error=Invalid+credentials", status_code=302)
 
+    log.warning(
+        "dashboard login via shared-key fallback (PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN) "
+        "for username=%r — this session is not tied to a specific user account",
+        username,
+    )
     # Scope the session from config. Use "*" only for a deliberate super-admin.
     return _session_response(None, username=username)
 

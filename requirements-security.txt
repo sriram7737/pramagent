@@ -1,0 +1,14 @@
+# Security floor constraints for deployment builds.
+#
+# Use with:
+#   python -m pip install -c requirements-security.txt ".[api,postgres,encrypted]"
+#   python -m pip_audit -r requirements-security.txt
+#
+# This file is intentionally a floor/constraints file, not a full transitive
+# lock. Generate an environment-specific SBOM with:
+#   python -m cyclonedx_py environment -o sbom.cdx.json
+
+aiohttp>=3.14.1
+cryptography>=48.0.1
+python-multipart>=0.0.27
+soupsieve>=2.8.4

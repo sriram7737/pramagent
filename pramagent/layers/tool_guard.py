@@ -98,19 +98,36 @@ class SideEffect:
 
 
 # ── argument injection patterns ───────────────────────────────────────────────
+#
+# SEC-2026-07-10: sql_injection and shell_injection used to fire on bare
+# punctuation alone (a lone "--", ";", or "|" next to a letter), which is
+# indistinguishable from ordinary prose dashes, semicolons in sentences,
+# piped shell commands, and regex alternation. Split each into the same
+# two-tier design ComplianceLayer already uses for PII (pramagent/layers/
+# __init__.py): a HIGH-PRECISION set (distinctive shapes -- real SQL
+# keyword phrases, boolean-tautology SQLi, backtick/$() shell substitution,
+# sh -c/bash -c invocation) that fires unconditionally, and a CONTEXTUAL set
+# (ambiguous punctuation) that only fires when a genuine SQL/shell keyword
+# appears within a bounded window of the punctuation -- mirroring
+# ComplianceLayer.scrub()'s candidate-regex-plus-nearby-keyword check.
+
+_ARG_INJECTION_WINDOW = 40  # chars scanned on each side of contextual punctuation
 
 _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
     ("sql_injection",
      re.compile(
-         r"(--|;|/\*|\*/|xp_|exec\s*\(|drop\s+table|union\s+select|insert\s+into"
+         r"(\bxp_\w+|exec\s*\(|drop\s+table|union\s+select|insert\s+into"
          r"|delete\s+from|update\s+\w+\s+set|truncate\s+table|alter\s+table"
-         r"|create\s+(table|database|index)|sleep\s*\(\d+\)|benchmark\s*\()",
+         r"|create\s+(table|database|index)|sleep\s*\(\d+\)|benchmark\s*\("
+         # boolean-tautology SQLi ('1'='1', OR 1=1, '='): the tautology
+         # shape itself is the distinctive marker, no keyword needed.
+         r"|'\s*(?:or|and)\s*'.*?'\s*=\s*'|\b(?:or|and)\s+\d+\s*=\s*\d+\b"
+         r"|'\s*=\s*')",
          re.IGNORECASE),
      "SQL injection pattern in argument"),
     ("shell_injection",
      re.compile(
-         r"(\$\(|`[^`]*`|\|\s*\w|\bsh\s+-c\b|\bbash\s+-c\b|&&|\|\||"
-         r">\s*/|>>\s*/|;\s*\w+\b|\beval\s*\(|\bexec\s*\()",
+         r"(\$\(|\bsh\s+-c\b|\bbash\s+-c\b|\beval\s*\(|\bexec\s*\()",
          re.IGNORECASE),
      "shell injection pattern in argument"),
     ("path_traversal",
@@ -119,9 +136,6 @@ _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
          r"|/etc/passwd|/etc/shadow|/proc/self|/sys/)",
          re.IGNORECASE),
      "path traversal pattern in argument"),
-    ("template_injection",
-     re.compile(r"(\{\{.*?\}\}|\{%.*?%\}|\$\{.*?\}|#\{.*?\}|\{#.*?#\})", re.DOTALL),
-     "template injection pattern in argument"),
     ("ssrf_attempt",
      re.compile(
          r"(169\.254\.169\.254|metadata\.google\.internal"
@@ -133,6 +147,122 @@ _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
      re.compile(r"<!ENTITY\s|<!DOCTYPE\s.*\[", re.IGNORECASE),
      "XML External Entity attempt in argument"),
 ]
+
+# Contextual counterparts of sql_injection/shell_injection: the punctuation
+# alone is ambiguous (see the design note above _ARG_INJECTION), so each
+# entry pairs a candidate regex with a keyword list and only reports a
+# finding when a keyword appears within _ARG_INJECTION_WINDOW chars of the
+# match. Same pattern_id as the high-precision entry above, since this is
+# the same underlying concern at lower confidence, not a different category.
+_ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str]] = [
+    # A common English preposition (as in "differences X this", "aside X
+    # that") was intentionally dropped from the keyword list below: it
+    # false-positived constantly whenever it landed near a dash-style prose
+    # separator or a markdown heading underline. select/where/table/etc.
+    # alone already cover the real SQL shape without it.
+    ("sql_injection",
+     re.compile(r"(--|;|/\*|\*/)"),
+     ["select", "insert", "update", "delete", "drop", "union",
+      "where", "table", "database", "exec"],
+     "SQL comment/statement-separator near a SQL keyword"),
+    # The classic auth-bypass shape ("admin' --") has no SQL keyword at
+    # all -- it just closes a string literal and comments out the rest of
+    # the query. A bare quote-then-comment-marker is still too ambiguous on
+    # its own (ordinary quoted dialogue uses "word." -- like this too), so
+    # this narrows to login/credential-field context instead of a SQL
+    # keyword, matching the actual attack scenario.
+    ("sql_injection",
+     re.compile(r"""['"]\s*(?:--|;)"""),
+     ["admin", "login", "password", "username", "user=", "pwd", "auth"],
+     "quote-then-comment auth-bypass shape near a login/credential field"),
+    ("shell_injection",
+     re.compile(r"(\|\s*\w|&&|\|\||;\s*\w+\b|>\s*/|>>\s*/)"),
+     ["curl", "wget", "netcat", " nc ", "chmod 777", "rm -rf",
+      "/etc/passwd", "/etc/shadow", "base64 -d", "0.0.0.0", "/dev/tcp"],
+     "shell chaining/redirection near a known dangerous command"),
+    # Demoted from the unconditional list above (SEC hardening pass): the
+    # bare shape matches ANY JS/TS template literal or Ruby interpolation,
+    # which is ordinary code, not an attack. Real template/SSTI injection
+    # payloads reference a sandbox-escape target, not just any expression.
+    ("template_injection",
+     re.compile(r"(\{\{.*?\}\}|\{%.*?%\}|\$\{.*?\}|#\{.*?\}|\{#.*?#\})", re.DOTALL),
+     ["config", "__class__", "__globals__", "__init__", "__mro__",
+      "__subclasses__", "self.", "request.", "os.", "subprocess",
+      "import", "eval", "exec", "system", "popen", "getattr"],
+     "template syntax near a sandbox-escape keyword"),
+]
+
+
+
+
+def _keyword_present(window, keyword):
+    """Whole-word match for plain alphanumeric keywords so a short keyword
+    does not match inside an ordinary longer word that happens to contain
+    it as a substring. Falls back to substring match for keywords that
+    already contain spaces or special characters (already distinctive
+    enough on their own; a plain word-boundary check does not work cleanly
+    around non-word characters)."""
+    if keyword.isalnum():
+        return re.search(rf"\b{re.escape(keyword)}\b", window) is not None
+    return keyword in window
+
+
+# Fields conventionally used for prose or documentation content rather than
+# a literal command to run (mirrors the field-name convention in
+# scripts/claude_code_hook.py and scripts/gemini_cli_hook.py). A markdown
+# code span or a JS/Ruby template literal is completely ordinary content in
+# these fields; the backtick shape alone is not a meaningful signal there
+# the way it is in a field actually named "command".
+_BACKTICK_PRONE_FIELDS = {"content", "pattern", "instruction", "new_string", "old_string", "text", "description"}
+
+_BACKTICK_PAIR = re.compile(r"`[^`]*`")
+
+_BACKTICK_DANGEROUS_KEYWORDS = ['curl', 'wget', 'netcat', ' nc ', 'chmod 777', 'rm -rf', '/etc/passwd', '/etc/shadow', 'base64 -d', '0.0.0.0', '/dev/tcp', 'sh -c', 'bash -c', 'eval(', 'exec(']
+
+
+def _field_name(path):
+    """Last dict-key segment of a scan path, ignoring any trailing
+    list-index segment. Used only to decide whether the backtick check
+    below should require a dangerous keyword nearby."""
+    tail = path.rsplit(".", 1)[-1]
+    return tail.split("[", 1)[0]
+
+
+def _backtick_hits(text, field):
+    """Backtick command substitution: unconditional for fields that
+    plausibly hold an actual command (the pre-hardening-pass behavior),
+    keyword-gated for fields conventionally used for prose or code
+    documentation. See _BACKTICK_PRONE_FIELDS above."""
+    hits = []
+    prose_field = field in _BACKTICK_PRONE_FIELDS
+    for m in _BACKTICK_PAIR.finditer(text):
+        if not prose_field:
+            hits.append({"pattern_id": "shell_injection",
+                         "detail": "backtick command substitution in argument"})
+            break
+        s, e = m.start(), m.end()
+        window = text[max(0, s - _ARG_INJECTION_WINDOW): e + _ARG_INJECTION_WINDOW].lower()
+        if any(_keyword_present(window, k) for k in _BACKTICK_DANGEROUS_KEYWORDS):
+            hits.append({"pattern_id": "shell_injection",
+                         "detail": "backtick command substitution near a known dangerous command"})
+            break
+    return hits
+
+
+def _contextual_arg_injection_hits(text: str) -> list[dict]:
+    """Same window-then-keyword-check design as ComplianceLayer.scrub()'s
+    contextual patterns: a candidate match only counts when a real keyword
+    is nearby, not on the punctuation shape alone."""
+    findings: list[dict] = []
+    for pid, rx, keywords, detail in _ARG_INJECTION_CONTEXTUAL:
+        for m in rx.finditer(text):
+            s, e = m.start(), m.end()
+            window = text[max(0, s - _ARG_INJECTION_WINDOW): e + _ARG_INJECTION_WINDOW].lower()
+            if any(_keyword_present(window, k) for k in keywords):
+                findings.append({"pattern_id": pid, "detail": detail})
+                break  # one contextual finding per pattern_id is enough
+    return findings
+
 
 # ── output exfiltration patterns ──────────────────────────────────────────────
 
@@ -799,7 +929,16 @@ class ToolGuardLayer:
         if not policy.skip_arg_injection_scan:
             injection_findings = scan_arguments_for_injection(arguments)
             if injection_findings:
-                pids = ", ".join(f["pattern_id"] for f in injection_findings)
+                # The high-precision and contextual checks in
+                # scan_arguments_for_injection can both report the same
+                # pattern_id for one string (e.g. a keyword match and a
+                # punctuation-near-keyword match) -- dedupe for display,
+                # order preserved, findings themselves are untouched.
+                seen_pids: list[str] = []
+                for f in injection_findings:
+                    if f["pattern_id"] not in seen_pids:
+                        seen_pids.append(f["pattern_id"])
+                pids = ", ".join(seen_pids)
                 return self._block(tool_name, tenant_id, session_id, action_label,
                                    f"injection detected in arguments: {pids}",
                                    side_effect=policy.side_effect,
@@ -1000,6 +1139,10 @@ def scan_arguments_for_injection(arguments: Any, path: str = "$") -> list[dict]:
         for pid, rx, detail in _ARG_INJECTION:
             if rx.search(arguments):
                 findings.append({"path": path, "pattern_id": pid, "detail": detail})
+        for hit in _contextual_arg_injection_hits(arguments):
+            findings.append({"path": path, **hit})
+        for hit in _backtick_hits(arguments, _field_name(path)):
+            findings.append({"path": path, **hit})
     elif isinstance(arguments, dict):
         for key, val in arguments.items():
             findings.extend(scan_arguments_for_injection(val, path=f"{path}.{key}"))

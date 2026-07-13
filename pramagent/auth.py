@@ -32,9 +32,21 @@ import logging
 import os
 import secrets
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+READ_SCOPE = "read"
+WRITE_SCOPE = "write"
+ADMIN_SCOPE = "admin"
+# Separate from READ_SCOPE so an operator can issue a key that can only check
+# audit-chain integrity (e.g. a monitoring/alerting integration) without
+# granting it general read access to trace content. /v1/audit/verify accepts
+# either scope — READ_SCOPE keeps working so this is additive, not a breaking
+# cutover for anyone already polling that endpoint with a read-scoped key.
+AUDIT_SCOPE = "audit"
+DEFAULT_SCOPES = frozenset({READ_SCOPE, WRITE_SCOPE, ADMIN_SCOPE, AUDIT_SCOPE})
 
 
 def _hash_key(key: str) -> str:
@@ -50,22 +62,84 @@ def _b64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode((data + padding).encode("ascii"))
 
 
+def normalize_scopes(scopes: Optional[object] = None) -> frozenset[str]:
+    """Normalize scope input for API keys and JWTs."""
+    if scopes is None:
+        return DEFAULT_SCOPES
+    if isinstance(scopes, str):
+        raw = scopes.replace("|", ",").replace("+", ",").replace(" ", ",")
+        values = [item.strip().lower() for item in raw.split(",")]
+    else:
+        values = [str(item).strip().lower() for item in scopes]  # type: ignore[arg-type]
+    normalized = {item for item in values if item}
+    if not normalized:
+        return DEFAULT_SCOPES
+    unknown = normalized - set(DEFAULT_SCOPES)
+    if unknown:
+        raise ValueError(f"unknown API key scope(s): {', '.join(sorted(unknown))}")
+    return frozenset(normalized)
+
+
+def encode_scopes(scopes: Optional[object] = None) -> str:
+    return ",".join(sorted(normalize_scopes(scopes)))
+
+
+@dataclass(frozen=True)
+class AuthRecord:
+    tenant_id: str
+    scopes: frozenset[str]
+    kind: str = "api_key"
+    # Unix epoch. 0.0 (the default) means "unknown" — JWT records and
+    # registries that predate this field leave it unset, so age-based
+    # rotation enforcement treats 0.0 as "do not enforce" rather than
+    # "infinitely old" (see PRAMAGENT_API_KEY_MAX_AGE_DAYS in api/app.py).
+    created_at: float = 0.0
+
+    def has_scope(self, scope: str) -> bool:
+        return scope in self.scopes or ADMIN_SCOPE in self.scopes
+
+    def age_days(self) -> float:
+        if self.created_at <= 0:
+            return 0.0
+        return max(0.0, (time.time() - self.created_at) / 86400.0)
+
+
 class APIKeyRegistry:
     """Maps API keys to tenants. Keys are stored as SHA-256, never plain text."""
 
     def __init__(self) -> None:
-        # hashed_key -> tenant_id
-        self._keys: dict[str, str] = {}
+        # hashed_key -> AuthRecord
+        self._keys: dict[str, AuthRecord] = {}
 
-    def add_key(self, tenant_id: str, key: str) -> None:
-        """Register an existing key for a tenant."""
-        self._keys[_hash_key(key)] = tenant_id
+    def add_key(
+        self,
+        tenant_id: str,
+        key: str,
+        *,
+        scopes: Optional[object] = None,
+        created_at: Optional[float] = None,
+    ) -> None:
+        """Register an existing key for a tenant.
 
-    def issue_key(self, tenant_id: str) -> str:
+        created_at defaults to now — for env-var-configured keys (no
+        persistent store) this tracks "how long has this process been
+        running with this key," an approximation of true key age, not the
+        credential's real-world issuance date. Still useful: a long-lived
+        process holding the same static key for months is itself a rotation
+        signal worth surfacing.
+        """
+        self._keys[_hash_key(key)] = AuthRecord(
+            tenant_id=tenant_id,
+            scopes=normalize_scopes(scopes),
+            kind="api_key",
+            created_at=created_at if created_at is not None else time.time(),
+        )
+
+    def issue_key(self, tenant_id: str, *, scopes: Optional[object] = None) -> str:
         """Generate a new random key for a tenant and return it (plain text,
         one time only — store it on the caller side immediately)."""
         key = "pramagent_" + secrets.token_urlsafe(32)
-        self.add_key(tenant_id, key)
+        self.add_key(tenant_id, key, scopes=scopes)
         return key
 
     def revoke_key(self, key: str) -> bool:
@@ -73,14 +147,19 @@ class APIKeyRegistry:
 
     def tenant_for_key(self, presented: str) -> Optional[str]:
         """Constant-time lookup. Returns the tenant_id or None."""
+        record = self.record_for_key(presented)
+        return record.tenant_id if record else None
+
+    def record_for_key(self, presented: str) -> Optional[AuthRecord]:
+        """Constant-time lookup. Returns the auth record or None."""
         if not presented:
             return None
         target = _hash_key(presented)
         # iterate every entry so timing reveals nothing about presence
-        match: Optional[str] = None
-        for hashed, tenant in self._keys.items():
+        match: Optional[AuthRecord] = None
+        for hashed, record in self._keys.items():
             if secrets.compare_digest(hashed, target):
-                match = tenant
+                match = record
         return match
 
     def __len__(self) -> int:
@@ -104,14 +183,28 @@ class PostgresAPIKeyRegistry(APIKeyRegistry):
     CREATE TABLE IF NOT EXISTS pramagent_api_keys (
         hashed_key TEXT PRIMARY KEY,
         tenant_id  TEXT NOT NULL,
+        scopes     TEXT NOT NULL DEFAULT 'admin,read,write',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         revoked_at TIMESTAMPTZ NULL
+    );
+    CREATE TABLE IF NOT EXISTS pramagent_api_key_audit (
+        id BIGSERIAL PRIMARY KEY,
+        hashed_key TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        scopes TEXT NOT NULL,
+        action TEXT NOT NULL,
+        actor TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS pramagent_api_keys_tenant
         ON pramagent_api_keys(tenant_id);
     CREATE INDEX IF NOT EXISTS pramagent_api_keys_active
         ON pramagent_api_keys(revoked_at)
         WHERE revoked_at IS NULL;
+    CREATE INDEX IF NOT EXISTS pramagent_api_key_audit_created
+        ON pramagent_api_key_audit(created_at DESC);
+    ALTER TABLE pramagent_api_keys
+        ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT 'admin,read,write';
     """
 
     def __init__(self, dsn: str, *, connect=None) -> None:
@@ -152,32 +245,67 @@ class PostgresAPIKeyRegistry(APIKeyRegistry):
     def _init_schema(self) -> None:
         self._run(lambda cur: cur.execute(self._DDL))
 
-    def add_key(self, tenant_id: str, key: str) -> None:
+    def add_key(
+        self,
+        tenant_id: str,
+        key: str,
+        *,
+        scopes: Optional[object] = None,
+        actor: str = "",
+    ) -> None:
+        hashed = _hash_key(key)
+        encoded_scopes = encode_scopes(scopes)
+
+        def _fn(cur):
+            cur.execute(
+                """
+                INSERT INTO pramagent_api_keys (hashed_key, tenant_id, scopes)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (hashed_key) DO UPDATE
+                SET tenant_id = EXCLUDED.tenant_id,
+                    scopes = EXCLUDED.scopes,
+                    revoked_at = NULL
+                """,
+                (hashed, tenant_id, encoded_scopes),
+            )
+            cur.execute(
+                """
+                INSERT INTO pramagent_api_key_audit
+                    (hashed_key, tenant_id, scopes, action, actor)
+                VALUES (%s, %s, %s, 'issue', %s)
+                """,
+                (hashed, tenant_id, encoded_scopes, actor),
+            )
+
+        self._run(_fn)
+
+    def issue_key(
+        self,
+        tenant_id: str,
+        *,
+        scopes: Optional[object] = None,
+        actor: str = "",
+    ) -> str:
+        key = "pramagent_" + secrets.token_urlsafe(32)
+        self.add_key(tenant_id, key, scopes=scopes, actor=actor)
+        return key
+
+    def revoke_key(self, key: str, *, actor: str = "") -> bool:
         hashed = _hash_key(key)
 
         def _fn(cur):
             cur.execute(
                 """
-                INSERT INTO pramagent_api_keys (hashed_key, tenant_id)
-                VALUES (%s, %s)
-                ON CONFLICT (hashed_key) DO UPDATE
-                SET tenant_id = EXCLUDED.tenant_id,
-                    revoked_at = NULL
+                SELECT tenant_id, scopes
+                FROM pramagent_api_keys
+                WHERE hashed_key = %s AND revoked_at IS NULL
                 """,
-                (hashed, tenant_id),
+                (hashed,),
             )
-
-        self._run(_fn)
-
-    def issue_key(self, tenant_id: str) -> str:
-        key = "pramagent_" + secrets.token_urlsafe(32)
-        self.add_key(tenant_id, key)
-        return key
-
-    def revoke_key(self, key: str) -> bool:
-        hashed = _hash_key(key)
-
-        def _fn(cur):
+            row = cur.fetchone()
+            if not row:
+                return False
+            tenant_id, scopes = row
             cur.execute(
                 """
                 UPDATE pramagent_api_keys
@@ -186,11 +314,25 @@ class PostgresAPIKeyRegistry(APIKeyRegistry):
                 """,
                 (hashed,),
             )
-            return cur.rowcount > 0
+            revoked = cur.rowcount > 0
+            if revoked:
+                cur.execute(
+                    """
+                    INSERT INTO pramagent_api_key_audit
+                        (hashed_key, tenant_id, scopes, action, actor)
+                    VALUES (%s, %s, %s, 'revoke', %s)
+                    """,
+                    (hashed, tenant_id, scopes, actor),
+                )
+            return revoked
 
         return bool(self._run(_fn))
 
     def tenant_for_key(self, presented: str) -> Optional[str]:
+        record = self.record_for_key(presented)
+        return record.tenant_id if record else None
+
+    def record_for_key(self, presented: str) -> Optional[AuthRecord]:
         if not presented:
             return None
         hashed = _hash_key(presented)
@@ -198,17 +340,25 @@ class PostgresAPIKeyRegistry(APIKeyRegistry):
         def _fn(cur):
             cur.execute(
                 """
-                SELECT tenant_id
+                SELECT tenant_id, scopes, created_at
                 FROM pramagent_api_keys
                 WHERE hashed_key = %s AND revoked_at IS NULL
                 """,
                 (hashed,),
             )
             row = cur.fetchone()
-            return row[0] if row else None
+            if not row:
+                return None
+            created_at = row[2]
+            return AuthRecord(
+                tenant_id=row[0],
+                scopes=normalize_scopes(row[1]),
+                kind="api_key",
+                created_at=created_at.timestamp() if hasattr(created_at, "timestamp") else 0.0,
+            )
 
-        tenant = self._run(_fn)
-        return tenant if isinstance(tenant, str) and tenant else None
+        record = self._run(_fn)
+        return record if isinstance(record, AuthRecord) else None
 
     def __len__(self) -> int:
         def _fn(cur):
@@ -318,14 +468,23 @@ class JWTManager:
 
     AUDIENCE = "pramagent-api"
 
-    def issue(self, tenant_id: str, *, ttl_s: int = 900) -> str:
+    def issue(
+        self,
+        tenant_id: str,
+        *,
+        ttl_s: int = 900,
+        scopes: Optional[object] = None,
+    ) -> str:
         now = int(time.time())
         header = {"alg": "HS256", "typ": "JWT", "kid": self.active_kid}
+        normalized_scopes = sorted(normalize_scopes(scopes))
         payload = {
             "iss": self.issuer,
             "aud": self.AUDIENCE,
             "sub": tenant_id,
             "tenant_id": tenant_id,
+            "scope": " ".join(normalized_scopes),
+            "scopes": normalized_scopes,
             "iat": now,
             "exp": now + int(ttl_s),
         }
@@ -337,12 +496,25 @@ class JWTManager:
         return f"{signing_input}.{_b64url_encode(sig)}"
 
     def tenant_for_token(self, token: str, *, now: Optional[int] = None) -> Optional[str]:
+        record = self.record_for_token(token, now=now)
+        return record.tenant_id if record else None
+
+    def record_for_token(self, token: str, *, now: Optional[int] = None) -> Optional[AuthRecord]:
         try:
             payload = self.verify(token, now=now)
         except JWTError:
             return None
         tenant = payload.get("tenant_id") or payload.get("sub")
-        return tenant if isinstance(tenant, str) and tenant else None
+        if not isinstance(tenant, str) or not tenant:
+            return None
+        scopes = payload.get("scopes")
+        if not scopes:
+            scopes = payload.get("scope", "")
+        return AuthRecord(
+            tenant_id=tenant,
+            scopes=normalize_scopes(scopes),
+            kind="jwt",
+        )
 
     def verify(self, token: str, *, now: Optional[int] = None) -> dict:
         parts = token.split(".")
@@ -399,7 +571,11 @@ class JWTManager:
 def load_registry_from_env(
     env_var: str = "PRAMAGENT_API_KEYS",
 ) -> APIKeyRegistry:
-    """Build a registry from an env var formatted as 'tenant1:key1,tenant2:key2'.
+    """Build a registry from an env var.
+
+    Formats:
+      ``tenant1:key1,tenant2:key2`` keeps the legacy all-scope behavior.
+      ``tenant1:key1:read|write`` narrows the key to named scopes.
 
     Returns an empty registry if the variable is unset. Useful for the demo
     server; real deployments load keys from a secret manager.
@@ -417,6 +593,9 @@ def load_registry_from_env(
         pair = pair.strip()
         if not pair or ":" not in pair:
             continue
-        tenant, key = pair.split(":", 1)
-        reg.add_key(tenant.strip(), key.strip())
+        parts = pair.split(":", 2)
+        tenant = parts[0].strip()
+        key = parts[1].strip()
+        scopes = parts[2].strip() if len(parts) == 3 else None
+        reg.add_key(tenant, key, scopes=scopes)
     return reg

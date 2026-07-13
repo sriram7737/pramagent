@@ -346,11 +346,18 @@ class RedisBackend(AbstractBackend):
         base_delay_s: float = 0.1,
         breaker_threshold: int = 5,
         breaker_cooldown_s: float = 30.0,
+        fail_open: bool = False,
     ) -> None:
         """Pass a connected ``redis.Redis`` client (pooled or plain)."""
         self._r = client
         self._max_retries = max_retries
         self._base_delay_s = base_delay_s
+        # fail_open: see tb_allow() -- defaults to False (fail closed) since
+        # a rate limiter that silently stops limiting during a Redis outage
+        # is not actually a rate limiter at that moment. Pass True only if
+        # an unmetered request burst during an outage is an acceptable
+        # trade-off for your deployment.
+        self._fail_open = fail_open
         self._breaker = _CircuitBreaker(
             threshold=breaker_threshold,
             cooldown_s=breaker_cooldown_s,
@@ -366,6 +373,7 @@ class RedisBackend(AbstractBackend):
         base_delay_s: float = 0.1,
         breaker_threshold: int = 5,
         breaker_cooldown_s: float = 30.0,
+        fail_open: bool = False,
         **kwargs: Any,
     ) -> "RedisBackend":
         """Convenience constructor with connection pooling.
@@ -399,6 +407,7 @@ class RedisBackend(AbstractBackend):
             base_delay_s=base_delay_s,
             breaker_threshold=breaker_threshold,
             breaker_cooldown_s=breaker_cooldown_s,
+            fail_open=fail_open,
         )
 
     def _call(self, fn):
@@ -512,8 +521,13 @@ end
             allowed, retry_ms = result
             return bool(allowed), float(retry_ms) / 1000.0
         except (BackendCircuitOpen, Exception):
-            # Fail open — don't DoS ourselves if Redis is down
-            return True, 0.0
+            if self._fail_open:
+                # Explicit opt-in only (see __init__): don't DoS ourselves
+                # if Redis is down, at the cost of no rate limiting during
+                # the outage.
+                return True, 0.0
+            # Fail closed by default -- see __init__.
+            return False, 1.0
 
     # ── event (key-poll approach) ─────────────────────────────────────────
 

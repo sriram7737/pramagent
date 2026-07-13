@@ -8,6 +8,9 @@ Commands
 pramagent init          Generate .env and starter pramagent_config.py in the
                         current directory.
 pramagent validate      Check configuration and connectivity to Redis/Postgres.
+pramagent audit-verify-watch
+                        Verify the audit hash chain and alert on tamper
+                        detection (for cron/k8s CronJob, or --interval-s).
 pramagent test-inject   Run built-in injection detection against a prompt.
 pramagent redteam       Run the built-in prompt-injection benchmark.
 pramagent version       Print version.
@@ -156,6 +159,206 @@ def cmd_validate(args) -> int:
     return 1 if warnings else 0
 
 
+def _api_key_registry_from_env():
+    import os
+    from .auth import PostgresAPIKeyRegistry
+
+    dsn = os.environ.get("PRAMAGENT_API_KEY_DSN", "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "PRAMAGENT_API_KEY_DSN is required for persistent key operations"
+        )
+    return PostgresAPIKeyRegistry.from_dsn(dsn)
+
+
+def cmd_auth_issue(args) -> int:
+    from .auth import encode_scopes
+
+    try:
+        registry = _api_key_registry_from_env()
+        key = registry.issue_key(
+            args.tenant_id,
+            scopes=args.scopes,
+            actor=args.actor or "",
+        )
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "tenant_id": args.tenant_id,
+        "scopes": encode_scopes(args.scopes).split(","),
+        "api_key": key,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("[ok] API key issued; store this value now, it is shown once")
+        print(f"tenant: {payload['tenant_id']}")
+        print(f"scopes: {','.join(payload['scopes'])}")
+        print(f"api_key: {payload['api_key']}")
+    return 0
+
+
+def cmd_auth_revoke(args) -> int:
+    try:
+        registry = _api_key_registry_from_env()
+        revoked = registry.revoke_key(args.api_key, actor=args.actor or "")
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"revoked": bool(revoked)}, indent=2, sort_keys=True))
+    else:
+        print("[ok] API key revoked" if revoked else "[warn] key was not active")
+    return 0 if revoked else 1
+
+
+def _store_from_env():
+    import os
+    dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
+    db_path = os.environ.get("PRAMAGENT_DB", "").strip()
+    if dsn:
+        from .store_postgres import PostgresStore
+        return PostgresStore.from_dsn(dsn)
+    if db_path:
+        key = os.environ.get("PRAMAGENT_ENCRYPTION_KEY", "").strip()
+        if key:
+            from .store_encrypted import EncryptedSQLiteStore
+            return EncryptedSQLiteStore(db_path, key=key)
+        from .store import SQLiteStore
+        return SQLiteStore(db_path)
+    raise RuntimeError("set PRAMAGENT_POSTGRES_DSN or PRAMAGENT_DB")
+
+
+def cmd_retention_prune(args) -> int:
+    import time
+
+    if args.days < 180:
+        print("[fail] retention window must be at least 180 days", file=sys.stderr)
+        return 2
+    if not args.tenant_id:
+        print("[fail] --tenant-id is required; unscoped pruning is refused", file=sys.stderr)
+        return 2
+
+    def _run_once() -> int:
+        store = _store_from_env()
+        cutoff = time.time() - args.days * 86400
+        pruned = store.prune_older_than(cutoff, tenant_id=args.tenant_id)
+        payload = {"tenant_id": args.tenant_id, "days": args.days, "pruned": pruned}
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"[ok] pruned {pruned} trace(s) for {args.tenant_id}")
+        return pruned
+
+    if args.interval_s <= 0:
+        try:
+            _run_once()
+        except Exception as exc:
+            print(f"[fail] {exc}", file=sys.stderr)
+            return 2
+        return 0
+
+    # Closes "retention pruning is invoked manually or via an external
+    # cron/scheduler, not run on a loop by the app itself" — same
+    # self-loop pattern as audit-verify-watch, for anyone who'd rather point
+    # a long-running container at this than set up an external cron/CronJob.
+    print(f"[ok] pruning every {args.interval_s}s for tenant={args.tenant_id} (Ctrl+C to stop)")
+    while True:
+        try:
+            _run_once()
+        except Exception as exc:
+            print(f"[fail] prune run failed, will retry next interval: {exc}", file=sys.stderr)
+        time.sleep(args.interval_s)
+
+
+def _send_audit_alert(broken: list, *, source: str) -> None:
+    """Best-effort POST to PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL on tamper detection.
+
+    Unlike the billing webhook, a failed alert delivery is reported loudly
+    (this is a security signal, not a fail-open analytics event) — but it
+    never masks the underlying chain-verification failure, which is what
+    determines this command's exit code regardless of whether the alert
+    itself was delivered.
+    """
+    import json as _json
+    import os
+    import urllib.error
+    import urllib.request
+
+    url = os.environ.get("PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL", "").strip()
+    if not url:
+        return
+    from .security import UnsafeURLError, validate_http_url
+
+    try:
+        safe_url = validate_http_url(
+            url, allow_http_localhost=True, context="audit alert webhook URL"
+        )
+    except UnsafeURLError as exc:
+        print(f"[warn] audit alert webhook not sent: {exc}", file=sys.stderr)
+        return
+
+    secret = os.environ.get("PRAMAGENT_AUDIT_ALERT_WEBHOOK_SECRET", "")
+    timeout_s = float(os.environ.get("PRAMAGENT_AUDIT_ALERT_TIMEOUT_S", "5.0"))
+    body = {
+        "event": "pramagent.audit_chain_tamper_detected",
+        "source": source,
+        "broken_link_count": len(broken),
+        "broken_links": broken[:20],  # cap payload size for large breaks
+    }
+    data = _json.dumps(body, sort_keys=True).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        headers["X-Pramagent-Alert-Secret"] = secret
+    req = urllib.request.Request(safe_url, data=data, headers=headers, method="POST")
+    try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # nosec B310
+            if resp.status >= 400:
+                print(f"[warn] audit alert webhook returned HTTP {resp.status}", file=sys.stderr)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        print(f"[warn] audit alert webhook delivery failed: {exc}", file=sys.stderr)
+
+
+def cmd_audit_verify_watch(args) -> int:
+    """Run store.verify() once (or on a loop) and alert on tamper detection.
+
+    Closes the "detection is entirely manual" gap: previously nothing called
+    verify_chain() except a human hitting /v1/audit/verify or the CLI by
+    hand. Point an external scheduler (cron, k8s CronJob) or --interval-s at
+    this command to get automated detection with alerting.
+    """
+    import time
+
+    def _run_once() -> bool:
+        try:
+            store = _store_from_env()
+        except Exception as exc:
+            print(f"[fail] could not connect to store: {exc}", file=sys.stderr)
+            return False
+        broken = store.verify()
+        if broken:
+            print(f"[CRITICAL] audit chain tamper detected: {len(broken)} broken link(s)", file=sys.stderr)
+            for b in broken[:20]:
+                print(f"    {b}", file=sys.stderr)
+            _send_audit_alert(broken, source="cli:audit-verify-watch")
+            return False
+        if args.json:
+            print(json.dumps({"chain_valid": True, "broken_links": 0}, sort_keys=True))
+        else:
+            print("[ok] audit chain verified clean")
+        return True
+
+    if args.interval_s <= 0:
+        return 0 if _run_once() else 1
+
+    print(f"[ok] watching audit chain every {args.interval_s}s (Ctrl+C to stop)")
+    while True:
+        _run_once()
+        time.sleep(args.interval_s)
+
+
 def cmd_test_inject(args) -> int:
     prompt = args.prompt or input("Enter prompt to test: ")
     from .layers import IsolationLayer
@@ -291,6 +494,8 @@ def cmd_demo(args) -> int:
 
     os.environ.setdefault("PRAMAGENT_DEMO_ENABLED", "true")
     os.environ.setdefault("PRAMAGENT_ALLOW_MEMORY_STORE", "1")
+    os.environ.setdefault("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
+    os.environ.setdefault("PRAMAGENT_API_BIND_HOST", args.host)
     os.environ.setdefault("PRAMAGENT_PROVIDER", "mock")
     os.environ.setdefault("PRAMAGENT_DEMO_RATE_LIMIT", "60")
     try:
@@ -325,6 +530,54 @@ def main():
                         help="Overwrite existing files")
 
     sub.add_parser("validate", help="Validate config and connectivity")
+
+    p_auth_issue = sub.add_parser(
+        "auth-issue",
+        help="Issue a persistent tenant API key in the Postgres key registry",
+    )
+    p_auth_issue.add_argument("tenant_id", help="Tenant that will own the key")
+    p_auth_issue.add_argument(
+        "--scopes",
+        default="read,write,admin",
+        help="Comma/pipe separated scopes: read, write, admin, audit "
+             "(audit alone can check chain integrity without general read "
+             "access — for monitoring/alerting integrations)",
+    )
+    p_auth_issue.add_argument("--actor", default="", help="Operator id for audit trail")
+    p_auth_issue.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_auth_revoke = sub.add_parser(
+        "auth-revoke",
+        help="Revoke a persistent API key in the Postgres key registry",
+    )
+    p_auth_revoke.add_argument("api_key", help="Plain API key to revoke")
+    p_auth_revoke.add_argument("--actor", default="", help="Operator id for audit trail")
+    p_auth_revoke.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_retention = sub.add_parser(
+        "retention-prune",
+        help="Tenant-scoped retention pruning for cron/scheduler use",
+    )
+    p_retention.add_argument("--tenant-id", required=True, help="Tenant to prune")
+    p_retention.add_argument("--days", type=int, default=365, help="Retention window")
+    p_retention.add_argument(
+        "--interval-s", type=float, default=0.0,
+        help="Loop forever, sleeping this many seconds between prune runs "
+             "(default 0: prune once and exit)",
+    )
+    p_retention.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_audit_watch = sub.add_parser(
+        "audit-verify-watch",
+        help="Verify the audit hash chain and alert on tamper detection "
+             "(for cron/k8s CronJob, or --interval-s for a standalone loop)",
+    )
+    p_audit_watch.add_argument(
+        "--interval-s", type=float, default=0.0,
+        help="Loop forever, sleeping this many seconds between checks "
+             "(default 0: check once and exit)",
+    )
+    p_audit_watch.add_argument("--json", action="store_true", help="Emit JSON")
 
     p_inj = sub.add_parser("test-inject", help="Test injection detection on a prompt")
     p_inj.add_argument("prompt", nargs="?", default="",
@@ -402,6 +655,10 @@ def main():
     handlers = {
         "init":        cmd_init,
         "validate":    cmd_validate,
+        "auth-issue":  cmd_auth_issue,
+        "auth-revoke": cmd_auth_revoke,
+        "retention-prune": cmd_retention_prune,
+        "audit-verify-watch": cmd_audit_verify_watch,
         "test-inject": cmd_test_inject,
         "redteam":     cmd_redteam,
         "backtest":    cmd_backtest,

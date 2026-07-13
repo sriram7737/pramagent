@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|write_file|replace|read_file|list_directory|glob|grep_search|search_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/gemini_cli_hook.py",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

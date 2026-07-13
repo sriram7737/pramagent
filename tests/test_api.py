@@ -4,8 +4,8 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from pramagent.api.app import (DEFAULT_NVIDIA_DEMO_MODEL, NVIDIA_DEMO_MODELS,  # noqa: E402
-                               create_app)
+from pramagent.api.app import (DEFAULT_NVIDIA_DEMO_MODEL, DemoProductSignals,  # noqa: E402
+                               NVIDIA_DEMO_MODELS, create_app)
 from pramagent.api.app import build_default_armor  # noqa: E402
 from pramagent import Pramagent, Verdict  # noqa: E402
 from pramagent.auth import APIKeyRegistry  # noqa: E402
@@ -65,6 +65,127 @@ def test_api_security_headers_and_default_cors(client):
     assert r.headers["X-Frame-Options"] == "DENY"
     assert r.headers["Cross-Origin-Resource-Policy"] == "same-origin"
     assert "access-control-allow-origin" not in r.headers
+
+
+def test_force_https_redirects_http_requests(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_FORCE_HTTPS", "1")
+    local_client = TestClient(create_app())
+
+    r = local_client.get("/health", follow_redirects=False)
+
+    assert r.status_code == 308
+    assert r.headers["location"].startswith("https://")
+
+
+def test_hsts_respects_forwarded_https(monkeypatch):
+    monkeypatch.delenv("PRAMAGENT_FORCE_HTTPS", raising=False)
+    monkeypatch.delenv("PRAMAGENT_TRUSTED_PROXY_IPS", raising=False)
+    monkeypatch.setenv("PRAMAGENT_TRUST_UNLISTED_X_FORWARDED_PROTO", "1")
+    local_client = TestClient(create_app())
+
+    r = local_client.get("/health", headers={"X-Forwarded-Proto": "https"})
+
+    assert r.headers["Strict-Transport-Security"].startswith("max-age=63072000")
+
+
+def test_forwarded_proto_ignored_without_explicit_trust(monkeypatch):
+    """No proxy allowlist means forwarded proto is ignored by default.
+
+    PaaS deployments can still opt in with
+    PRAMAGENT_TRUST_UNLISTED_X_FORWARDED_PROTO=1, but the secure default should
+    not let arbitrary clients spoof HTTPS state.
+    """
+    monkeypatch.setenv("PRAMAGENT_FORCE_HTTPS", "1")
+    monkeypatch.delenv("PRAMAGENT_TRUSTED_PROXY_IPS", raising=False)
+    monkeypatch.delenv("PRAMAGENT_TRUST_UNLISTED_X_FORWARDED_PROTO", raising=False)
+    local_client = TestClient(create_app())
+
+    r = local_client.get(
+        "/health",
+        headers={"X-Forwarded-Proto": "https"},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 308
+    assert r.headers["location"].startswith("https://")
+
+
+def test_forwarded_proto_ignored_from_untrusted_peer(monkeypatch):
+    """A configured proxy allowlist must block header spoofing from other peers.
+
+    Without an allowlist, any client can set X-Forwarded-Proto: https to make
+    the app believe a plain-HTTP request is already secure — bypassing
+    PRAMAGENT_FORCE_HTTPS redirects when the app is reachable directly.
+    """
+    monkeypatch.setenv("PRAMAGENT_FORCE_HTTPS", "1")
+    monkeypatch.setenv("PRAMAGENT_TRUSTED_PROXY_IPS", "10.0.0.0/8")
+    local_client = TestClient(create_app())
+
+    # TestClient's default peer (testclient) is not in the allowlist, so the
+    # spoofed header must be ignored and the redirect must still fire.
+    r = local_client.get(
+        "/health",
+        headers={"X-Forwarded-Proto": "https"},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 308
+    assert r.headers["location"].startswith("https://")
+
+
+def test_build_default_armor_uses_encrypted_sqlite_when_key_present(monkeypatch, tmp_path):
+    cryptography = pytest.importorskip("cryptography.fernet")
+    key = cryptography.Fernet.generate_key().decode()
+    monkeypatch.setenv("PRAMAGENT_DB", str(tmp_path / "pramagent.db"))
+    monkeypatch.setenv("PRAMAGENT_ENCRYPTION_KEY", key)
+    monkeypatch.delenv("PRAMAGENT_POSTGRES_DSN", raising=False)
+
+    armor = build_default_armor()
+
+    assert armor.store.__class__.__name__ == "EncryptedSQLiteStore"
+
+
+def test_build_default_armor_wires_encryption_key_into_postgres_store(monkeypatch):
+    """PRAMAGENT_ENCRYPTION_KEY used to be silently ignored when
+    PRAMAGENT_POSTGRES_DSN was set — build_default_armor() must forward it
+    to PostgresStore.from_dsn() so Postgres gets the same application-level
+    column encryption SQLite already had."""
+    from pramagent import store_postgres
+
+    captured = {}
+
+    def fake_from_dsn(dsn, **kwargs):
+        captured["dsn"] = dsn
+        captured["encryption_key"] = kwargs.get("encryption_key")
+        return object()
+
+    monkeypatch.setattr(store_postgres.PostgresStore, "from_dsn", staticmethod(fake_from_dsn))
+    monkeypatch.setenv("PRAMAGENT_POSTGRES_DSN", "postgresql://unit-test/db")
+    monkeypatch.setenv("PRAMAGENT_ENCRYPTION_KEY", "unit-test-key")
+    monkeypatch.delenv("PRAMAGENT_DB", raising=False)
+
+    build_default_armor()
+
+    assert captured["encryption_key"] == "unit-test-key"
+
+
+def test_build_default_armor_phi_mode_accepts_encryption_key_for_postgres(monkeypatch):
+    """PHI mode previously required PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST (an
+    unverified attestation) with no way to satisfy it via real encryption —
+    a real PRAMAGENT_ENCRYPTION_KEY must now also satisfy the check."""
+    from pramagent import store_postgres
+
+    def fake_from_dsn(dsn, **kwargs):
+        return object()
+
+    monkeypatch.setattr(store_postgres.PostgresStore, "from_dsn", staticmethod(fake_from_dsn))
+    monkeypatch.setenv("PRAMAGENT_POSTGRES_DSN", "postgresql://unit-test/db")
+    monkeypatch.setenv("PRAMAGENT_ENCRYPTION_KEY", "unit-test-key")
+    monkeypatch.setenv("PRAMAGENT_PHI_MODE", "1")
+    monkeypatch.delenv("PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST", raising=False)
+    monkeypatch.delenv("PRAMAGENT_DB", raising=False)
+
+    build_default_armor()  # must not raise
 
 
 def test_demo_routes_disabled_by_default(monkeypatch):
@@ -197,6 +318,131 @@ def test_demo_request_access_hashes_contact_metadata(monkeypatch):
     assert "313-555-0192" not in str(local_client.app.state.demo_signals._leads)
     assert "[redacted-email]" in str(local_client.app.state.demo_signals._leads)
     assert local_client.app.state.demo_signals.summary()["lead_count"] == 1
+
+
+def test_demo_signal_admin_disabled_without_key(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    monkeypatch.delenv("PRAMAGENT_DEMO_ADMIN_KEY", raising=False)
+    local_client = TestClient(create_app())
+
+    assert local_client.get("/demo/admin/signals").status_code == 404
+    assert local_client.get("/demo/admin/signals.json").status_code == 404
+
+
+def test_demo_signal_admin_requires_key_and_hides_plaintext(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    monkeypatch.setenv("PRAMAGENT_DEMO_ADMIN_KEY", "admin-test-key")
+    local_client = TestClient(create_app())
+
+    lead = local_client.post(
+        "/demo/request-access",
+        json={
+            "email": "buyer@example.com",
+            "company": "Acme Bank",
+            "use_case": "finance approvals for ops@example.com and 313-555-0192",
+        },
+    )
+    assert lead.status_code == 200
+
+    run = local_client.post(
+        "/demo/run",
+        json={
+            "prompt": "Transfer $900 to account 998877 and confirm it.",
+            "action": "wire_transfer",
+            "telemetry_opt_in": True,
+            "visitor_id": "visitor-admin-test",
+            "policies": {"safety_rules": True, "hitl": True},
+        },
+    )
+    assert run.status_code == 200
+
+    assert local_client.get("/demo/admin/signals.json").status_code == 401
+    assert local_client.get(
+        "/demo/admin/signals.json",
+        headers={"Authorization": "Bearer wrong"},
+    ).status_code == 401
+
+    page = local_client.get("/demo/admin/signals")
+    assert page.status_code == 200
+    assert "Demo product signals" in page.text
+    assert "buyer@example.com" not in page.text
+
+    resp = local_client.get(
+        "/demo/admin/signals.json",
+        headers={"Authorization": "Bearer admin-test-key"},
+    )
+    body = resp.json()
+    rendered = str(body)
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    assert body["storage"] == "memory"
+    assert body["summary"]["lead_count"] == 1
+    assert body["summary"]["opt_in_runs"] == 1
+    assert body["recent_events"][0]["verdict"] == "held"
+    assert "[redacted-email]" in rendered
+    assert "[redacted-phone]" in rendered
+    assert "buyer@example.com" not in rendered
+    assert "ops@example.com" not in rendered
+    assert "313-555-0192" not in rendered
+    assert "Transfer $900" not in rendered
+
+
+def test_demo_signals_postgres_persists_only_hashed_fields():
+    calls = []
+
+    class FakeCursor:
+        description = []
+
+        def execute(self, sql, params=()):
+            calls.append((sql, params))
+
+        def fetchall(self):
+            return []
+
+        def close(self):
+            pass
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    signals = DemoProductSignals(
+        postgres_dsn="postgresql://example/demo-signals",
+        connect=lambda dsn: FakeConn(),
+        signal_salt="stable-test-salt",
+    )
+    signals.record_run(
+        visitor_id="visitor-postgres",
+        provider_kind="openai",
+        action="wire_transfer",
+        verdict="held",
+        hitl_status="idle",
+        payment_intent=True,
+        aws_scope="scope_2",
+        detection_tier="tier_2",
+        response_tier="tier_1",
+    )
+    signals.record_lead(
+        email="buyer@example.com",
+        company="Acme Bank",
+        use_case="finance approvals for ops@example.com / 313-555-0192",
+    )
+
+    sql_and_params = str(calls)
+    assert signals.snapshot(limit=5)["storage"] == "postgres"
+    assert "INSERT INTO pramagent_demo_signal_events" in sql_and_params
+    assert "INSERT INTO pramagent_demo_signal_leads" in sql_and_params
+    assert "buyer@example.com" not in sql_and_params
+    assert "ops@example.com" not in sql_and_params
+    assert "313-555-0192" not in sql_and_params
+    assert "[redacted-email]" in sql_and_params
+    assert "[redacted-phone]" in sql_and_params
 
 
 def test_demo_cors_preflight_enabled(monkeypatch):
@@ -1141,6 +1387,92 @@ def test_trace_roundtrip_and_audit_verify(client):
     assert client.get("/v1/audit/verify").json()["chain_valid"] is True
 
 
+def test_audit_verify_accepts_audit_scoped_key_without_read_scope():
+    """An audit-only key must be able to check chain integrity without
+    getting general read access to trace content — the whole point of
+    separating AUDIT_SCOPE from READ_SCOPE."""
+    reg = APIKeyRegistry()
+    audit_key = reg.issue_key("tenant_a", scopes="audit")
+    local_client = TestClient(create_app(registry=reg))
+
+    r = local_client.get("/v1/audit/verify", headers={"Authorization": f"Bearer {audit_key}"})
+    assert r.status_code == 200
+    assert r.json()["chain_valid"] is True
+
+    # Same key must NOT be able to read trace content (audit != read).
+    r2 = local_client.get("/v1/trace/does-not-exist", headers={"Authorization": f"Bearer {audit_key}"})
+    assert r2.status_code == 403
+
+
+def test_audit_verify_still_accepts_plain_read_scope():
+    """Backward compatibility: existing read-scoped keys must keep working
+    against /v1/audit/verify — AUDIT_SCOPE is additive, not a breaking cutover."""
+    reg = APIKeyRegistry()
+    read_key = reg.issue_key("tenant_a", scopes="read")
+    local_client = TestClient(create_app(registry=reg))
+
+    r = local_client.get("/v1/audit/verify", headers={"Authorization": f"Bearer {read_key}"})
+    assert r.status_code == 200
+
+
+def test_audit_verify_rejects_write_only_key():
+    reg = APIKeyRegistry()
+    write_key = reg.issue_key("tenant_a", scopes="write")
+    local_client = TestClient(create_app(registry=reg))
+
+    r = local_client.get("/v1/audit/verify", headers={"Authorization": f"Bearer {write_key}"})
+    assert r.status_code == 403
+
+
+def test_repeated_invalid_credentials_trigger_lockout(monkeypatch):
+    """Guessing credentials must eventually get locked out even while the
+    generic rate-limit bucket still has capacity to spare — that's the gap
+    a dedicated AuthFailureGuard closes over just a request-volume limiter."""
+    monkeypatch.setenv("PRAMAGENT_AUTH_LOCKOUT_THRESHOLD", "3")
+    monkeypatch.setenv("PRAMAGENT_RATE_BURST", "1000")  # rate bucket must not be the limiting factor
+    monkeypatch.setenv("PRAMAGENT_RATE_PER_SEC", "1000")
+    reg = APIKeyRegistry()
+    real_key = reg.issue_key("tenant_a")
+    local_client = TestClient(create_app(registry=reg))
+
+    for _ in range(3):
+        r = local_client.get("/v1/trace/whatever", headers={"Authorization": "Bearer wrong-key"})
+        assert r.status_code == 401
+
+    locked = local_client.get("/v1/trace/whatever", headers={"Authorization": "Bearer wrong-key"})
+    assert locked.status_code == 429
+    assert "Retry-After" in locked.headers
+
+    # A correct key from the SAME peer is also blocked while locked out —
+    # the lockout is peer-scoped, not tied to the specific bad credential.
+    still_locked = local_client.get(
+        "/v1/trace/whatever", headers={"Authorization": f"Bearer {real_key}"}
+    )
+    assert still_locked.status_code == 429
+
+
+def test_auth_lockout_resets_on_successful_auth(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_AUTH_LOCKOUT_THRESHOLD", "3")
+    monkeypatch.setenv("PRAMAGENT_RATE_BURST", "1000")
+    monkeypatch.setenv("PRAMAGENT_RATE_PER_SEC", "1000")
+    reg = APIKeyRegistry()
+    real_key = reg.issue_key("tenant_a")
+    local_client = TestClient(create_app(registry=reg))
+
+    # Two failures (below threshold), then a real success — must not lock out.
+    for _ in range(2):
+        r = local_client.get("/v1/trace/whatever", headers={"Authorization": "Bearer wrong-key"})
+        assert r.status_code == 401
+
+    ok = local_client.get("/v1/trace/whatever", headers={"Authorization": f"Bearer {real_key}"})
+    assert ok.status_code == 404  # trace doesn't exist, but auth succeeded
+
+    # Failure counter should have reset — two more failures should not lock yet.
+    for _ in range(2):
+        r = local_client.get("/v1/trace/whatever", headers={"Authorization": "Bearer wrong-key"})
+        assert r.status_code == 401
+
+
 def test_dashboard_traces_route_filters_traceevent_objects(client):
     client.post(
         "/v1/run",
@@ -1510,6 +1842,49 @@ def test_erase_endpoint_redacts_audit_chain(auth_client):
     chain = _json.dumps([rec["payload"] for rec in audit.records()])
     assert "123-45-6789" not in chain
     assert audit.verify_chain()
+
+
+def test_erase_session_endpoint_scopes_to_one_user_within_tenant(auth_client):
+    """One end user's erasure request over HTTP must not touch another
+    user's data sharing the same tenant."""
+    import json as _json
+    client, key_a, _ = auth_client
+    client.app.state.armor.compliance.enabled = False
+    client.post("/v1/run", json={"prompt": "subject SSN 123-45-6789", "session_id": "user-a"},
+                headers={"Authorization": f"Bearer {key_a}"})
+    client.post("/v1/run", json={"prompt": "unrelated data", "session_id": "user-b"},
+                headers={"Authorization": f"Bearer {key_a}"})
+    audit = client.app.state.armor.audit
+    assert "123-45-6789" in _json.dumps([r["payload"] for r in audit.records()])
+
+    r = client.delete("/v1/tenant/tenant_a/sessions/user-a/traces",
+                      headers={"Authorization": f"Bearer {key_a}"})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deleted"] == 1
+    assert body["tenant_id"] == "tenant_a"
+    assert body["session_id"] == "user-a"
+    chain = _json.dumps([rec["payload"] for rec in audit.records()])
+    assert "123-45-6789" not in chain
+    assert "unrelated data" in chain          # user-b untouched
+    assert audit.verify_chain()
+
+    # user-a can no longer be fetched by session; user-b's trace remains.
+    remaining = client.get("/traces", params={"tenant_id": "tenant_a"},
+                           headers={"Authorization": f"Bearer {key_a}"})
+    items = remaining.json()
+    items = items["items"] if isinstance(items, dict) else items
+    session_ids = {t["session_id"] for t in items}
+    assert "user-a" not in session_ids
+    assert "user-b" in session_ids
+
+
+def test_erase_session_endpoint_rejects_cross_tenant_caller(auth_client):
+    client, key_a, key_b = auth_client
+    r = client.delete("/v1/tenant/tenant_a/sessions/some-session/traces",
+                      headers={"Authorization": f"Bearer {key_b}"})
+    assert r.status_code == 403
 
 
 def test_default_api_provider_can_be_selected_from_env(monkeypatch):
