@@ -3,7 +3,10 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "sh -c \"python -m uvicorn pramagent.api.app:app --host 0.0.0.0 --port ${PORT:-8080} --log-level ${PRAMAGENT_LOG_LEVEL:-info} --timeout-graceful-shutdown 30\""
+# This Railway service hosts the public browser demo. The CLI demo command
+# deliberately sets the demo opt-ins before importing the FastAPI app, while
+# the package/API default still fails closed for non-demo deployments.
+startCommand = "sh -c \"python -m pramagent.cli demo --host 0.0.0.0 --port ${PORT:-8080}\""
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
