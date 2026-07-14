@@ -76,6 +76,27 @@ with `id-token: write`. It runs on GitHub Release publish, manual dispatch, or
 `v*` tag push. Do not add `TWINE_PASSWORD`, `PYPI_API_TOKEN`, or other PyPI
 credentials to this workflow.
 
+## Branch Protection
+
+`.github/CODEOWNERS` is checked in (`* @sriram7737`), but a CODEOWNERS file
+by itself does not require review — GitHub still allows a direct push or an
+unreviewed merge to `main` unless branch protection is turned on. This is a
+GitHub repository setting, not something a commit to this repo can enable
+(ISSUE-13). One-time setup, done outside this repo:
+
+- GitHub -> repository Settings -> Branches -> add a branch protection rule
+  for `main`.
+- Enable "Require a pull request before merging."
+- Enable "Require review from Code Owners."
+- Enable "Require approvals" (at least 1).
+- Consider "Do not allow bypassing the above settings" so it also applies
+  to admins, not just external contributors.
+
+Until this is enabled, treat `main` as protected by convention/discipline
+only, not by an enforced control — do not cite required-review as a
+control in a compliance mapping or audit response until it is actually
+configured.
+
 ## Build
 
 ```bash

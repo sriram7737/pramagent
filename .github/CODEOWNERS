@@ -1,0 +1,8 @@
+# CODEOWNERS
+#
+# Requires "Require review from Code Owners" to be enabled under branch
+# protection for `main` (Settings -> Branches -> Branch protection rules)
+# for this file to actually gate merges — adding this file alone does not
+# turn on required review (ISSUE-13; see docs/RELEASE.md#branch-protection).
+
+* @sriram7737
