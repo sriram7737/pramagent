@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -27,6 +28,25 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
 from ..security import validate_http_url
+
+
+# F2: Slack broadcast / mention tokens. Stripped from untrusted text before
+# escaping so an attacker-controlled action/tenant/preview cannot ping a whole
+# channel (@channel/@here) or a user via the approval card.
+_SLACK_BROADCAST_RE = re.compile(
+    r"<!(?:channel|here|everyone)>|<@[A-Za-z0-9]+>", re.IGNORECASE)
+
+
+def escape_slack_mrkdwn(text: str) -> str:
+    """Neutralize Slack mrkdwn control characters and broadcast/mention tokens
+    in untrusted text (tool output preview, action, tenant), so a crafted value
+    cannot inject formatting, break out of a code span, or notify a channel
+    when the approval card renders (F2). Per Slack's guidance the three chars
+    &, <, > are the only ones that must be HTML-escaped in message text;
+    backticks are dropped so a value cannot escape an enclosing code span."""
+    text = _SLACK_BROADCAST_RE.sub("", text)
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return text.replace("`", "'")
 
 
 log = logging.getLogger(__name__)
@@ -244,8 +264,12 @@ class HTTPSlackMessageClient:
         context: dict[str, Any],
         public_url: str,
     ) -> dict[str, Any]:
-        tenant = str(context.get("tenant", "unknown"))
-        preview = str(context.get("output_preview", ""))[:240]
+        # F2: every value below is interpolated into Slack mrkdwn; escape the
+        # untrusted ones (action label, tenant, and especially the free-text
+        # output preview) so they cannot inject formatting or channel pings.
+        action = escape_slack_mrkdwn(str(action))
+        tenant = escape_slack_mrkdwn(str(context.get("tenant", "unknown")))
+        preview = escape_slack_mrkdwn(str(context.get("output_preview", ""))[:240])
         body = {
             "channel": channel,
             "text": f"Pramagent approval requested for {action}",

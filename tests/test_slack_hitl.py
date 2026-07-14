@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from pramagent import Pramagent  # noqa: E402
 from pramagent.api.app import create_app  # noqa: E402
 from pramagent.hitl.slack import (SlackApprovalRegistry, SlackHITLApprover,  # noqa: E402
-                                  SlackApprovalError, verify_slack_signature)
+                                  SlackApprovalError, escape_slack_mrkdwn,
+                                  verify_slack_signature)
 from pramagent.layers import HITLLayer  # noqa: E402
 
 
@@ -42,6 +43,19 @@ def _slack_headers(secret: str, body: bytes):
         "X-Slack-Signature": sig,
         "Content-Type": "application/x-www-form-urlencoded",
     }
+
+
+def test_escape_slack_mrkdwn_neutralizes_injection():
+    """F2: untrusted text rendered in the approval card must not inject Slack
+    formatting, break out of a code span, or ping a channel."""
+    # HTML-ish control chars are escaped
+    assert escape_slack_mrkdwn("a & b < c > d") == "a &amp; b &lt; c &gt; d"
+    # broadcast + user mentions are stripped (before escaping, so they don't
+    # survive as inert-but-visible either)
+    out = escape_slack_mrkdwn("hey <!channel> and <!here> and <@U12345> now")
+    assert "channel" not in out and "@U12345" not in out and "here" not in out
+    # backticks can't escape an enclosing code span
+    assert "`" not in escape_slack_mrkdwn("evil` *bold* `back")
 
 
 def test_verify_slack_signature_accepts_valid_request():
