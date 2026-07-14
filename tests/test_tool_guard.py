@@ -60,6 +60,21 @@ def test_stacked_query_breakout_with_update_set_is_still_flagged():
     assert "sql_injection" in _pids(payload)
 
 
+def test_stacked_create_index_view_trigger_breakout_is_flagged():
+    """LOW-1: index/view/trigger were missing from the stacked-query keyword
+    list, so a breakout running those DDL statements slipped past."""
+    assert "sql_injection" in _pids("1'; CREATE INDEX evil ON users(x); --")
+    assert "sql_injection" in _pids("1'; CREATE VIEW leak AS SELECT * FROM x; --")
+    assert "sql_injection" in _pids("1'; CREATE TRIGGER t BEFORE INSERT ON x; --")
+
+
+def test_bare_create_index_is_not_flagged():
+    """Parity with the bare-DDL tuning: a normal CREATE INDEX statement a
+    coding assistant writes on request is not an attack."""
+    assert "sql_injection" not in _pids(
+        "CREATE INDEX users_email_idx ON users(email);")
+
+
 def test_bare_loopback_bind_syntax_is_not_flagged():
     """Binding a local dev/test server to a loopback address has no attack
     signal on its own."""

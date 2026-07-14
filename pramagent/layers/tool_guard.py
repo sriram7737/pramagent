@@ -198,13 +198,17 @@ _ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str, str]] = [
     ("sql_injection",
      re.compile(r"(--|/\*|\*/)"),
      ["select", "insert", "update", "delete", "drop", "union",
-      "where", "table", "database", "exec"],
+      "where", "table", "database", "index", "view", "trigger", "exec"],
      "SQL comment marker near a SQL keyword",
      "any"),
     ("sql_injection",
      re.compile(r";"),
+     # LOW-1: index/view/trigger were missing here, so a stacked query
+     # breaking out to run "CREATE INDEX ..." / "CREATE VIEW ..." /
+     # "CREATE TRIGGER ..." after a separator slipped past, unlike the
+     # table/database DDL shapes that were kept.
      ["select", "insert", "update", "delete", "drop", "union",
-      "where", "table", "database", "exec"],
+      "where", "table", "database", "index", "view", "trigger", "exec"],
      "stacked SQL statement after a statement separator",
      "after"),
     # The classic auth-bypass shape ("admin' --") has no SQL keyword at
