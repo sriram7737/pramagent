@@ -315,10 +315,19 @@ class HyperledgerBackend:
     """
 
     def __init__(self, channel: str = "", chaincode: str = "",
-                 gateway: str = "", signing_key: str = "") -> None:
+                 gateway: str = "", signing_key: str = "",
+                 fail_open: bool = False) -> None:
         self.channel = channel
         self.chaincode = chaincode
         self.gateway = gateway
+        # Matches EthereumBackend's default: when a gateway IS configured
+        # (anchoring is expected), a submission failure raises by default
+        # rather than silently degrading to a local-only pseudo-anchor —
+        # otherwise a caller who believes anchoring is active has no signal
+        # that it silently stopped (ISSUE-10). Pass fail_open=True only for
+        # dev/demo deployments that knowingly accept local chain-only
+        # evidence during Fabric outages.
+        self.fail_open = fail_open
         self._chain = HashChainBackend(signing_key=signing_key)
         self._anchored = 0
 
@@ -339,8 +348,11 @@ class HyperledgerBackend:
     def _anchor(self, this_hash: str) -> str:
         """Submit the hash to Fabric chaincode. Returns an anchor tx id.
 
-        Degrades to a local pseudo-anchor when no gateway is configured or the
-        fabric SDK is absent — never raises, so audit writes always succeed.
+        No gateway configured means anchoring was never requested, so that
+        always degrades to a local pseudo-anchor with no exception involved.
+        Once a gateway IS configured, a submission failure raises unless
+        fail_open=True (see __init__) — matching EthereumBackend, instead of
+        always silently degrading regardless of what the caller asked for.
         """
         if not self.gateway:
             return f"fabric-local:{this_hash[:24]}"
@@ -351,7 +363,10 @@ class HyperledgerBackend:
             from hfc.fabric import Client  # type: ignore  # noqa: F401
             self._anchored += 1
             return f"fabric:{self.channel}:{this_hash[:24]}"
-        except Exception:
+        except Exception as exc:
+            if not self.fail_open:
+                raise
+            log.warning("hyperledger anchoring failed open: %s", exc)
             return f"fabric-local:{this_hash[:24]}"
 
     def verify_chain(self) -> bool:
