@@ -213,6 +213,49 @@ def test_tool_guard_backend_shares_dangerous_chain_across_instances():
     assert "dangerous tool chain" in decision.reason
 
 
+class _BrokenBackend:
+    """A configured backend whose ops raise, simulating a Redis outage."""
+    def increment(self, *a, **k):
+        raise ConnectionError("redis down")
+
+    def history_append(self, *a, **k):
+        raise ConnectionError("redis down")
+
+    def get(self, *a, **k):
+        raise ConnectionError("redis down")
+
+    def set(self, *a, **k):
+        raise ConnectionError("redis down")
+
+
+def _guard_with_backend(backend, **kw):
+    return ToolGuardLayer(policies=[
+        ToolPolicy(name="query", side_effect="read",
+                   max_calls_per_session=2,
+                   schema={"type": "object"}),
+    ], backend=backend, **kw)
+
+
+def test_session_limit_fails_closed_on_backend_outage():
+    """E2: with a backend configured, a backend outage must not silently fall
+    back to per-process counters (which under-count across workers and let a
+    session cap be exceeded). Default fail-closed → the call is BLOCKed."""
+    guard = _guard_with_backend(_BrokenBackend())
+    d = guard.evaluate("query", {}, tenant_id="t", session_id="s",
+                       action_label="a")
+    assert d.verdict == Verdict.BLOCK
+    assert "failing closed" in d.reason
+
+
+def test_session_limit_fail_open_opt_in_uses_memory_fallback():
+    """With fail_open=True the old per-process fallback is used, so the call
+    is not blocked purely because the backend blipped."""
+    guard = _guard_with_backend(_BrokenBackend(), fail_open=True)
+    d = guard.evaluate("query", {}, tenant_id="t", session_id="s",
+                       action_label="a")
+    assert d.verdict != Verdict.BLOCK
+
+
 def test_schema_violation_reason_omits_raw_value_b1():
     """B1: a failing argument value must not appear verbatim in the durable
     ToolDecision.reason. Schema-violation reasons are written to the audit

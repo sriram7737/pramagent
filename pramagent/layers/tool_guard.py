@@ -71,6 +71,13 @@ class ToolGuardError(ValueError):
     pass
 
 
+class _BackendUnavailable(RuntimeError):
+    """Internal: a configured ToolGuard backend (Redis) failed while reading a
+    session counter or chain history. When fail_open is False, evaluate()
+    turns this into a BLOCK rather than silently under-counting via
+    per-process memory (E2)."""
+
+
 # ── side-effect taxonomy ──────────────────────────────────────────────────────
 
 class SideEffect:
@@ -829,12 +836,22 @@ class ToolGuardLayer:
         judge: Optional[Any] = None,
         backend: Optional[Any] = None,
         chain_ttl_s: int = 300,
+        fail_open: bool = False,
     ) -> None:
         self.policies: dict[str, ToolPolicy] = {}
         self.default_verdict = default_verdict
         self.chain_window = chain_window
         self.chain_ttl_s = chain_ttl_s
         self._backend = backend
+        # E2: when a shared backend (Redis) IS configured but a call to it
+        # fails, session-call-limit and chain-history counters used to fall
+        # back silently to per-process in-memory state. Under multiple workers
+        # that multiplies a session cap by the worker count (each worker counts
+        # only the calls it saw), letting an attacker exceed the intended
+        # limit during a backend blip. Default fail closed: a backend failure
+        # BLOCKs the call instead. Set fail_open=True to prefer availability
+        # (the old silent per-process fallback) where that trade is acceptable.
+        self.fail_open = fail_open
         # Guards the in-memory chain history and call counters: evaluate()
         # may be called from multiple threads (sync API, thread-pool hosts).
         # NOTE: without a shared backend (Redis) this state is per-process —
@@ -893,6 +910,11 @@ class ToolGuardLayer:
                     ttl_s=self.chain_ttl_s,
                 ))
             except Exception as exc:
+                if not self.fail_open:
+                    # E2: don't silently under-count via per-process memory;
+                    # let evaluate() fail the call closed.
+                    raise _BackendUnavailable(
+                        f"session call-count backend unavailable: {exc}") from exc
                 log.warning("ToolGuard backend call count unavailable; falling back to memory: %s", exc)
         now = time.time()
         with self._lock:
@@ -931,7 +953,14 @@ class ToolGuardLayer:
                 history = history[-self.chain_window:]
                 self._backend.set(key, history, ttl_s=self.chain_ttl_s)
                 return history
+            except _BackendUnavailable:
+                raise
             except Exception as exc:
+                if not self.fail_open:
+                    # E2: fail closed rather than losing cross-worker chain
+                    # history to a per-process fallback.
+                    raise _BackendUnavailable(
+                        f"chain-history backend unavailable: {exc}") from exc
                 log.warning("ToolGuard backend side-effect history unavailable; falling back to memory: %s", exc)
         with self._lock:
             history = self._side_effect_history[(tenant_id, session_id)]
@@ -1029,7 +1058,12 @@ class ToolGuardLayer:
 
         # 6. Per-session call limit
         if policy.max_calls_per_session is not None:
-            count = self._session_call_count(tenant_id, session_id, tool_name)
+            try:
+                count = self._session_call_count(tenant_id, session_id, tool_name)
+            except _BackendUnavailable as exc:
+                return self._block(tool_name, tenant_id, session_id, action_label,
+                                   f"session-limit backend unavailable; failing closed: {exc}",
+                                   side_effect=policy.side_effect)
             if count > policy.max_calls_per_session:
                 return self._block(tool_name, tenant_id, session_id, action_label,
                                    f"session call limit ({policy.max_calls_per_session}) exceeded",
@@ -1046,7 +1080,12 @@ class ToolGuardLayer:
 
         # 8. Tool-chain detection — record this call's side-effect atomically,
         # then check the returned window
-        history = self._append_side_effect(tenant_id, session_id, policy.side_effect)
+        try:
+            history = self._append_side_effect(tenant_id, session_id, policy.side_effect)
+        except _BackendUnavailable as exc:
+            return self._block(tool_name, tenant_id, session_id, action_label,
+                               f"chain-history backend unavailable; failing closed: {exc}",
+                               side_effect=policy.side_effect)
 
         chain_verdict, chain_reason, chain_ctx = detect_dangerous_chain(history)
         if chain_verdict == Verdict.ESCALATE:
