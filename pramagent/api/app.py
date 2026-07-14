@@ -1599,6 +1599,22 @@ def create_app(armor: Optional[Pramagent] = None,
     require_audit_tenant = _scope_dependency((READ_SCOPE, AUDIT_SCOPE))
     require_admin_tenant = _scope_dependency(ADMIN_SCOPE)
 
+    def _resolve_tenant(tenant: str, provided_tenant_id: str = "") -> str:
+        """Resolve a concrete effective tenant for ownership/scoping checks.
+
+        When auth is enabled, `tenant` (from the API key) is authoritative
+        and always wins. When auth is disabled (empty registry / dev mode),
+        `tenant` is "" and the caller-supplied tenant_id selects which
+        logical tenant bucket to use, defaulting to "default".
+
+        Either way the return value is a concrete, non-empty string. Callers
+        must run their ownership/equality check against it unconditionally
+        (never `if tenant: <enforce>`) — an empty resolved tenant used to be
+        treated as "no tenant, skip the check" instead of "the tenant is
+        the empty string", which let unauthenticated callers see and act on
+        every other tenant's data (ISSUE-1/7)."""
+        return tenant if tenant else (provided_tenant_id or "default")
+
     def _fetch_trace(call_id: str, tenant: str):
         """Fetch a trace, enforcing tenant ownership when auth is enabled."""
         tenant_filter = tenant if tenant else None
@@ -2391,7 +2407,7 @@ def create_app(armor: Optional[Pramagent] = None,
         a = app.state.armor
         # When auth is on, the tenant comes from the key — ignore any body assertion.
         # When auth is off, fall back to body or "default".
-        effective_tenant = tenant if tenant else (req.tenant_id or "default")
+        effective_tenant = _resolve_tenant(tenant, req.tenant_id or "")
         # Quota accounting may hit Redis and fan out to the billing webhook
         # (sync urllib) — keep both off the event loop (P1-8/T1-7).
         quota_decision = await asyncio.to_thread(
@@ -2442,14 +2458,14 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.get("/v1/usage")
     async def usage(tenant_id: str = "",
                     tenant: str = Depends(require_tenant)):
-        effective_tenant = tenant if tenant else (tenant_id or "default")
+        effective_tenant = _resolve_tenant(tenant, tenant_id)
         return app.state.usage.snapshot(effective_tenant).to_dict()
 
     @app.get("/v1/usage/ledger")
     async def usage_ledger(tenant_id: str = "",
                            limit: int = 100,
                            tenant: str = Depends(require_tenant)):
-        effective_tenant = tenant if tenant else (tenant_id or "default")
+        effective_tenant = _resolve_tenant(tenant, tenant_id)
         return app.state.usage.ledger_report(
             tenant_id=effective_tenant,
             limit=_usage_ledger_limit(limit),
@@ -2458,7 +2474,7 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.post("/v1/tools/validate", response_model=ToolValidateResponse)
     async def validate_tool(req: ToolValidateRequest,
                             tenant: str = Depends(require_write_tenant)):
-        effective_tenant = tenant if tenant else (req.tenant_id or "default")
+        effective_tenant = _resolve_tenant(tenant, req.tenant_id or "")
         quota_decision = await asyncio.to_thread(
             app.state.usage.reserve_tool_validation, effective_tenant)
         if not quota_decision.allowed:
@@ -2662,13 +2678,13 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.get("/usage")
     async def usage_unversioned(tenant_id: str = "default",
                                 tenant: str = Depends(require_tenant)):
-        effective_tenant = tenant if tenant else (tenant_id or "default")
+        effective_tenant = _resolve_tenant(tenant, tenant_id)
         return app.state.usage.snapshot(effective_tenant).to_dict()
 
     @app.get("/usage/ledger")
     async def usage_ledger_unversioned(tenant_id: str = "", limit: int = 100,
                                        tenant: str = Depends(require_tenant)):
-        effective_tenant = tenant if tenant else tenant_id
+        effective_tenant = _resolve_tenant(tenant, tenant_id)
         return app.state.usage.ledger_report(
             tenant_id=effective_tenant,
             limit=_usage_ledger_limit(limit),
@@ -2749,29 +2765,33 @@ def create_app(armor: Optional[Pramagent] = None,
         return pending
 
     @app.get("/hitl/pending")
-    async def hitl_pending(tenant: str = Depends(require_tenant)):
+    async def hitl_pending(tenant_id: str = "",
+                           tenant: str = Depends(require_tenant)):
+        effective_tenant = _resolve_tenant(tenant, tenant_id)
         pending = _pending_approvals(app.state.armor.hitl)
-        if tenant:
-            pending = [p for p in pending if p["tenant_id"] == tenant]
+        pending = [p for p in pending if p["tenant_id"] == effective_tenant]
         return {"items": pending}
 
     @app.post("/hitl/{request_id}/decide")
     async def hitl_decide(request_id: str, body: HITLDecideRequest,
+                          tenant_id: str = "",
                           tenant: str = Depends(require_write_tenant)):
         hitl = app.state.armor.hitl
         registry = getattr(hitl, "registry", None) or getattr(
             getattr(hitl, "approver", None), "registry", None)
         if registry is None:
             raise HTTPException(status_code=404, detail="approval request not found")
-        if tenant:
-            # Tenant ownership: a tenant may only decide its own pending
-            # approvals. Unknown / cross-tenant ids both return 404 so the
-            # response does not leak which request ids exist.
-            match = next(
-                (p for p in _pending_approvals(hitl)
-                 if p["request_id"] == request_id), None)
-            if match is None or match["tenant_id"] != tenant:
-                raise HTTPException(status_code=404, detail="approval request not found")
+        effective_tenant = _resolve_tenant(tenant, tenant_id)
+        # Tenant ownership: a tenant may only decide its own pending
+        # approvals. Unknown / cross-tenant ids both return 404 so the
+        # response does not leak which request ids exist. This check always
+        # runs, even for the unauthenticated "default" tenant — an empty
+        # resolved tenant is never treated as "skip the check" (ISSUE-1/7).
+        match = next(
+            (p for p in _pending_approvals(hitl)
+             if p["request_id"] == request_id), None)
+        if match is None or match["tenant_id"] != effective_tenant:
+            raise HTTPException(status_code=404, detail="approval request not found")
         registry.decide(request_id, body.approved)
         return {"request_id": request_id,
                 "decision": "approved" if body.approved else "denied"}

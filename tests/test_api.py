@@ -1579,6 +1579,22 @@ def test_usage_ledger_endpoint_is_tenant_scoped():
     assert {row["event"]["tenant_id"] for row in body["entries"]} == {"acme"}
 
 
+def test_unversioned_usage_ledger_scoped_when_unauthenticated():
+    """/usage/ledger with no tenant_id and no auth must not dump the whole
+    ledger across every tenant just because the resolved tenant was empty
+    (ISSUE-1/7)."""
+    usage = UsageTracker(ledger=InMemoryUsageLedger())
+    local_client = TestClient(create_app(usage_tracker=usage))
+
+    local_client.post("/v1/run", json={"prompt": "hello", "tenant_id": "victim"})
+
+    resp = local_client.get("/usage/ledger")
+
+    assert resp.status_code == 200
+    entries = resp.json()["entries"]
+    assert all(row["event"]["tenant_id"] != "victim" for row in entries)
+
+
 def test_tool_validation_quota_blocks_after_limit():
     usage = UsageTracker(UsageLimits(max_tool_validations=1, window_s=60))
     local_client = TestClient(create_app(usage_tracker=usage))
@@ -1704,13 +1720,57 @@ def test_hitl_pending_includes_registry_tenant_context():
     ))
     local_client = TestClient(create_app(armor=armor))
 
-    r = local_client.get("/hitl/pending")
+    r = local_client.get("/hitl/pending", params={"tenant_id": "bank"})
 
     assert r.status_code == 200
     item = r.json()["items"][0]
     assert item["request_id"] == pending.request_id
     assert item["tenant_id"] == "bank"
     assert item["context"]["output_preview"] == "transfer preview"
+
+
+def test_unauthenticated_hitl_pending_scoped_to_tenant_id():
+    """With no API keys configured, /hitl/pending must not return every
+    tenant's approvals just because the caller supplied no tenant_id — the
+    resolved (unauthenticated) tenant is "default", a concrete value, not
+    a skipped check (ISSUE-1/7)."""
+    registry = SlackApprovalRegistry()
+    victim = registry.create("wire_transfer", {"tenant": "victim"})
+    armor = Pramagent(hitl=HITLLayer(
+        require_approval_for=["wire_transfer"],
+        approver=RegistryBackedApprover(registry),
+    ))
+    local_client = TestClient(create_app(armor=armor))
+
+    unscoped = local_client.get("/hitl/pending")
+    assert unscoped.status_code == 200
+    assert all(p["tenant_id"] != "victim" for p in unscoped.json()["items"])
+
+    scoped = local_client.get("/hitl/pending", params={"tenant_id": "victim"})
+    assert any(p["request_id"] == victim.request_id for p in scoped.json()["items"])
+
+
+def test_unauthenticated_hitl_decide_scoped_to_tenant_id():
+    """An unauthenticated caller must not be able to decide another logical
+    tenant's pending approval just because the enforcement check used to be
+    skipped whenever the resolved tenant was empty (ISSUE-1/7)."""
+    registry = SlackApprovalRegistry()
+    victim = registry.create("wire_transfer", {"tenant": "victim"})
+    armor = Pramagent(hitl=HITLLayer(
+        require_approval_for=["wire_transfer"],
+        approver=RegistryBackedApprover(registry),
+    ))
+    local_client = TestClient(create_app(armor=armor))
+
+    cross = local_client.post(f"/hitl/{victim.request_id}/decide", json={"approved": True})
+    assert cross.status_code == 404
+
+    own = local_client.post(
+        f"/hitl/{victim.request_id}/decide", json={"approved": True},
+        params={"tenant_id": "victim"},
+    )
+    assert own.status_code == 200
+    assert own.json()["decision"] == "approved"
 
 
 # ── Finding #1: unversioned routes must require auth ───────────────────
