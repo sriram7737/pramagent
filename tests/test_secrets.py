@@ -142,3 +142,42 @@ def test_vault_backend_http_error_falls_back_to_default(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
     assert resolve_secret("PRAMAGENT_JWT_SECRET", default="fallback") == "fallback"
+
+
+# ── HIGH-2: CLI and API must resolve the signing key identically ──────────
+
+def test_cli_store_resolves_signing_key_via_indirection(tmp_path, monkeypatch):
+    """HIGH-2: when PRAMAGENT_SIGNING_KEY is supplied only through
+    secret-manager indirection (a *_VAULT_PATH, not the direct env var), the
+    CLI's _store_from_env() must resolve the SAME key the API writes with —
+    via resolve_secret, not a bare os.environ.get. Otherwise the CLI opens
+    the store with an empty key and reports a correctly-signed production
+    chain as tampered."""
+    from pramagent import cli
+    from pramagent.store import SQLiteStore
+
+    db = str(tmp_path / "audit.db")
+    for var in ("PRAMAGENT_SIGNING_KEY", "PRAMAGENT_POSTGRES_DSN",
+                "PRAMAGENT_ENCRYPTION_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("PRAMAGENT_DB", db)
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEY_VAULT_PATH",
+                       "secret/data/pramagent/signing")
+    monkeypatch.setattr(secrets_mod, "_fetch_vault_secret",
+                        lambda path: "the-real-production-signing-key")
+
+    # API-side write path (build_default_armor resolves the key this way).
+    api_key = resolve_secret("PRAMAGENT_SIGNING_KEY")
+    assert api_key == "the-real-production-signing-key"
+    api_store = SQLiteStore(db, signing_key=api_key)
+    api_store.append({"tenant_id": "t", "event": "one"})
+    api_store.append({"tenant_id": "t", "event": "two"})
+    assert api_store.verify_chain() is True
+
+    # CLI-side store must resolve the identical key → chain verifies.
+    cli_store = cli._store_from_env()
+    assert cli_store.verify_chain() is True
+
+    # Contrast: opening with the wrong (empty) key — the pre-fix behaviour,
+    # since only the *_VAULT_PATH var was set — flags the chain as tampered.
+    assert SQLiteStore(db, signing_key="").verify_chain() is False

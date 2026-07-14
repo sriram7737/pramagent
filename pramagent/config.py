@@ -202,16 +202,28 @@ class Settings:
             return None
 
     def postgres_store(self):
-        """Construct a PostgresStore from current settings. Returns None if DSN empty."""
+        """Construct a PostgresStore from current settings. Returns None if DSN empty.
+
+        C2/HIGH-2: the signing and encryption keys are resolved through the
+        same secret-manager indirection layer build_default_armor() uses
+        (resolve_secret), and wired into the store. Previously this path
+        built the store with neither, so following the documented `init`
+        template silently yielded an unencrypted store whose audit chain the
+        API-signed entries could not be verified against."""
         if not self.postgres_dsn:
             return None
         try:
+            from .secrets import resolve_secret
             from .store_postgres import PostgresStore
+            signing_key = resolve_secret("PRAMAGENT_SIGNING_KEY").strip()
+            encryption_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
             return PostgresStore.from_dsn(
                 self.postgres_dsn,
                 max_pool_size=self.pool_max_connections,
                 breaker_threshold=self.breaker_threshold,
                 breaker_cooldown_s=self.breaker_cooldown_s,
+                encryption_key=encryption_key or None,
+                signing_key=signing_key,
             )
         except Exception:
             return None

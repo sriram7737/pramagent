@@ -235,14 +235,22 @@ def cmd_auth_revoke(args) -> int:
 
 def _store_from_env():
     import os
+
+    from .secrets import resolve_secret
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
-    signing_key = os.environ.get("PRAMAGENT_SIGNING_KEY", "").strip()
+    # HIGH-2: resolve signing/encryption keys through the SAME indirection
+    # layer the API's build_default_armor() uses (AWS Secrets Manager / Vault
+    # via *_AWS_SECRET_ID / *_VAULT_PATH). A bare os.environ.get() here opened
+    # the store with an empty key while the API wrote with the real one, so
+    # `audit verify`/`audit-export` reported a correctly-signed production
+    # chain as tampered.
+    signing_key = resolve_secret("PRAMAGENT_SIGNING_KEY").strip()
     if dsn:
         from .store_postgres import PostgresStore
         return PostgresStore.from_dsn(dsn, signing_key=signing_key)
     if db_path:
-        key = os.environ.get("PRAMAGENT_ENCRYPTION_KEY", "").strip()
+        key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
         if key:
             from .store_encrypted import EncryptedSQLiteStore
             return EncryptedSQLiteStore(db_path, key=key, signing_key=signing_key)
