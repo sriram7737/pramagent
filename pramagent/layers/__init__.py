@@ -201,11 +201,16 @@ class Rule:
             try:
                 fired = bool(self.fn(text))
             except Exception as exc:
+                # Log only the exception's type, never its message or
+                # traceback: both can echo the offending input text (e.g. a
+                # custom rule that raises with the input embedded), which
+                # would leak PHI/PII into logs even though the fail-closed
+                # BLOCK decision itself is correct (ISSUE-5).
                 log.warning(
                     "safety rule %s failed closed: %s",
                     self.rule_id,
-                    exc,
-                    exc_info=True,
+                    type(exc).__name__,
+                    exc_info=False,
                 )
                 return RuleResult(
                     rule_id=self.rule_id,
@@ -264,11 +269,13 @@ class SafetyLayer:
                 # customer rule must fail closed, not turn the request into a
                 # 500 or silently disappear from the audit trace.
                 rule_id = getattr(r, "rule_id", "<unknown>")
+                # See the note in Rule.evaluate() above: exception message
+                # and traceback can both echo the offending input (ISSUE-5).
                 log.warning(
                     "safety rule %s failed closed: %s",
                     rule_id,
-                    exc,
-                    exc_info=True,
+                    type(exc).__name__,
+                    exc_info=False,
                 )
                 results.append(RuleResult(
                     rule_id=rule_id,
@@ -281,11 +288,13 @@ class SafetyLayer:
             try:
                 clf = classifier(text)
             except Exception as exc:
+                # See the note in Rule.evaluate() above: exception message
+                # and traceback can both echo the offending input (ISSUE-5).
                 log.warning(
                     "safety classifier failed closed during %s pass: %s",
                     phase,
-                    exc,
-                    exc_info=True,
+                    type(exc).__name__,
+                    exc_info=False,
                 )
                 clf = Verdict.BLOCK
                 results.append(RuleResult(

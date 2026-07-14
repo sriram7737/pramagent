@@ -174,6 +174,75 @@ def test_safety_classifier_exception_fails_closed():
     assert fired[0].action == Verdict.BLOCK
 
 
+def test_broken_rule_exception_does_not_leak_input_into_logs(caplog):
+    """A rule (or classifier) exception must fail closed WITHOUT putting the
+    offending input into logs via the exception message or traceback stack
+    frame — the fail-closed BLOCK decision is correct, but exc_info=True (or
+    interpolating the exception itself) can echo PHI/PII into logs (ISSUE-5).
+    """
+    secret = "patient SSN 123-45-6789 needs urgent review"
+
+    def broken_rule(text):
+        raise RuntimeError(f"could not evaluate: {text}")
+
+    armor = Pramagent(
+        provider=MockProvider(),
+        safety=SafetyLayer(rules=[Rule("custom_rule", Verdict.BLOCK, fn=broken_rule)]),
+    )
+
+    with caplog.at_level("WARNING"):
+        r = run(armor.run(secret))
+
+    assert r.blocked is True
+    for record in caplog.records:
+        assert secret not in record.getMessage()
+        assert not record.exc_info
+
+
+def test_broken_classifier_exception_does_not_leak_input_into_logs(caplog):
+    secret = "patient SSN 123-45-6789 needs urgent review"
+
+    def broken_classifier(text):
+        raise RuntimeError(f"classifier choked on: {text}")
+
+    armor = Pramagent(
+        provider=MockProvider(),
+        safety=SafetyLayer(classifier=broken_classifier),
+    )
+
+    with caplog.at_level("WARNING"):
+        r = run(armor.run(secret))
+
+    assert r.blocked is True
+    for record in caplog.records:
+        assert secret not in record.getMessage()
+        assert not record.exc_info
+
+
+def test_broken_rule_subclass_exception_does_not_leak_input_into_logs(caplog):
+    """Same as above, exercising the second exception-handling site: the
+    defensive wrapper in SafetyLayer._evaluate_with() around a Rule
+    subclass whose own evaluate() raises (not just the fn= callback)."""
+    secret = "patient SSN 123-45-6789 needs urgent review"
+
+    class BrokenRule(Rule):
+        def evaluate(self, text):
+            raise RuntimeError(f"broken subclass rule on: {text}")
+
+    armor = Pramagent(
+        provider=MockProvider(),
+        safety=SafetyLayer(rules=[BrokenRule("broken_subclass", Verdict.BLOCK)]),
+    )
+
+    with caplog.at_level("WARNING"):
+        r = run(armor.run(secret))
+
+    assert r.blocked is True
+    for record in caplog.records:
+        assert secret not in record.getMessage()
+        assert not record.exc_info
+
+
 def test_hitl_idle_on_silence():
     async def no_answer(a, c): return None
     armor = Pramagent(
