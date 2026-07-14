@@ -32,6 +32,24 @@ Audit-chain tamper detection is automated, not just a human-triggered check:
 - Everything else (auth-failure spikes, unusual traffic patterns) is still
   manual/log-review based — there is no SIEM integration.
 
+**Detection limit — know what tamper-alert silence does and does not mean.**
+`verify_chain()` recomputes the hash chain from the payloads stored in the
+same database it protects. If `PRAMAGENT_SIGNING_KEY` is NOT configured, an
+attacker with raw database write access can edit a record and recompute
+every hash after it forward — `verify_chain()` will report `True` and no
+alert will ever fire, because the hash function and its inputs are both
+public. If a signing key IS configured, that specific forgery requires the
+key too — but an attacker who also has the application's runtime secrets
+(and therefore the key) can still do it. Either way, a clean `verify_chain()`
+result is not proof against a privileged-database-access incident by
+itself. Corroborate with the database provider's own connection and
+activity history and with infrastructure-level access logs, not the chain
+alone. External anchoring (`EthereumBackend` / `HyperledgerBackend`) closes
+this gap by publishing the chain head somewhere outside the database's own
+trust boundary. Treat a missing external anchor as a standing gap in
+tamper-detection coverage for this deployment, not a reason to trust
+chain-only evidence more than it can support.
+
 ## On-Call Roster And Escalation
 
 **Interim roster:** Sriram Rampelli is the creator and current accountable

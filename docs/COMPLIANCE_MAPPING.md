@@ -17,9 +17,21 @@ a certification. Independent audit is required for any compliance claim.
 |---|---|---|
 | Access control | 164.312(a)(1) | API-key + JWT auth, per-tenant isolation, cross-tenant trace guard |
 | Audit controls | 164.312(b) | Tamper-evident hash chain + approval audit log |
-| Integrity | 164.312(c)(1) | SHA-256 chain verification detects any retroactive edit |
+| Integrity | 164.312(c)(1) | HMAC-SHA256 chain verification (`PRAMAGENT_SIGNING_KEY`) detects any retroactive edit made through the application; see the threat-model caveat below for direct DB access |
 | Transmission security | 164.312(e)(1) | TLS/HSTS headers; encrypted-at-rest SQLite option |
 | Minimum necessary | 164.502(b) | PII scrubbing before model exposure |
+
+**Threat-model caveat for the "Integrity" control above:** the hash chain
+(keyed with `PRAMAGENT_SIGNING_KEY` or not) is computed and stored inside the
+same database it protects. It is tamper-evident against edits made through
+the application layer (bugs, compromised credentials, SQL injection through
+the app's own write path). It is NOT tamper-evident, even when keyed, against
+an actor who has both raw database write access AND the signing key (e.g.
+anyone with access to the application's runtime secrets). A compliance claim
+that must cover that combined threat requires external anchoring
+(`EthereumBackend` / `HyperledgerBackend` in `pramagent/audit/__init__.py`),
+not the local chain alone — see "Audit Chain Threat Model" in
+`docs/HARDENING_GUIDE.md` for the full breakdown.
 
 ## SOC 2 (Trust Services Criteria)
 | TSC | Pramagent control |

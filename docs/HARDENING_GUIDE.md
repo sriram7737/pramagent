@@ -283,6 +283,46 @@ Next:
 - Use immutable external storage for audit exports where required.
 - Get an external pen test before claiming regulated production readiness.
 
+### Audit Chain Threat Model — What It Does and Does Not Protect Against
+
+The hash chain (`pramagent.audit.HashChainBackend` and the chain columns in
+every store backend) is tamper-**evident** for the threats it's designed for:
+an application bug, a compromised API credential, or SQL injection that edits
+a record through the app's normal write path. `verify_chain()` recomputes
+every link and any retroactive edit breaks the chain from that point forward.
+
+It is explicitly **not** tamper-evident against an actor with raw database
+write access, unless `PRAMAGENT_SIGNING_KEY` is set:
+
+- Without a signing key, `canonical_hash()` is unkeyed SHA-256 over public
+  data (the payload and the previous hash). Anyone who can write directly to
+  the `audit_chain` / `pramagent_chain` table can edit a payload and
+  recompute every hash after it — `verify_chain()` will report `True`
+  because the algorithm and its inputs are both public.
+- With `PRAMAGENT_SIGNING_KEY` set, `canonical_hash()` becomes HMAC-SHA256
+  keyed with that secret. Recomputing a valid chain then requires the key,
+  not just the payload — a DB-only attacker without the key cannot forge a
+  self-consistent chain. This closes the gap for that specific threat, but
+  the guarantee is only as strong as the key's secrecy and storage (a
+  secrets manager, not an env var checked into source control) and still
+  does not defend against an attacker who also has the key (e.g. anyone with
+  access to the application's own runtime secrets).
+- For a threat model that must also cover an attacker who compromises both
+  the database and the application's secrets, the signing key alone is not
+  enough — the chain head must be anchored outside the database entirely.
+  `EthereumBackend` and `HyperledgerBackend` (`pramagent/audit/__init__.py`)
+  exist for exactly this: they anchor the chain head to an external ledger,
+  so even a from-scratch chain rewrite would not match the previously
+  published anchors.
+
+**Any deployment claiming tamper-evidence against a database-write-access
+threat model must configure `PRAMAGENT_SIGNING_KEY` at minimum, and use
+`EthereumBackend`/`HyperledgerBackend` (not `HashChainBackend`/plain
+`SQLiteStore`/`PostgresStore`) if the threat model includes an attacker who
+also has that key.** Treat external anchoring as required, not optional, for
+that threat model — the local chain alone, keyed or not, is still evidence
+recomputed from data that lives in the same trust boundary as the attacker.
+
 ## External Security Assessment Scope
 
 Start this before GA. Typical scheduling lead time is measured in weeks, not
