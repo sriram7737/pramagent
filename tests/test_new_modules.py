@@ -121,6 +121,24 @@ class TestLLMJudge:
         assert d.verdict == Verdict.ALLOW
         assert d.latency_ms == 0.0
 
+    async def test_arguments_are_pii_scrubbed_before_judge_provider(self):
+        """B2: tool arguments go to an external LLM provider, so PII/PHI must
+        be redacted first — the same treatment the main prompt path gets."""
+        captured = {}
+
+        async def provider(prompt):
+            captured["prompt"] = prompt
+            return '{"verdict": "ALLOW", "confidence": 0.9, "reason": "ok"}'
+
+        judge = LLMJudge(provider=provider, policies=[JudgePolicy()])
+        await judge.evaluate(
+            "send_email",
+            {"to": "patient@example.com", "note": "SSN 123-45-6789"},
+            side_effect=SideEffect.PAYMENT, tenant_id="t", session_id="s")
+
+        assert "123-45-6789" not in captured["prompt"]
+        assert "patient@example.com" not in captured["prompt"]
+
     async def test_parse_error_escalates_by_default(self):
         judge = self._judge("not valid json at all")
         d = await judge.evaluate("wire_transfer", {},

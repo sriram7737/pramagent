@@ -210,12 +210,27 @@ class LLMJudge:
         self,
         provider: Callable,
         policies: Optional[list[JudgePolicy]] = None,
+        compliance: Optional[Any] = None,
     ) -> None:
         self._provider = provider
         self._policies = policies or [JudgePolicy()]
+        # B2: the tool arguments are sent to an external LLM provider, so they
+        # must go through the same PII/PHI redaction as the main prompt path.
+        # A caller can pass its own ComplianceLayer; otherwise the default one
+        # is built lazily (avoids a circular import at module load).
+        self._compliance = compliance
         # Bounded: long-lived processes must not leak one entry per judged
         # call forever (P2-2). Durable audit lives in the trace store.
         self.audit_log: deque[JudgeDecision] = deque(maxlen=10_000)
+
+    def _scrubber(self):
+        """The ComplianceLayer used to redact arguments before the judge sees
+        them (B2). Built lazily to avoid a circular import with the layers
+        package at module load."""
+        if self._compliance is None:
+            from pramagent.layers import ComplianceLayer
+            self._compliance = ComplianceLayer()
+        return self._compliance
 
     def _select_policy(self, side_effect: str) -> Optional[JudgePolicy]:
         for pol in self._policies:
@@ -242,7 +257,11 @@ class LLMJudge:
             return self._fast_allow(tool_name)
 
         template = policy.prompt_template or _DEFAULT_PROMPT
-        fenced_arguments = _fence("untrusted_tool_arguments", json.dumps(arguments, indent=2))
+        # B2: scrub PII/PHI out of the JSON-stringified arguments before they
+        # reach the (external) judge provider, mirroring the main prompt path.
+        arguments_json = json.dumps(arguments, indent=2)
+        arguments_json, _ = self._scrubber().scrub(arguments_json)
+        fenced_arguments = _fence("untrusted_tool_arguments", arguments_json)
         prompt = template.format(
             tool_name=tool_name,
             side_effect=side_effect,
