@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import threading
 import time
@@ -435,6 +436,10 @@ class _PostgresBase:
         `WHERE tenant_id = %s` filters are enforcing isolation. Connect as a
         dedicated non-superuser role (see deploy/postgres/init.sh) to close
         that gap for real.
+
+        D2: when PRAMAGENT_REQUIRE_RLS is truthy, an inert policy is a hard
+        startup failure (RuntimeError) instead of a warning — for deployments
+        that must not boot silently relying on app-layer filters alone.
         """
         try:
             cur.execute(
@@ -447,16 +452,20 @@ class _PostgresBase:
             return
         is_super, bypass_rls = row[0], row[1]
         if is_super or bypass_rls:
-            log.warning(
-                "Postgres role for this connection %s row-level security "
-                "(rolsuper=%s, rolbypassrls=%s) — the pramagent_traces tenant "
-                "isolation policy is a no-op for this role. Isolation is "
-                "enforced only by the app's own WHERE-clause filters. "
-                "Connect as a dedicated non-superuser role to make the "
-                "database-level policy actually take effect.",
-                "bypasses" if (is_super or bypass_rls) else "respects",
-                is_super, bypass_rls,
+            strict = os.environ.get("PRAMAGENT_REQUIRE_RLS", "").strip().lower() in {
+                "1", "true", "yes", "on"}
+            message = (
+                f"Postgres role for this connection bypasses row-level security "
+                f"(rolsuper={is_super}, rolbypassrls={bypass_rls}) — the "
+                f"pramagent_traces tenant isolation policy is a no-op for this "
+                f"role. Isolation is enforced only by the app's own WHERE-clause "
+                f"filters. Connect as a dedicated non-superuser role to make the "
+                f"database-level policy actually take effect."
             )
+            if strict:
+                raise RuntimeError(
+                    "PRAMAGENT_REQUIRE_RLS is set but " + message)
+            log.warning("%s", message)
 
     def _run(self, fn):
         """Execute fn(conn, cursor) with circuit-breaker + retry."""

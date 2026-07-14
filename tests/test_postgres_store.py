@@ -445,6 +445,24 @@ def test_export_audit_jsonl_warns_on_truncation(pg, tmp_path, caplog):
     assert not any("TRUNCATED" in r.message for r in caplog.records)
 
 
+def test_require_rls_raises_on_bypass_role(monkeypatch):
+    """D2: with PRAMAGENT_REQUIRE_RLS set, a superuser/BYPASSRLS connection
+    (where the isolation policy is inert) must fail startup, not just warn."""
+    class _SuperuserCursor:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params=None): self._row = (True, False)
+        def fetchone(self): return getattr(self, "_row", None)
+
+    monkeypatch.setenv("PRAMAGENT_REQUIRE_RLS", "1")
+    with pytest.raises(RuntimeError, match="PRAMAGENT_REQUIRE_RLS"):
+        PostgresStore._warn_if_rls_inert(_SuperuserCursor())
+
+    # without the flag, the same inert role only warns (no raise)
+    monkeypatch.delenv("PRAMAGENT_REQUIRE_RLS", raising=False)
+    PostgresStore._warn_if_rls_inert(_SuperuserCursor())
+
+
 def test_unreachable_postgres_raises_early():
     def refuse(dsn):
         raise ConnectionRefusedError("nope")
