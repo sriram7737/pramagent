@@ -300,6 +300,7 @@ class _PostgresBase:
         breaker_cooldown_s: float = 30.0,
         connect=None,
         encryption_key: "bytes | str | None" = None,
+        signing_key: str = "",
     ) -> None:
         self._pool = _ThreadLocalPool(dsn, max_pool_size=max_pool_size,
                                       connect=connect)
@@ -311,6 +312,10 @@ class _PostgresBase:
         # prev of the most recent append — core records it on the trace
         self.last_prev_hash = GENESIS
         self._fernet = self._build_fernet(encryption_key)
+        # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
+        # docstring for why an unkeyed chain alone isn't tamper-evident
+        # against an actor with raw DB write access.
+        self._signing_key = signing_key
 
     @staticmethod
     def _build_fernet(encryption_key: "bytes | str | None"):
@@ -367,6 +372,7 @@ class _PostgresBase:
         breaker_cooldown_s: float = 30.0,
         connect=None,
         encryption_key: "bytes | str | None" = None,
+        signing_key: str = "",
     ) -> "_PostgresBase":
         """Construct, validate connectivity, run DDL, return instance."""
         instance = cls(
@@ -378,6 +384,7 @@ class _PostgresBase:
             breaker_cooldown_s=breaker_cooldown_s,
             connect=connect,
             encryption_key=encryption_key,
+            signing_key=signing_key,
         )
         instance._validate_and_init()
         return instance
@@ -508,7 +515,7 @@ class PostgresStore(_PostgresBase):
     ``store=db`` and ``audit=db`` to Pramagent. Conforms to the same
     ``TraceStore`` protocol as SQLiteStore (call_id keying, TraceEvent
     returns, KeyError/PermissionError semantics) and uses the same
-    ``canonical_hash(payload, prev)`` chained hashing, so the tamper-evidence
+    ``canonical_hash(payload, prev, signing_key)`` chained hashing, so the tamper-evidence
     guarantee is identical on the production backend (T2-3 / P1-6).
     """
 
@@ -702,7 +709,7 @@ class PostgresStore(_PostgresBase):
                 redacted += 1
                 rehash = True
             if rehash:
-                new_hash = canonical_hash(payload, prev)
+                new_hash = canonical_hash(payload, prev, self._signing_key)
 
                 def _update(conn, cur, *, _id=row_id, _payload=payload,
                             _hash=new_hash, _prev=prev):
@@ -756,7 +763,7 @@ class PostgresStore(_PostgresBase):
     def append(self, payload: dict, prev_hash: Optional[str] = None) -> AuditAppendResult:
         """Append one chain link.
 
-        The hash material includes prev_hash — canonical_hash(payload, prev) —
+        The hash material includes prev_hash — canonical_hash(payload, prev, signing_key) —
         exactly like SQLiteStore, so deleting or reordering rows breaks every
         subsequent link (T2-3). `prev` is re-read from the DB inside the
         transaction with FOR UPDATE, serializing concurrent writers across
@@ -769,7 +776,7 @@ class PostgresStore(_PostgresBase):
             )
             row = cur.fetchone()
             prev = row[0] if row else GENESIS
-            this_hash = canonical_hash(payload, prev)
+            this_hash = canonical_hash(payload, prev, self._signing_key)
             cur.execute(
                 """
                 INSERT INTO pramagent_chain (this_hash, prev_hash, payload)
@@ -788,7 +795,7 @@ class PostgresStore(_PostgresBase):
 
     def verify_chain(self) -> bool:
         """Walk rows in id order; True only when every this_hash matches
-        canonical_hash(payload, prev) AND stored_prev links to the previous
+        canonical_hash(payload, prev, signing_key) AND stored_prev links to the previous
         row's this_hash. Same contract as SQLiteStore.verify_chain()."""
         return not self.verify()
 
@@ -807,7 +814,7 @@ class PostgresStore(_PostgresBase):
         prev = GENESIS
         for this_hash, stored_prev, payload_raw in rows:
             payload = self._deserialize_payload(payload_raw)
-            if canonical_hash(payload, prev) != this_hash:
+            if canonical_hash(payload, prev, self._signing_key) != this_hash:
                 broken.append({"this_hash": this_hash, "reason": "hash mismatch"})
             elif stored_prev != prev:
                 broken.append({"this_hash": this_hash, "reason": "broken prev link"})

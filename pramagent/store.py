@@ -121,7 +121,11 @@ class SQLiteStore:
         audit_chain  — ordered chain records for tamper verification
     """
 
-    def __init__(self, path: str = "pramagent.db") -> None:
+    def __init__(self, path: str = "pramagent.db", signing_key: str = "") -> None:
+        # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
+        # docstring for why an unkeyed chain alone isn't tamper-evident
+        # against an actor with raw DB write access.
+        self._signing_key = signing_key
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")   # safe for concurrent reads
         # One shared connection used from multiple threads (core offloads
@@ -287,7 +291,7 @@ class SQLiteStore:
                     redacted += 1
                     rehash = True
                 if rehash:
-                    new_hash = canonical_hash(payload, prev)
+                    new_hash = canonical_hash(payload, prev, self._signing_key)
                     self._conn.execute(
                         "UPDATE audit_chain SET payload = ?, prev_hash = ?, this_hash = ?"
                         " WHERE seq = ?",
@@ -321,7 +325,7 @@ class SQLiteStore:
                 "SELECT this_hash FROM audit_chain ORDER BY seq DESC LIMIT 1"
             ).fetchone()
             prev = row[0] if row else GENESIS       # re-read under the lock
-            this_hash = canonical_hash(payload, prev)
+            this_hash = canonical_hash(payload, prev, self._signing_key)
             self._conn.execute(
                 "INSERT INTO audit_chain (payload, prev_hash, this_hash) VALUES (?, ?, ?)",
                 (json.dumps(payload, sort_keys=True, separators=(",", ":")),
@@ -340,7 +344,7 @@ class SQLiteStore:
         prev = GENESIS
         for payload_json, stored_prev, stored_hash in rows:
             payload = json.loads(payload_json)
-            expected = canonical_hash(payload, prev)
+            expected = canonical_hash(payload, prev, self._signing_key)
             if expected != stored_hash or stored_prev != prev:
                 return False
             prev = stored_hash

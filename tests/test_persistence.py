@@ -78,6 +78,54 @@ def test_sqlite_chain_integrity():
         os.unlink(path)
 
 
+def test_sqlite_chain_uses_hmac_signing_key_when_configured():
+    """When PRAMAGENT_SIGNING_KEY is wired in, verify_chain() must fail if the
+    wrong key (or no key) is used to recompute it — otherwise the setting is
+    dead config that implies a security property the chain doesn't have
+    (ISSUE-3)."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = SQLiteStore(path, signing_key="correct-signing-key")
+        armor = Pramagent(
+            provider=MockProvider(),
+            compliance=ComplianceLayer(),
+            store=db,
+            audit=db,
+        )
+        run(armor.run("a")); run(armor.run("b"))
+        assert db.verify_chain()
+        db.close()
+
+        # reopening with the same key: still valid
+        same_key = SQLiteStore(path, signing_key="correct-signing-key")
+        assert same_key.verify_chain()
+        same_key.close()
+
+        # reopening with the wrong key: the chain must NOT verify — proving
+        # recomputation actually requires the secret, not just the payload
+        wrong_key = SQLiteStore(path, signing_key="wrong-signing-key")
+        assert not wrong_key.verify_chain()
+        wrong_key.close()
+
+        # reopening with no key at all: also must not verify
+        no_key = SQLiteStore(path)
+        assert not no_key.verify_chain()
+        no_key.close()
+    finally:
+        os.unlink(path)
+
+
+def test_canonical_hash_differs_with_and_without_signing_key():
+    from pramagent.audit import canonical_hash
+
+    unkeyed = canonical_hash({"a": 1}, "0" * 64)
+    keyed = canonical_hash({"a": 1}, "0" * 64, "some-secret")
+    other_key = canonical_hash({"a": 1}, "0" * 64, "different-secret")
+    assert unkeyed != keyed
+    assert keyed != other_key
+
+
 def test_sqlite_pii_scrubbing_persisted():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name

@@ -217,16 +217,17 @@ def _store_from_env():
     import os
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
+    signing_key = os.environ.get("PRAMAGENT_SIGNING_KEY", "").strip()
     if dsn:
         from .store_postgres import PostgresStore
-        return PostgresStore.from_dsn(dsn)
+        return PostgresStore.from_dsn(dsn, signing_key=signing_key)
     if db_path:
         key = os.environ.get("PRAMAGENT_ENCRYPTION_KEY", "").strip()
         if key:
             from .store_encrypted import EncryptedSQLiteStore
-            return EncryptedSQLiteStore(db_path, key=key)
+            return EncryptedSQLiteStore(db_path, key=key, signing_key=signing_key)
         from .store import SQLiteStore
-        return SQLiteStore(db_path)
+        return SQLiteStore(db_path, signing_key=signing_key)
     raise RuntimeError("set PRAMAGENT_POSTGRES_DSN or PRAMAGENT_DB")
 
 

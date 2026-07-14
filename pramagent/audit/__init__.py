@@ -17,6 +17,7 @@ chain-only evidence during chain outages.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import threading
@@ -55,14 +56,25 @@ class AuditAppendResult:
         return (self.this_hash, self.anchor_tx_id)[index]
 
 
-def canonical_hash(payload: dict, prev_hash: str) -> str:
+def canonical_hash(payload: dict, prev_hash: str, signing_key: str = "") -> str:
     """
-    Deterministic SHA-256 over the canonical JSON of the payload plus the
+    Deterministic hash over the canonical JSON of the payload plus the
     previous hash. Sorting keys guarantees the same bytes every time, which is
     what makes verification and decision-replay possible.
+
+    When `signing_key` is set, this is HMAC-SHA256 keyed with it: recomputing
+    a valid chain then requires the secret, not just re-running the same
+    public hash function — the property PRAMAGENT_SIGNING_KEY is documented
+    to provide. Without a key (the default, for backward compatibility with
+    existing unkeyed chains), this is plain SHA-256 — recomputable by anyone
+    with the payload, which is why an unkeyed chain alone does not defend
+    against an actor with raw database write access (see HARDENING_GUIDE.md).
     """
     material = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "|" + prev_hash
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    material_bytes = material.encode("utf-8")
+    if signing_key:
+        return hmac.new(signing_key.encode("utf-8"), material_bytes, hashlib.sha256).hexdigest()
+    return hashlib.sha256(material_bytes).hexdigest()
 
 
 # Chain-payload fields that can carry user content and must be tombstoned on
@@ -135,11 +147,15 @@ class HashChainBackend:
 
     GENESIS = "0" * 64
 
-    def __init__(self) -> None:
+    def __init__(self, signing_key: str = "") -> None:
         self._records: list[dict] = []   # each: {payload, prev_hash, this_hash}
         self._head: str = self.GENESIS
         # prev of the most recent append — core records it on the trace
         self.last_prev_hash: str = self.GENESIS
+        # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY). Empty string
+        # means the chain is unkeyed plain SHA-256, recomputable by anyone
+        # with DB write access — see canonical_hash's docstring.
+        self._signing_key = signing_key
         # Appends may arrive from worker threads (core offloads persistence
         # via asyncio.to_thread); deriving prev and inserting must be one
         # critical section or concurrent writers fork the chain (P1-5/T2-4).
@@ -152,7 +168,7 @@ class HashChainBackend:
     def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
         with self._lock:
             prev = prev_hash if prev_hash is not None else self._head
-            this_hash = canonical_hash(payload, prev)
+            this_hash = canonical_hash(payload, prev, self._signing_key)
             self._records.append({"payload": payload, "prev_hash": prev, "this_hash": this_hash})
             self.last_prev_hash = prev
             self._head = this_hash
@@ -160,10 +176,14 @@ class HashChainBackend:
             return AuditAppendResult(this_hash, f"local:{this_hash[:16]}", prev)
 
     def verify_chain(self) -> bool:
-        """Recompute every hash; return False if any link is broken (tampering)."""
+        """Recompute every hash; return False if any link is broken (tampering).
+
+        Recomputation uses this instance's signing key. A chain written with
+        one key and verified with a different (or absent) key will report as
+        invalid — that mismatch is the whole point of keying the chain."""
         prev = self.GENESIS
         for rec in self._records:
-            expected = canonical_hash(rec["payload"], prev)
+            expected = canonical_hash(rec["payload"], prev, self._signing_key)
             if expected != rec["this_hash"] or rec["prev_hash"] != prev:
                 return False
             prev = rec["this_hash"]
@@ -198,7 +218,7 @@ class HashChainBackend:
                 rehash = True
             if rehash:
                 rec["prev_hash"] = prev
-                rec["this_hash"] = canonical_hash(payload, prev)
+                rec["this_hash"] = canonical_hash(payload, prev, self._signing_key)
             prev = rec["this_hash"]
         if rehash:
             self._head = prev
@@ -220,13 +240,14 @@ class EthereumBackend:
         chain_id: int = 11155111,
         anchor: EthereumAnchor | None = None,
         fail_open: bool = False,
+        signing_key: str = "",
     ):
         self.rpc_url = rpc_url
         self.contract = contract
         self.private_key = private_key
         self.chain_id = chain_id
         self.fail_open = fail_open
-        self._chain = HashChainBackend()
+        self._chain = HashChainBackend(signing_key=signing_key)
         self._anchor = anchor
         self.last_anchor: EthereumAnchorReceipt | None = None
         if self._anchor is None and rpc_url and private_key:
@@ -294,11 +315,11 @@ class HyperledgerBackend:
     """
 
     def __init__(self, channel: str = "", chaincode: str = "",
-                 gateway: str = "") -> None:
+                 gateway: str = "", signing_key: str = "") -> None:
         self.channel = channel
         self.chaincode = chaincode
         self.gateway = gateway
-        self._chain = HashChainBackend()
+        self._chain = HashChainBackend(signing_key=signing_key)
         self._anchored = 0
 
     @property

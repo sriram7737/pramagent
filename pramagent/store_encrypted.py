@@ -60,7 +60,12 @@ class EncryptedSQLiteStore:
     invisible to the audit semantics.
     """
 
-    def __init__(self, path: str = "pramagent.db", key: bytes | str | None = None) -> None:
+    def __init__(self, path: str = "pramagent.db", key: bytes | str | None = None,
+                 signing_key: str = "") -> None:
+        # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
+        # docstring for why an unkeyed chain alone isn't tamper-evident
+        # against an actor with raw DB write access.
+        self._signing_key = signing_key
         try:
             from cryptography.fernet import Fernet
         except ImportError as e:
@@ -236,7 +241,7 @@ class EncryptedSQLiteStore:
                     redacted += 1
                     rehash = True
                 if rehash:
-                    new_hash = canonical_hash(payload, prev)
+                    new_hash = canonical_hash(payload, prev, self._signing_key)
                     blob = self._encrypt(json.dumps(payload, sort_keys=True,
                                                     separators=(",", ":")))
                     self._conn.execute(
@@ -267,7 +272,7 @@ class EncryptedSQLiteStore:
             ).fetchone()
             prev = row[0] if row else GENESIS       # re-read under the lock
             canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-            this_hash = canonical_hash(payload, prev)
+            this_hash = canonical_hash(payload, prev, self._signing_key)
             self._conn.execute(
                 "INSERT INTO audit_chain (payload_enc, prev_hash, this_hash) VALUES (?, ?, ?)",
                 (self._encrypt(canonical_json), prev, this_hash),
@@ -287,7 +292,7 @@ class EncryptedSQLiteStore:
                 payload = json.loads(self._decrypt(payload_enc))
             except Exception:
                 return False    # tampering with ciphertext or wrong key
-            expected = canonical_hash(payload, prev)
+            expected = canonical_hash(payload, prev, self._signing_key)
             if expected != stored_hash or stored_prev != prev:
                 return False
             prev = stored_hash

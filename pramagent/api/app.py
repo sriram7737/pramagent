@@ -987,6 +987,7 @@ def build_default_armor() -> Pramagent:
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
     encryption_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
+    signing_key = resolve_secret("PRAMAGENT_SIGNING_KEY").strip()
     require_encrypted_store = (
         _env_true("PRAMAGENT_REQUIRE_ENCRYPTED_STORE")
         or _phi_mode_enabled()
@@ -1010,19 +1011,20 @@ def build_default_armor() -> Pramagent:
                 "provider-managed disk/TDE encryption)"
             )
         from ..store_postgres import PostgresStore
-        db = PostgresStore.from_dsn(dsn, encryption_key=encryption_key or None)
+        db = PostgresStore.from_dsn(dsn, encryption_key=encryption_key or None,
+                                    signing_key=signing_key)
         store, audit = db, db          # single object handles both
     elif db_path:
         if encryption_key:
             from ..store_encrypted import EncryptedSQLiteStore
-            db = EncryptedSQLiteStore(db_path, key=encryption_key)
+            db = EncryptedSQLiteStore(db_path, key=encryption_key, signing_key=signing_key)
         elif require_encrypted_store:
             raise RuntimeError(
                 "PHI/encrypted-store mode requires PRAMAGENT_ENCRYPTION_KEY "
                 "when PRAMAGENT_DB points at SQLite"
             )
         else:
-            db = SQLiteStore(db_path)
+            db = SQLiteStore(db_path, signing_key=signing_key)
         store, audit = db, db          # single object handles both
     elif os.environ.get("PRAMAGENT_ALLOW_MEMORY_STORE", "").lower() in {"1", "true"}:
         if require_encrypted_store:
