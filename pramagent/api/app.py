@@ -685,7 +685,10 @@ class DemoProductSignals:
         except Exception as exc:
             self._postgres_ready = False
             self._postgres_error = str(exc)
-            log.warning("demo product signal Postgres unavailable; using memory", exc_info=True)
+            # LOW-2: align with the ISSUE-5 posture — log the exception type,
+            # not a full traceback that could echo row/query content.
+            log.warning("demo product signal Postgres unavailable; using memory: %s",
+                        exc.__class__.__name__)
 
     def _persist_event(self, event: dict) -> None:
         if not self._postgres_ready:
@@ -715,7 +718,8 @@ class DemoProductSignals:
         except Exception as exc:
             self._postgres_ready = False
             self._postgres_error = str(exc)
-            log.warning("demo product signal event persistence failed", exc_info=True)
+            log.warning("demo product signal event persistence failed: %s",
+                        exc.__class__.__name__)  # LOW-2: no traceback (ISSUE-5 posture)
 
     def _persist_lead(self, lead: dict) -> None:
         if not self._postgres_ready:
@@ -738,7 +742,8 @@ class DemoProductSignals:
         except Exception as exc:
             self._postgres_ready = False
             self._postgres_error = str(exc)
-            log.warning("demo product signal lead persistence failed", exc_info=True)
+            log.warning("demo product signal lead persistence failed: %s",
+                        exc.__class__.__name__)  # LOW-2: no traceback (ISSUE-5 posture)
 
     def record_run(
         self,
@@ -965,7 +970,8 @@ class DemoProductSignals:
         except Exception as exc:
             self._postgres_ready = False
             self._postgres_error = str(exc)
-            log.warning("demo product signal Postgres read failed", exc_info=True)
+            log.warning("demo product signal Postgres read failed: %s",
+                        exc.__class__.__name__)  # LOW-2: no traceback (ISSUE-5 posture)
             return None
 
     def snapshot(self, *, limit: int = 100) -> dict:
