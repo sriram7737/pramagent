@@ -243,3 +243,33 @@ def test_sqlite_multiple_tenants_isolated():
         db.close()
     finally:
         os.unlink(path)
+
+
+def test_sqlite_verify_returns_broken_links_like_postgres():
+    """B4: SQLiteStore.verify() exists and returns the same broken-link list
+    shape PostgresStore.verify() does, so `pramagent audit-verify-watch`
+    works against the default SQLite backend instead of crashing with
+    AttributeError."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        db = SQLiteStore(path, signing_key="k")
+        db.append({"tenant_id": "t", "n": 1})
+        db.append({"tenant_id": "t", "n": 2})
+
+        assert db.verify() == []           # intact
+        assert db.verify_chain() is True
+
+        # tamper directly in storage, bypassing append()
+        db._conn.execute(
+            "UPDATE audit_chain SET payload = ? WHERE seq = 1",
+            (json.dumps({"tenant_id": "t", "n": 999}),),
+        )
+        db._conn.commit()
+
+        broken = db.verify()
+        assert broken and broken[0]["reason"] == "hash mismatch"
+        assert db.verify_chain() is False
+    finally:
+        db.close()
+        os.unlink(path)

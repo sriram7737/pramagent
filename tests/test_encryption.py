@@ -87,6 +87,11 @@ def test_wrong_key_fails_to_decrypt():
             attacker.get(r.trace.call_id)
         # chain verification with the wrong key must return False, not crash
         assert attacker.verify_chain() is False
+        # B4: verify() (broken-link list, used by audit-verify-watch) must
+        # also work on the encrypted backend — undecryptable ciphertext is a
+        # broken link, not a crash.
+        broken = attacker.verify()
+        assert broken and broken[0]["reason"] == "hash mismatch"
         attacker.close()
     finally:
         os.unlink(path)

@@ -298,6 +298,30 @@ class EncryptedSQLiteStore:
             prev = stored_hash
         return True
 
+    def verify(self) -> list[dict]:
+        """Broken-link list (empty = intact), matching PostgresStore.verify()
+        so `pramagent audit-verify-watch` works against the encrypted SQLite
+        backend too (B4). A ciphertext that will not decrypt is reported as a
+        hash mismatch rather than crashing."""
+        rows = self._conn.execute(
+            "SELECT payload_enc, prev_hash, this_hash FROM audit_chain ORDER BY seq"
+        ).fetchall()
+        broken: list[dict] = []
+        prev = GENESIS
+        for payload_enc, stored_prev, stored_hash in rows:
+            try:
+                payload = json.loads(self._decrypt(payload_enc))
+            except Exception:
+                broken.append({"this_hash": stored_hash, "reason": "hash mismatch"})
+                prev = stored_hash
+                continue
+            if canonical_hash(payload, prev, self._signing_key) != stored_hash:
+                broken.append({"this_hash": stored_hash, "reason": "hash mismatch"})
+            elif stored_prev != prev:
+                broken.append({"this_hash": stored_hash, "reason": "broken prev link"})
+            prev = stored_hash
+        return broken
+
     def records(self) -> list[dict]:
         rows = self._conn.execute(
             "SELECT payload_enc, prev_hash, this_hash FROM audit_chain ORDER BY seq"

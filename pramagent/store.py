@@ -350,6 +350,27 @@ class SQLiteStore:
             prev = stored_hash
         return True
 
+    def verify(self) -> list[dict]:
+        """Verify hash-chain integrity, returning a list of broken links
+        (empty = intact) — the same shape PostgresStore.verify() returns, so
+        `pramagent audit-verify-watch` works against SQLite too (B4). This
+        was previously Postgres-only, so the watch command crashed with
+        AttributeError on the documented default SQLite backend."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload, prev_hash, this_hash FROM audit_chain ORDER BY seq"
+            ).fetchall()
+        broken: list[dict] = []
+        prev = GENESIS
+        for payload_json, stored_prev, stored_hash in rows:
+            payload = json.loads(payload_json)
+            if canonical_hash(payload, prev, self._signing_key) != stored_hash:
+                broken.append({"this_hash": stored_hash, "reason": "hash mismatch"})
+            elif stored_prev != prev:
+                broken.append({"this_hash": stored_hash, "reason": "broken prev link"})
+            prev = stored_hash
+        return broken
+
     def records(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
