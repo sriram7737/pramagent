@@ -316,6 +316,14 @@ write access, unless `PRAMAGENT_SIGNING_KEY` is set:
   secrets manager, not an env var checked into source control) and still
   does not defend against an attacker who also has the key (e.g. anyone with
   access to the application's own runtime secrets).
+- HMAC keying does **not** stop chain *truncation* or *rollback* by a DB-only
+  attacker (LOW-3): deleting the most recent N rows leaves a shorter chain
+  that still verifies cleanly, and restoring an older snapshot rolls the chain
+  back to a valid earlier state. HMAC only prevents forging *new* content
+  without the key; it says nothing about a prefix of the chain being a
+  complete, honest history. Only external anchoring of the head (below)
+  detects a truncated or rolled-back tail, because the missing or older head
+  no longer matches the last published anchor.
 - For a threat model that must also cover an attacker who compromises both
   the database and the application's secrets, the signing key alone is not
   enough — the chain head must be anchored outside the database entirely.
@@ -331,6 +339,60 @@ threat model must configure `PRAMAGENT_SIGNING_KEY` at minimum, and use
 also has that key.** Treat external anchoring as required, not optional, for
 that threat model — the local chain alone, keyed or not, is still evidence
 recomputed from data that lives in the same trust boundary as the attacker.
+
+## Known Limitations (Round 2 audit)
+
+These are documented, accepted limitations rather than open bugs — surfaced
+here so operators can decide whether each matters for their threat model.
+
+- **Application-level encryption key (Fernet) is a single long-lived key with
+  no rotation (C5).** `PRAMAGENT_ENCRYPTION_KEY` cannot be rotated without
+  re-encrypting existing rows; there is no key-version tag on encrypted
+  payloads (unlike the audit-chain signing key, which now supports
+  `kid`-versioned rotation — see G1/`SigningKeyRing`). Rotation support can
+  follow the same versioning approach; until then, treat encryption-key
+  compromise as requiring a full re-encrypt/migrate, and store the key in a
+  secrets manager.
+- **JWTs have no per-token revocation (A5).** Only whole-key retirement (drop
+  a `kid` from `PRAMAGENT_JWT_SECRETS`) invalidates tokens; an individual
+  leaked token cannot be revoked before its `exp`. Mitigate by keeping the max
+  token TTL short; a per-`jti` denylist would be needed for instant
+  single-token revocation.
+- **`/v1/audit/verify` returns a cross-tenant record count (A7).** The audit
+  chain is a single global chain (deliberately not tenant-partitioned — see
+  the redaction/tombstone design), so the `records` count it returns is not
+  tenant-scoped. The chain-validity boolean is the security-relevant field;
+  the count is informational and does not expose row content.
+- **Dashboard session revocation is in-memory per-process without Redis (A8).**
+  In a non-Redis dashboard deployment, a revoked session is only revoked on the
+  worker that processed the logout; configure a Redis backend for the dashboard
+  to make revocation effective across workers.
+- **SQLite is usable for PHI outside explicit PHI-mode with no hard block
+  (C6).** `PRAMAGENT_REQUIRE_ENCRYPTED_STORE=1` / PHI-mode enforces an
+  encrypted store, but a plain `SQLiteStore` will otherwise accept PHI content;
+  enable PHI-mode for any deployment that may store PHI.
+- **The S3 trace store sets no server-side encryption header (C7).** Enable
+  bucket-default SSE (SSE-S3 or SSE-KMS) at the bucket policy level;
+  the store does not set `ServerSideEncryption` on individual puts.
+- **Some CLI env-var reads bypass the `secrets.py` indirection layer (C8).**
+  The signing/encryption keys now route through `resolve_secret` (HIGH-2), but
+  audit remaining `os.environ.get` reads before relying on secret-manager
+  indirection for every secret.
+- **`IsolationLayer` trusts the caller-supplied `tenant_id` (D4).** The binding
+  of `tenant_id` to the authenticated identity happens upstream in the API
+  layer (`api/app.py` `_resolve_tenant`/`_resolve_auth_record`); the isolation
+  layer itself does not re-derive it. Any code path that constructs the
+  pipeline outside the API layer must perform that binding itself.
+- **Redis key construction uses f-strings with no delimiter escaping (F3).**
+  Not currently a risk because keys are built only from internal
+  scope identifiers (tenant/session/tool), never from raw external input;
+  revisit if a key component ever becomes attacker-controlled.
+- **Live-Postgres RLS/chain tests skip silently when Docker is unavailable
+  (T2/T3/T4).** The container-backed tests (`test_postgres_rls_live.py`,
+  `test_postgres_hitl_queue_rls_live.py`) downgrade to a skip if the Docker CLI
+  is missing. CI should assert Docker is present so these do not silently
+  vanish from a run — add a CI-level check that fails loudly when Docker is
+  unavailable in the environment that is supposed to have it.
 
 ## External Security Assessment Scope
 

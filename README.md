@@ -715,6 +715,7 @@ metrics, and per-tenant usage.
 - [Overreach corpus](https://github.com/sriram7737/pramagent/tree/main/corpus/overreach)
 - [Live test results](https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_TEST_RESULTS.md)
 - [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
+- [Incident-response runbook](https://github.com/sriram7737/pramagent/blob/main/docs/INCIDENT_RESPONSE_RUNBOOK.md) — key/credential compromise, audit-chain tamper response, and the security CLI: `pramagent auth-revoke` (revoke a leaked API key), `pramagent audit-verify-watch` (automated tamper detection), `pramagent audit-export` (export a tenant's trace rows)
 - [Google Dev Library submission draft](https://github.com/sriram7737/pramagent/blob/main/docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md)
 - [Cookbook submission plan](https://github.com/sriram7737/pramagent/blob/main/docs/COOKBOOK_SUBMISSIONS.md)
 - [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md)
