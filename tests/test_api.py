@@ -1649,6 +1649,26 @@ def test_tool_validate_endpoint_blocks_unknown_tool(client):
     assert r.json()["verdict"] == "block"
 
 
+def test_tool_validate_endpoint_reaches_durable_audit_log(client):
+    """/v1/tools/validate calls ToolGuardLayer directly, bypassing
+    Pramagent.validate_tool() — this decision must still land in the
+    durable, hash-chained audit backend, not just ToolGuardLayer's
+    in-memory bounded deque (ISSUE-4)."""
+    r = client.post("/v1/tools/validate", json={
+        "tool_name": "shell",
+        "arguments": {},
+        "tenant_id": "t",
+        "session_id": "s",
+    })
+    assert r.status_code == 200
+    decision_id = r.json()["decision_id"]
+
+    audit = client.app.state.armor.audit
+    records = audit.records()
+    assert any(rec["payload"].get("decision_id") == decision_id for rec in records)
+    assert audit.verify_chain()
+
+
 def test_tool_validate_endpoint_escalates_payment_tool(client):
     r = client.post("/v1/tools/validate", json={
         "tool_name": "wire_transfer",

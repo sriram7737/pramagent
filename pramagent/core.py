@@ -139,12 +139,18 @@ class Pramagent:
             if decision.verdict == Verdict.BLOCK:
                 raise PermissionError(decision.reason)
         """
-        return self.tool_guard.evaluate(
+        decision = self.tool_guard.evaluate(
             tool_name, arguments,
             tenant_id=tenant_id,
             session_id=session_id,
             action_label=action_label,
         )
+        # Standalone validation (not part of a full run() pipeline) must
+        # still reach the durable, hash-chained audit backend — otherwise
+        # this decision only lives in ToolGuardLayer's in-memory bounded
+        # deque and is lost on restart or deque overflow (ISSUE-4).
+        self.audit.append(decision.to_dict())
+        return decision
 
     async def run(
         self,

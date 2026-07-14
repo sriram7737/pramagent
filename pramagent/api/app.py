@@ -2488,6 +2488,11 @@ def create_app(armor: Optional[Pramagent] = None,
             session_id=req.session_id,
             action_label=req.action,
         )
+        # This endpoint calls ToolGuardLayer directly, bypassing
+        # Pramagent.validate_tool() — so it needs its own durable-audit
+        # append, or the decision only lives in ToolGuardLayer's in-memory
+        # bounded deque and is lost on restart or deque overflow (ISSUE-4).
+        await asyncio.to_thread(app.state.armor.audit.append, decision.to_dict())
         return ToolValidateResponse(**decision.to_dict())
 
     async def _handle_slack_hitl_action(request: Request):

@@ -355,6 +355,15 @@ async def test_validate_tool_method_on_armor():
     )
     assert decision.verdict == Verdict.ALLOW
 
+    # Standalone validate_tool() decisions must reach the durable,
+    # hash-chained audit backend too — not just the in-memory bounded
+    # deque ToolGuardLayer keeps for itself (ISSUE-4). Without this, the
+    # decision is lost on restart or deque overflow.
+    records = armor.audit.records()
+    assert any(r["payload"].get("decision_id") == decision.decision_id
+               for r in records)
+    assert armor.audit.verify_chain()
+
 
 # ── 5. Oversized inputs ───────────────────────────────────────────────────
 
