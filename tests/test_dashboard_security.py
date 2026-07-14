@@ -52,6 +52,21 @@ async def test_dashboard_approval_scope_allows_same_tenant(monkeypatch):
     await dashboard._require_pending_approval_scope("req-1", ctx)
 
 
+def test_dashboard_approver_role_required_for_decisions():
+    """A3: only approver/admin roles may approve or deny. viewer/auditor —
+    which the role model defines but the endpoints never checked — must be
+    rejected, while approver/admin pass the role gate."""
+    for role in ("viewer", "auditor"):
+        ctx = dashboard.AuthContext("alice", "tenant_a", role=role)
+        with pytest.raises(HTTPException) as exc:
+            dashboard._require_approver_role(ctx)
+        assert exc.value.status_code == 403
+
+    for role in ("approver", "admin"):
+        ctx = dashboard.AuthContext("alice", "tenant_a", role=role)
+        dashboard._require_approver_role(ctx)   # no raise
+
+
 @pytest.mark.asyncio
 async def test_dashboard_approval_scope_blocks_cross_tenant(monkeypatch):
     async def fake_get(path, params=None):

@@ -653,6 +653,21 @@ async def _dashboard_metrics_and_traces(
     return _normalize_metrics(metrics, traces), traces
 
 
+_APPROVER_ROLES = {"approver", "admin"}
+
+
+def _require_approver_role(ctx: AuthContext) -> None:
+    """A3: the dashboard role model was defined (viewer/approver/auditor/
+    admin) but never enforced — approve/deny gated only on auth + tenant +
+    CSRF, so a viewer or auditor could approve consequential actions. Only
+    approver/admin may decide."""
+    if ctx.role not in _APPROVER_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Your role is not permitted to approve or deny requests",
+        )
+
+
 async def _require_pending_approval_scope(request_id: str, ctx: AuthContext) -> None:
     """Authorize approve/deny against the dashboard tenant scope."""
     if ctx.tenant == "*":
@@ -1010,6 +1025,7 @@ async def approve(
 ):
     require_csrf(request, ctx)
     try:
+        _require_approver_role(ctx)
         await _require_pending_approval_scope(request_id, ctx)
         await _post(f"/hitl/{request_id}/decide", {"approved": True})
         msg, cls = "Approved", "badge-ok"
@@ -1027,6 +1043,7 @@ async def deny(
 ):
     require_csrf(request, ctx)
     try:
+        _require_approver_role(ctx)
         await _require_pending_approval_scope(request_id, ctx)
         await _post(f"/hitl/{request_id}/decide", {"approved": False})
         msg, cls = "Denied", "badge-block"
