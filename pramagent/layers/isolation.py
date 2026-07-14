@@ -299,13 +299,12 @@ class IsolationLayer:
         """Append an item to scope memory (safe for multi-worker)."""
         self._backend.memory_append(self._scope_key(tenant_id, session_id), item)
 
-    def assert_scope(self, tenant_id: str, session_id: str,
-                     expected_tenant: str, expected_session: str) -> None:
-        if tenant_id != expected_tenant or session_id != expected_session:
-            raise IsolationViolation(
-                f"scope mismatch: got ({tenant_id},{session_id}) "
-                f"expected ({expected_tenant},{expected_session})"
-            )
+    # B5: a previous assert_scope() helper lived here but was never called
+    # anywhere in the pipeline — it implied a scope-binding check that wasn't
+    # actually running. The real tenant/identity binding happens upstream in
+    # the API layer (see api/app.py _resolve_tenant / _resolve_auth_record;
+    # trust boundary noted for D4), so the dead helper was removed rather than
+    # left as misleading security-looking code.
 
     def clear_scope(self, tenant_id: str, session_id: str) -> None:
         self._backend.memory_clear(self._scope_key(tenant_id, session_id))

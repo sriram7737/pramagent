@@ -158,16 +158,6 @@ def test_untrusted_provenance_uses_classifier_threshold():
     assert "classifier(embedding:score=0.58)" in str(exc.value)
 
 
-# ── scope assertions ───────────────────────────────────────────────────
-def test_assert_scope_raises_on_mismatch():
-    iso = IsolationLayer()
-    iso.assert_scope("a", "1", "a", "1")    # match: ok
-    with pytest.raises(IsolationViolation):
-        iso.assert_scope("a", "1", "b", "1")
-    with pytest.raises(IsolationViolation):
-        iso.assert_scope("a", "1", "a", "2")
-
-
 def test_memory_is_scoped():
     iso = IsolationLayer()
     iso.memory_append("tenant_a", "s1", "data for A")
