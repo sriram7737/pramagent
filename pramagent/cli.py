@@ -11,8 +11,9 @@ pramagent validate      Check configuration and connectivity to Redis/Postgres.
 pramagent audit-verify-watch
                         Verify the audit hash chain and alert on tamper
                         detection (for cron/k8s CronJob, or --interval-s).
-pramagent audit-export  Bulk-export a tenant's audit trail as JSONL
-                        (Postgres-backed stores only).
+pramagent audit-export  Bulk-export a tenant's stored TRACE rows as JSONL
+                        (Postgres-backed stores only; the trace store, NOT
+                        the tamper-evident chain — see audit-verify-watch).
 pramagent test-inject   Run built-in injection detection against a prompt.
 pramagent redteam       Run the built-in prompt-injection benchmark.
 pramagent version       Print version.
@@ -322,7 +323,8 @@ def cmd_audit_export(args) -> int:
                 "(set PRAMAGENT_POSTGRES_DSN) — SQLite/EncryptedSQLite "
                 "stores don't implement bulk export yet"
             )
-        exported = store.export_audit_jsonl(args.tenant_id, args.out)
+        exported = store.export_audit_jsonl(
+            args.tenant_id, args.out, limit=args.limit)
     except Exception as exc:
         print(f"[fail] {exc}", file=sys.stderr)
         return 2
@@ -645,11 +647,16 @@ def main():
 
     p_audit_export = sub.add_parser(
         "audit-export",
-        help="Bulk-export a tenant's audit trail as JSONL "
-             "(Postgres-backed stores only)",
+        help="Bulk-export a tenant's stored TRACE rows as JSONL "
+             "(Postgres-backed stores only; this is the trace store, not the "
+             "tamper-evident chain — use audit-verify-watch for integrity)",
     )
     p_audit_export.add_argument("--tenant-id", required=True, help="Tenant to export")
     p_audit_export.add_argument("--out", required=True, help="Output JSONL file path")
+    p_audit_export.add_argument(
+        "--limit", type=int, default=None,
+        help="Max most-recent rows to export; omit to export all. Truncation "
+             "(more rows exist than exported) is warned, never silent.")
     p_audit_export.add_argument("--json", action="store_true", help="Emit JSON")
 
     p_inj = sub.add_parser("test-inject", help="Test injection detection on a prompt")

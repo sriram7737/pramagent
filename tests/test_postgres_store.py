@@ -419,6 +419,32 @@ def test_delete_for_session_scoped_within_tenant(pg):
 
 # ───────────────────────────── failure modes ──────────────────────────────
 
+def test_export_audit_jsonl_warns_on_truncation(pg, tmp_path, caplog):
+    """MEDIUM-1: the export caps at --limit most-recent rows; truncation must
+    be warned (dropped count reported), never silent. Omitting the limit
+    exports everything."""
+    import logging
+
+    store, _ = pg
+    for i in range(5):
+        store.save(_trace("acme", f"trace {i}"))
+
+    out = tmp_path / "export.jsonl"
+    with caplog.at_level(logging.WARNING):
+        written = store.export_audit_jsonl("acme", str(out), limit=2)
+    assert written == 2
+    assert any("TRUNCATED" in r.message and "3 oldest dropped" in r.message
+               for r in caplog.records)
+
+    # no limit → all rows, no truncation warning
+    caplog.clear()
+    out2 = tmp_path / "export_all.jsonl"
+    with caplog.at_level(logging.WARNING):
+        written_all = store.export_audit_jsonl("acme", str(out2))
+    assert written_all == 5
+    assert not any("TRUNCATED" in r.message for r in caplog.records)
+
+
 def test_unreachable_postgres_raises_early():
     def refuse(dsn):
         raise ConnectionRefusedError("nope")

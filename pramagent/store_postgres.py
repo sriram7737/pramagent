@@ -841,9 +841,28 @@ class PostgresStore(_PostgresBase):
 
     # ── compliance export ─────────────────────────────────────────────────
 
-    def export_audit_jsonl(self, tenant_id: str, out_path: str) -> int:
-        """Export all audit chain entries for a tenant as JSONL. Returns count."""
-        rows = self.list_for_tenant(tenant_id, limit=100_000)
+    def export_audit_jsonl(self, tenant_id: str, out_path: str,
+                           limit: Optional[int] = None) -> int:
+        """Export a tenant's stored TRACE rows (pramagent_traces) as JSONL.
+        Returns the number of rows written.
+
+        MEDIUM-1: despite the historical "audit"/"chain" naming, this exports
+        the trace store, NOT the tamper-evident pramagent_chain. Use
+        `audit verify` / `audit-verify-watch` for chain integrity.
+
+        `limit` caps the number of most-recent rows exported; None (the
+        default) exports every row. Truncation is never silent: when more rows
+        exist than are exported, a warning is logged and the dropped count is
+        reported (the OLDEST rows are the ones dropped, since rows come back
+        most-recent-first)."""
+        total = self.count(tenant_id=tenant_id)
+        effective = total if limit is None else max(0, int(limit))
+        rows = self.list_for_tenant(tenant_id, limit=effective)
+        if limit is not None and total > len(rows):
+            log.warning(
+                "audit export for tenant %s TRUNCATED: exported %d of %d trace "
+                "row(s); %d oldest dropped (raise --limit or omit it to export "
+                "all)", tenant_id, len(rows), total, total - len(rows))
         with open(out_path, "w", encoding="utf-8") as f:
             for row in rows:
                 f.write(json.dumps(row) + "\n")
