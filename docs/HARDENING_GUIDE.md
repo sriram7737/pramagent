@@ -115,6 +115,15 @@ Current state:
 - The local usage ledger is hash-chained evidence, not invoice reconciliation.
 - API keys can be persisted in Postgres, with hashed keys and revocation
   timestamps. This is auth persistence, not billing-grade metering.
+- `PRAMAGENT_QUOTA_FAIL_OPEN` defaults to fail-open (quota backend outage ->
+  calls proceed unmetered), which is the intentional opposite of
+  `RedisBackend`'s rate limiter (fail-closed by default). This is a
+  reasoned asymmetry, not an inconsistency: the rate limiter guards against
+  unbounded external abuse during an outage (a security concern), while the
+  quota tracker only risks a tenant's own spend/call budget overrunning its
+  cap during that outage (a self-inflicted billing trade-off). Set
+  `PRAMAGENT_QUOTA_FAIL_OPEN=0` for deployments where strict cost control
+  outweighs availability during a quota-backend outage.
 
 Next:
 

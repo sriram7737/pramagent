@@ -179,6 +179,21 @@ def test_usage_from_env_adds_webhook_sink(monkeypatch):
     assert sink.timeout_s == 0.25
 
 
+def test_usage_from_env_defaults_to_fail_open(monkeypatch):
+    """PRAMAGENT_QUOTA_FAIL_OPEN defaults to fail-open — a quota-store
+    outage doesn't 429 every tenant. This is the intentional opposite of
+    RedisBackend's rate limiter (fail-closed by default): the rate limiter
+    guards against unbounded external abuse, the quota tracker only risks
+    a tenant's own spend budget during the outage (ISSUE-9)."""
+    monkeypatch.delenv("PRAMAGENT_QUOTA_FAIL_OPEN", raising=False)
+    assert UsageTracker.from_env().fail_open is True
+
+
+def test_usage_from_env_quota_fail_open_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_QUOTA_FAIL_OPEN", "0")
+    assert UsageTracker.from_env().fail_open is False
+
+
 def test_usage_from_env_can_enable_hash_chain_ledger(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_USAGE_LEDGER", "memory")
 

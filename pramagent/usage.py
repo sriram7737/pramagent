@@ -334,7 +334,22 @@ class UsageTracker:
 
     Limits are disabled by default. Set any max value to enforce that quota.
     Backend errors fail open by default so a quota store outage does not become
-    a production outage; set fail_open=False for stricter deployments.
+    a production outage; set fail_open=False (or PRAMAGENT_QUOTA_FAIL_OPEN=0)
+    for stricter deployments.
+
+    This default is intentionally the opposite of RedisBackend's rate limiter
+    (fail_open=False there — see redis_backend.py). The two controls guard
+    against different failure modes: a rate limiter that stops limiting
+    during an outage exposes the service to unbounded, unauthenticated abuse
+    from any caller — a security concern. A quota tracker that stops
+    enforcing during an outage only risks a tenant's own call/cost budget
+    overrunning its configured cap for the duration of that outage — a
+    self-inflicted billing/availability trade-off, not an attacker-facing
+    one. Prioritizing availability here (don't let a quota-store blip 429
+    every tenant) over strict spend enforcement is a deliberate choice, not
+    an oversight; set PRAMAGENT_QUOTA_FAIL_OPEN=0 if a deployment's cost
+    controls need to be strict even at the expense of availability during a
+    quota-backend outage (ISSUE-9).
     """
 
     def __init__(
