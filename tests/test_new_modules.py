@@ -384,6 +384,52 @@ class TestCLI:
         assert len(calls) == 3
         assert sleep_calls == [42.0, 42.0]
 
+    def test_audit_export_calls_store_export_and_reports_count(self, monkeypatch, tmp_path, capsys):
+        """audit-export must be reachable from the CLI, not just as a
+        library method with no subcommand and no doc reference (ISSUE-12)."""
+        from types import SimpleNamespace
+        from pramagent import cli
+
+        calls = []
+
+        class FakeStore:
+            def export_audit_jsonl(self, tenant_id, out_path):
+                calls.append((tenant_id, out_path))
+                return 5
+
+        monkeypatch.setattr(cli, "_store_from_env", lambda: FakeStore())
+        out_path = str(tmp_path / "export.jsonl")
+        args = SimpleNamespace(tenant_id="acme", out=out_path, json=True)
+
+        assert cli.cmd_audit_export(args) == 0
+        assert calls == [("acme", out_path)]
+        captured = capsys.readouterr().out
+        assert '"exported": 5' in captured
+
+    def test_audit_export_requires_tenant_id(self):
+        from types import SimpleNamespace
+        from pramagent import cli
+
+        args = SimpleNamespace(tenant_id="", out="/tmp/x.jsonl", json=False)
+        assert cli.cmd_audit_export(args) == 2
+
+    def test_audit_export_rejects_stores_without_bulk_export(self, monkeypatch, capsys):
+        """SQLite/EncryptedSQLite stores don't implement export_audit_jsonl
+        yet — must fail with a clear, actionable message, not an
+        AttributeError."""
+        from types import SimpleNamespace
+        from pramagent import cli
+
+        class FakeSQLiteStore:
+            pass  # no export_audit_jsonl
+
+        monkeypatch.setattr(cli, "_store_from_env", lambda: FakeSQLiteStore())
+        args = SimpleNamespace(tenant_id="acme", out="/tmp/x.jsonl", json=False)
+
+        assert cli.cmd_audit_export(args) == 2
+        err = capsys.readouterr().err
+        assert "Postgres" in err
+
     def test_auth_revoke_env_var_mode_writes_revocation_file(self, monkeypatch, tmp_path, capsys):
         """auth-revoke must have a CLI-reachable path when the operator uses
         PRAMAGENT_API_KEYS instead of a Postgres-backed registry — the

@@ -11,6 +11,8 @@ pramagent validate      Check configuration and connectivity to Redis/Postgres.
 pramagent audit-verify-watch
                         Verify the audit hash chain and alert on tamper
                         detection (for cron/k8s CronJob, or --interval-s).
+pramagent audit-export  Bulk-export a tenant's audit trail as JSONL
+                        (Postgres-backed stores only).
 pramagent test-inject   Run built-in injection detection against a prompt.
 pramagent redteam       Run the built-in prompt-injection benchmark.
 pramagent version       Print version.
@@ -289,6 +291,40 @@ def cmd_retention_prune(args) -> int:
         except Exception as exc:
             print(f"[fail] prune run failed, will retry next interval: {exc}", file=sys.stderr)
         time.sleep(args.interval_s)
+
+
+def cmd_audit_export(args) -> int:
+    """CLI-reachable wrapper for PostgresStore.export_audit_jsonl(), which
+    previously had no subcommand and wasn't referenced in any doc (ISSUE-12).
+
+    See docs/INCIDENT_RESPONSE_RUNBOOK.md for how to correlate an exported
+    trace with who approved a HITL action and which API key made the call
+    — TraceEvent has no actor/approver field of its own, so that's a
+    three-way join against the HITL queue's decided_by and
+    pramagent_api_key_audit, not a single-table lookup.
+    """
+    if not args.tenant_id:
+        print("[fail] --tenant-id is required; unscoped export is refused", file=sys.stderr)
+        return 2
+    try:
+        store = _store_from_env()
+        if not hasattr(store, "export_audit_jsonl"):
+            raise RuntimeError(
+                "audit-export requires a Postgres-backed store "
+                "(set PRAMAGENT_POSTGRES_DSN) — SQLite/EncryptedSQLite "
+                "stores don't implement bulk export yet"
+            )
+        exported = store.export_audit_jsonl(args.tenant_id, args.out)
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(
+            {"tenant_id": args.tenant_id, "out": args.out, "exported": exported},
+            indent=2, sort_keys=True))
+    else:
+        print(f"[ok] exported {exported} record(s) for {args.tenant_id} to {args.out}")
+    return 0
 
 
 def _send_audit_alert(broken: list, *, source: str) -> None:
@@ -598,6 +634,15 @@ def main():
     )
     p_audit_watch.add_argument("--json", action="store_true", help="Emit JSON")
 
+    p_audit_export = sub.add_parser(
+        "audit-export",
+        help="Bulk-export a tenant's audit trail as JSONL "
+             "(Postgres-backed stores only)",
+    )
+    p_audit_export.add_argument("--tenant-id", required=True, help="Tenant to export")
+    p_audit_export.add_argument("--out", required=True, help="Output JSONL file path")
+    p_audit_export.add_argument("--json", action="store_true", help="Emit JSON")
+
     p_inj = sub.add_parser("test-inject", help="Test injection detection on a prompt")
     p_inj.add_argument("prompt", nargs="?", default="",
                        help="Prompt to test (reads from stdin if omitted)")
@@ -678,6 +723,7 @@ def main():
         "auth-revoke": cmd_auth_revoke,
         "retention-prune": cmd_retention_prune,
         "audit-verify-watch": cmd_audit_verify_watch,
+        "audit-export": cmd_audit_export,
         "test-inject": cmd_test_inject,
         "redteam":     cmd_redteam,
         "backtest":    cmd_backtest,

@@ -87,7 +87,24 @@ at a real paging integration's webhook once paging exists.
 ## Containment Checklist
 
 - Verify `/v1/audit/verify` for affected tenants.
-- Export affected tenant evidence with the store export tooling before erasure.
+- Export affected tenant evidence with the store export tooling before erasure:
+
+```bash
+pramagent audit-export --tenant-id <tenant_id> --out incident-evidence.jsonl
+```
+
+  Requires a Postgres-backed store (`PRAMAGENT_POSTGRES_DSN`) — SQLite and
+  encrypted-SQLite stores don't implement bulk export yet.
+
+  **Correlating an exported trace to who approved it or which key called
+  it is a three-way join, not a single-table lookup:** `TraceEvent` (what
+  the export contains) has no `actor`/`approver` field of its own. To
+  answer "who approved this" join the exported `call_id` against the HITL
+  approval queue's `decided_by` field; to answer "which key made this
+  call" join the tenant/timestamp against `pramagent_api_key_audit`
+  (issuance/revocation events, not per-call attribution — API keys map to
+  a tenant, not to an individual call). Do this join manually during an
+  incident until this gap is closed with a dedicated field.
 - Revoke compromised API keys with:
 
 ```bash
