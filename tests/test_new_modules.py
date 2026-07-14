@@ -411,16 +411,16 @@ class TestCLI:
         calls = []
 
         class FakeStore:
-            def export_audit_jsonl(self, tenant_id, out_path):
-                calls.append((tenant_id, out_path))
+            def export_audit_jsonl(self, tenant_id, out_path, limit=None):
+                calls.append((tenant_id, out_path, limit))
                 return 5
 
         monkeypatch.setattr(cli, "_store_from_env", lambda: FakeStore())
         out_path = str(tmp_path / "export.jsonl")
-        args = SimpleNamespace(tenant_id="acme", out=out_path, json=True)
+        args = SimpleNamespace(tenant_id="acme", out=out_path, limit=None, json=True)
 
         assert cli.cmd_audit_export(args) == 0
-        assert calls == [("acme", out_path)]
+        assert calls == [("acme", out_path, None)]
         captured = capsys.readouterr().out
         assert '"exported": 5' in captured
 
