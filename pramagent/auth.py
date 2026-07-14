@@ -46,8 +46,14 @@ ADMIN_SCOPE = "admin"
 # either scope — READ_SCOPE keeps working so this is additive, not a breaking
 # cutover for anyone already polling that endpoint with a read-scoped key.
 AUDIT_SCOPE = "audit"
+# A2: approving a HITL request is a distinct authority from requesting one.
+# /v1/run requires WRITE_SCOPE; the approve/deny endpoints require this, so a
+# single write-scoped credential cannot both propose and approve its own
+# consequential action (separation of duties).
+APPROVE_SCOPE = "approve"
 # Every scope the system recognises — used to validate scope input.
-ALL_SCOPES = frozenset({READ_SCOPE, WRITE_SCOPE, ADMIN_SCOPE, AUDIT_SCOPE})
+ALL_SCOPES = frozenset(
+    {READ_SCOPE, WRITE_SCOPE, ADMIN_SCOPE, AUDIT_SCOPE, APPROVE_SCOPE})
 # A1: a key issued with NO scopes specified defaults to read-only, never the
 # full admin set. write/admin/audit must be opted into explicitly, so a key
 # that leaks (or the 2-field PRAMAGENT_API_KEYS="tenant:key" form, or

@@ -85,6 +85,8 @@ class PendingApproval:
     context: dict[str, Any]
     created_at: float = field(default_factory=time.time)
     decision: Optional[bool] = None
+    # A4: who approved/denied. Empty until decide() records it.
+    decided_by: str = ""
     # Only used by InProcessBackend path — RedisBackend uses its own wait()
     event: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -154,7 +156,8 @@ class SlackApprovalRegistry:
             return None
         return request.decision
 
-    def decide(self, request_id: str, approved: bool) -> bool:
+    def decide(self, request_id: str, approved: bool,
+               *, decided_by: str = "") -> bool:
         # "Found" means this process knows the request OR the shared backend
         # still holds it (created by another worker). An unknown/expired id
         # now genuinely reports not-found, so the Slack "expired" reply path
@@ -164,6 +167,17 @@ class SlackApprovalRegistry:
             known_in_backend = self._backend.get(f"hitl:{request_id}") is not None
         except Exception:
             known_in_backend = False
+        # A4: persist WHO decided, cross-worker, alongside the decision signal
+        # so the audit trail records the approver identity, not just the
+        # boolean outcome. Best-effort — never let recording the actor block
+        # the decision itself.
+        if decided_by:
+            try:
+                self._backend.set(f"hitl:decided_by:{request_id}",
+                                  {"decided_by": decided_by}, ttl_s=3600)
+            except Exception as exc:
+                log.warning("could not persist approver identity for %s: %s",
+                            request_id, exc)
         # Signal via backend (visible to all workers; harmless for unknown ids).
         self._backend.signal(f"hitl:decision:{request_id}", int(approved))
         self._backend.delete(f"hitl:{request_id}")
@@ -171,6 +185,7 @@ class SlackApprovalRegistry:
         request = self._pending.get(request_id)
         if request is not None:
             request.decision = approved
+            request.decided_by = decided_by
             request.event.set()
             return True
         return known_in_backend
@@ -391,7 +406,12 @@ class SlackHITLApprover:
             approved = False
         else:
             raise SlackApprovalError(f"unknown Slack action: {action_id}")
-        found = self.registry.decide(request_id, approved)
+        # A4: record the Slack user who clicked, so the audit trail attributes
+        # the approval to a person, not just "someone on Slack".
+        user = payload.get("user") or {}
+        actor = str(user.get("username") or user.get("name") or user.get("id") or "")
+        decided_by = f"slack:{actor}" if actor else "slack:unknown"
+        found = self.registry.decide(request_id, approved, decided_by=decided_by)
         return found, "approved" if approved else "denied"
 
     async def update_original_message(self, payload: dict[str, Any], status: str, *, found: bool) -> None:

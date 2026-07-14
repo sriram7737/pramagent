@@ -113,6 +113,34 @@ def test_slack_callback_records_approval():
     assert registry._pending[request.request_id].decision is True
 
 
+def test_slack_action_records_approver_identity():
+    """A4: the Slack action handler attributes the decision to the user who
+    clicked approve/deny, not anonymously."""
+    registry = SlackApprovalRegistry()
+    approver = SlackHITLApprover(
+        bot_token="xoxb-test",
+        channel_id="C123",
+        signing_secret="test-secret",
+        public_url="https://example.test",
+        registry=registry,
+        client=FakeSlackClient(),
+    )
+    request = registry.create("wire_transfer", {"tenant": "bank"})
+    payload = {
+        "user": {"username": "alice.approver", "id": "U42"},
+        "actions": [{
+            "action_id": "pramagent_approve",
+            "value": request.request_id,
+        }],
+    }
+
+    found, status = approver.handle_action_payload(payload)
+
+    assert found is True
+    assert status == "approved"
+    assert registry._pending[request.request_id].decided_by == "slack:alice.approver"
+
+
 def test_slack_callback_rejects_invalid_signature():
     approver = SlackHITLApprover(
         bot_token="xoxb-test",

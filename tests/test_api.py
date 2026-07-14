@@ -1932,6 +1932,61 @@ def test_unversioned_hitl_decide_blocks_cross_tenant(auth_client):
     assert own.json()["decision"] == "approved"
 
 
+def test_hitl_decide_requires_approve_scope_distinct_from_write():
+    """A2: a write-scoped key can request an action (/v1/run) but must not be
+    able to approve one. Approving requires the distinct 'approve' scope, so a
+    single credential cannot both propose and approve its own action."""
+    reg = APIKeyRegistry()
+    write_key = reg.issue_key("tenant_a", scopes="read|write")
+    approve_key = reg.issue_key("tenant_a", scopes="read|approve")
+    app = create_app(registry=reg)
+    client = TestClient(app)
+
+    registry = SlackApprovalRegistry()
+    pending = registry.create("wire_transfer", {"tenant": "tenant_a"})
+    app.state.armor.hitl = HITLLayer(
+        require_approval_for=["wire_transfer"],
+        approver=RegistryBackedApprover(registry),
+    )
+
+    # write scope is enough to REQUEST (proven elsewhere) but NOT to approve.
+    denied = client.post(f"/hitl/{pending.request_id}/decide",
+                         json={"approved": True},
+                         headers={"Authorization": f"Bearer {write_key}"})
+    assert denied.status_code == 403
+
+    # the distinct approve scope is required and sufficient.
+    ok = client.post(f"/hitl/{pending.request_id}/decide",
+                     json={"approved": True},
+                     headers={"Authorization": f"Bearer {approve_key}"})
+    assert ok.status_code == 200
+    assert ok.json()["decision"] == "approved"
+
+
+def test_hitl_decide_records_approver_identity():
+    """A4: the REST decide path attributes the decision to the authenticated
+    caller (recorded as an actor), not anonymously."""
+    reg = APIKeyRegistry()
+    approve_key = reg.issue_key("tenant_a", scopes="read|approve")
+    app = create_app(registry=reg)
+    client = TestClient(app)
+
+    registry = SlackApprovalRegistry()
+    pending = registry.create("wire_transfer", {"tenant": "tenant_a"})
+    app.state.armor.hitl = HITLLayer(
+        require_approval_for=["wire_transfer"],
+        approver=RegistryBackedApprover(registry),
+    )
+
+    r = client.post(f"/hitl/{pending.request_id}/decide",
+                    json={"approved": True},
+                    headers={"Authorization": f"Bearer {approve_key}"})
+    assert r.status_code == 200
+    assert r.json()["decided_by"] == "api:tenant_a"
+    # persisted on the in-process approval record too
+    assert registry._pending[pending.request_id].decided_by == "api:tenant_a"
+
+
 # ── Finding #5: erase/prune must refuse when no tenant is authenticated ─
 def test_unauthenticated_erase_is_refused(client):
     """With auth disabled the resolved tenant is "" — that must NOT grant

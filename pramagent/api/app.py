@@ -55,6 +55,7 @@ log = logging.getLogger("pramagent.api")
 
 from ..auth import (
     ADMIN_SCOPE,
+    APPROVE_SCOPE,
     AUDIT_SCOPE,
     READ_SCOPE,
     WRITE_SCOPE,
@@ -1600,6 +1601,10 @@ def create_app(armor: Optional[Pramagent] = None,
     require_write_tenant = _scope_dependency(WRITE_SCOPE)
     require_audit_tenant = _scope_dependency((READ_SCOPE, AUDIT_SCOPE))
     require_admin_tenant = _scope_dependency(ADMIN_SCOPE)
+    # A2: approving/denying a HITL request needs a scope distinct from the
+    # write scope used to request one, so a single credential cannot both
+    # propose and approve its own consequential action.
+    require_approve_tenant = _scope_dependency(APPROVE_SCOPE)
 
     def _resolve_tenant(tenant: str, provided_tenant_id: str = "") -> str:
         """Resolve a concrete effective tenant for ownership/scoping checks.
@@ -2800,7 +2805,7 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.post("/hitl/{request_id}/decide")
     async def hitl_decide(request_id: str, body: HITLDecideRequest,
                           tenant_id: str = "",
-                          tenant: str = Depends(require_write_tenant)):
+                          tenant: str = Depends(require_approve_tenant)):
         hitl = app.state.armor.hitl
         registry = getattr(hitl, "registry", None) or getattr(
             getattr(hitl, "approver", None), "registry", None)
@@ -2817,9 +2822,15 @@ def create_app(armor: Optional[Pramagent] = None,
              if p["request_id"] == request_id), None)
         if match is None or match["tenant_id"] != effective_tenant:
             raise HTTPException(status_code=404, detail="approval request not found")
-        registry.decide(request_id, body.approved)
+        # A4: attribute the decision to the authenticated caller. The REST
+        # auth model identifies tenants/keys (not individual users), so the
+        # actor is recorded at that granularity — honest about what was
+        # actually authenticated.
+        decided_by = f"api:{effective_tenant}"
+        registry.decide(request_id, body.approved, decided_by=decided_by)
         return {"request_id": request_id,
-                "decision": "approved" if body.approved else "denied"}
+                "decision": "approved" if body.approved else "denied",
+                "decided_by": decided_by}
 
     def _require_rca_quota(tenant: str, request: Request) -> None:
         allowed, retry_after = request.app.state.rca_bucket.allow(tenant)
