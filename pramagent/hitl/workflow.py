@@ -54,6 +54,19 @@ class ApprovalRecord:
     decided_at: Optional[float] = None
     latency_s: Optional[float] = None
     reason: str = ""               # free-text from approver
+    tenant_id: str = ""            # derived from context; see __post_init__
+
+    def __post_init__(self) -> None:
+        # Every call site constructs records via `context=dict(context)`
+        # without threading tenant_id through explicitly (ApproverChain,
+        # QuorumApprover, HITLWorkflowLayer all do this) — deriving it here
+        # once, matching the "tenant" / "tenant_id" convention core.py's
+        # HITL contexts already use, means ApprovalAuditLog.all()/
+        # for_action() can filter by tenant without every caller having to
+        # remember to set it (ISSUE-11).
+        if not self.tenant_id:
+            self.tenant_id = (
+                self.context.get("tenant_id") or self.context.get("tenant") or "")
 
 
 class ApprovalAuditLog:
@@ -75,14 +88,26 @@ class ApprovalAuditLog:
             rec.action, rec.decision, rec.approver_id, rec.latency_s or 0,
         )
 
-    def all(self) -> List[ApprovalRecord]:
-        return list(self._records)
+    def all(self, tenant_id: str = "") -> List[ApprovalRecord]:
+        """All records, or only the given tenant's when tenant_id is set.
 
-    def for_action(self, action: str) -> List[ApprovalRecord]:
-        return [r for r in self._records if r.action == action]
+        `_GLOBAL_AUDIT_LOG` is a process-wide singleton shared across every
+        ApproverChain/QuorumApprover/HITLWorkflowLayer instance unless a
+        caller supplies its own `audit_log=`, so an unscoped `.all()` call
+        returns every tenant's approval history. Pass tenant_id to scope it
+        (ISSUE-11)."""
+        if not tenant_id:
+            return list(self._records)
+        return [r for r in self._records if r.tenant_id == tenant_id]
 
-    def export_jsonl(self, path: str) -> int:
-        records = self.all()
+    def for_action(self, action: str, tenant_id: str = "") -> List[ApprovalRecord]:
+        records = [r for r in self._records if r.action == action]
+        if tenant_id:
+            records = [r for r in records if r.tenant_id == tenant_id]
+        return records
+
+    def export_jsonl(self, path: str, tenant_id: str = "") -> int:
+        records = self.all(tenant_id=tenant_id)
         with open(path, "w", encoding="utf-8") as f:
             for r in records:
                 f.write(json.dumps(asdict(r)) + "\n")

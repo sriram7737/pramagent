@@ -30,6 +30,55 @@ async def _abstain(action, context):
     return None
 
 
+# ───────────────────────── tenant-scoped audit log ────────────────────────
+
+@pytest.mark.asyncio
+async def test_approval_record_derives_tenant_id_from_context():
+    log = ApprovalAuditLog()
+    chain = ApproverChain([_slot("oncall", _approve)], audit_log=log)
+    await chain("wire", {"tenant": "acme"})
+    assert log.all()[0].tenant_id == "acme"
+
+
+@pytest.mark.asyncio
+async def test_approval_record_prefers_explicit_tenant_id_key_over_tenant():
+    log = ApprovalAuditLog()
+    chain = ApproverChain([_slot("oncall", _approve)], audit_log=log)
+    await chain("wire", {"tenant_id": "acme", "tenant": "ignored"})
+    assert log.all()[0].tenant_id == "acme"
+
+
+@pytest.mark.asyncio
+async def test_audit_log_all_scopes_by_tenant():
+    """`_GLOBAL_AUDIT_LOG` is a process-wide singleton shared across every
+    workflow instance that doesn't supply its own audit_log= — an unscoped
+    `.all()` therefore mixes every tenant's approval history. Passing
+    tenant_id must return only that tenant's records (ISSUE-11)."""
+    log = ApprovalAuditLog()
+    chain = ApproverChain([_slot("oncall", _approve)], audit_log=log)
+    await chain("wire", {"tenant": "acme"})
+    await chain("wire", {"tenant": "beta"})
+
+    assert len(log.all()) == 2
+    acme_only = log.all(tenant_id="acme")
+    assert len(acme_only) == 1
+    assert acme_only[0].tenant_id == "acme"
+    assert log.all(tenant_id="nonexistent") == []
+
+
+@pytest.mark.asyncio
+async def test_audit_log_for_action_scopes_by_tenant():
+    log = ApprovalAuditLog()
+    chain = ApproverChain([_slot("oncall", _approve)], audit_log=log)
+    await chain("wire_transfer", {"tenant": "acme"})
+    await chain("wire_transfer", {"tenant": "beta"})
+
+    assert len(log.for_action("wire_transfer")) == 2
+    scoped = log.for_action("wire_transfer", tenant_id="beta")
+    assert len(scoped) == 1
+    assert scoped[0].tenant_id == "beta"
+
+
 # ───────────────────────────── ApproverChain ──────────────────────────────
 
 @pytest.mark.asyncio
