@@ -23,7 +23,10 @@ in the app factory.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional, Any
+
+log = logging.getLogger(__name__)
 
 
 class TokenBucket:
@@ -77,11 +80,20 @@ class AuthFailureGuard:
         base_lockout_s: float = 30.0,
         max_lockout_s: float = 900.0,
         backend: Optional[Any] = None,
+        fail_open: bool = False,
     ) -> None:
         self.threshold = threshold
         self.window_s = window_s
         self.base_lockout_s = base_lockout_s
         self.max_lockout_s = max_lockout_s
+        # E1: fail closed by default. A backend (e.g. Redis) outage must not
+        # 500 every authenticated request as it did before. Mirrors
+        # RedisBackend.tb_allow's fail_open toggle: closed = deny (a brief
+        # retry hint) so a credential-guessing attacker cannot exploit the
+        # outage to bypass lockout; open = skip the lockout check (available
+        # but unprotected). Opt into open only where availability outranks
+        # the brute-force risk during an outage.
+        self.fail_open = fail_open
         if backend is None:
             from .backends import InProcessBackend
             backend = InProcessBackend()
@@ -95,16 +107,37 @@ class AuthFailureGuard:
         an acceptable trade for a security control (erring toward telling a
         caller to wait slightly longer, never shorter, is the safe
         direction)."""
-        value = self._backend.get(f"authlock:{key}")
-        return float(value) if value is not None else 0.0
+        try:
+            value = self._backend.get(f"authlock:{key}")
+            return float(value) if value is not None else 0.0
+        except Exception as exc:
+            log.warning(
+                "auth-failure-guard backend unavailable on locked_out for %s "
+                "(%s); failing %s", key, exc,
+                "open" if self.fail_open else "closed")
+            # Fail open → not locked (0.0). Fail closed → a short non-zero
+            # retry hint so the caller rejects (429) instead of 500ing,
+            # matching tb_allow's (False, 1.0) fail-closed return.
+            return 0.0 if self.fail_open else 1.0
 
     def record_failure(self, key: str) -> None:
-        count = self._backend.increment(f"authfail:{key}", ttl_s=self.window_s)
-        if count >= self.threshold:
-            extra = count - self.threshold
-            lockout_s = min(self.max_lockout_s, self.base_lockout_s * (2 ** extra))
-            self._backend.set(f"authlock:{key}", lockout_s, ttl_s=int(lockout_s) + 1)
+        # Best-effort: a backend outage here cannot fail a request (the
+        # locked_out() check above already fails closed for that), so a
+        # failure to record is logged and swallowed rather than raised.
+        try:
+            count = self._backend.increment(f"authfail:{key}", ttl_s=self.window_s)
+            if count >= self.threshold:
+                extra = count - self.threshold
+                lockout_s = min(self.max_lockout_s, self.base_lockout_s * (2 ** extra))
+                self._backend.set(f"authlock:{key}", lockout_s, ttl_s=int(lockout_s) + 1)
+        except Exception as exc:
+            log.warning("auth-failure-guard could not record failure for %s: %s",
+                        key, exc)
 
     def record_success(self, key: str) -> None:
-        self._backend.delete(f"authfail:{key}")
-        self._backend.delete(f"authlock:{key}")
+        try:
+            self._backend.delete(f"authfail:{key}")
+            self._backend.delete(f"authlock:{key}")
+        except Exception as exc:
+            log.warning("auth-failure-guard could not record success for %s: %s",
+                        key, exc)

@@ -6,7 +6,41 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from pramagent.api.app import create_app  # noqa: E402
 from pramagent.auth import APIKeyRegistry  # noqa: E402
-from pramagent.ratelimit import TokenBucket  # noqa: E402
+from pramagent.ratelimit import AuthFailureGuard, TokenBucket  # noqa: E402
+
+
+class _BrokenBackend:
+    """Backend whose every op raises, simulating a Redis outage."""
+    def get(self, *a, **k):
+        raise ConnectionError("redis down")
+
+    def increment(self, *a, **k):
+        raise ConnectionError("redis down")
+
+    def set(self, *a, **k):
+        raise ConnectionError("redis down")
+
+    def delete(self, *a, **k):
+        raise ConnectionError("redis down")
+
+
+def test_auth_failure_guard_fails_closed_on_backend_outage():
+    """E1: a backend outage must not raise (which 500'd every authenticated
+    request). Default fail-closed: locked_out returns a positive retry hint
+    so the caller returns 429, not 500."""
+    guard = AuthFailureGuard(backend=_BrokenBackend())
+    remaining = guard.locked_out("auth:1.2.3.4")   # must not raise
+    assert remaining > 0
+    # recording must also swallow the outage, never propagate
+    guard.record_failure("auth:1.2.3.4")
+    guard.record_success("auth:1.2.3.4")
+
+
+def test_auth_failure_guard_fail_open_opt_in():
+    """With fail_open=True, an outage skips the lockout check (available but
+    unprotected) rather than blocking."""
+    guard = AuthFailureGuard(backend=_BrokenBackend(), fail_open=True)
+    assert guard.locked_out("auth:1.2.3.4") == 0.0
 
 
 # ── bucket unit tests ──────────────────────────────────────────────────
