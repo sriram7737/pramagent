@@ -110,6 +110,15 @@ class SideEffect:
 # (ambiguous punctuation) that only fires when a genuine SQL/shell keyword
 # appears within a bounded window of the punctuation -- mirroring
 # ComplianceLayer.scrub()'s candidate-regex-plus-nearby-keyword check.
+#
+# ISSUE-14 follow-up: two entries in the unconditional set were themselves
+# ordinary, benign shapes rather than distinctive attack signatures -- a
+# schema-DDL statement Claude Code writes on request, and a loopback
+# address Claude Code binds/connects to on request, both being extremely
+# common in legitimate coding-assistant tool calls. Both were demoted to
+# the contextual set below, gated on a nearby signal that actually
+# indicates the attack shape (a stacked-query break-out marker, or an
+# outbound-fetch verb) instead of the bare keyword/address alone.
 
 _ARG_INJECTION_WINDOW = 40  # chars scanned on each side of contextual punctuation
 
@@ -117,8 +126,8 @@ _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
     ("sql_injection",
      re.compile(
          r"(\bxp_\w+|exec\s*\(|drop\s+table|union\s+select|insert\s+into"
-         r"|delete\s+from|update\s+\w+\s+set|truncate\s+table|alter\s+table"
-         r"|create\s+(table|database|index)|sleep\s*\(\d+\)|benchmark\s*\("
+         r"|delete\s+from|truncate\s+table|alter\s+table"
+         r"|sleep\s*\(\d+\)|benchmark\s*\("
          # boolean-tautology SQLi ('1'='1', OR 1=1, '='): the tautology
          # shape itself is the distinctive marker, no keyword needed.
          r"|'\s*(?:or|and)\s*'.*?'\s*=\s*'|\b(?:or|and)\s+\d+\s*=\s*\d+\b"
@@ -139,7 +148,6 @@ _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
     ("ssrf_attempt",
      re.compile(
          r"(169\.254\.169\.254|metadata\.google\.internal"
-         r"|localhost|127\.0\.0\.|0\.0\.0\.0|::1"
          r"|file://|gopher://|dict://|sftp://|ldap://|tftp://)",
          re.IGNORECASE),
      "SSRF target in argument"),
@@ -154,32 +162,64 @@ _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
 # finding when a keyword appears within _ARG_INJECTION_WINDOW chars of the
 # match. Same pattern_id as the high-precision entry above, since this is
 # the same underlying concern at lower confidence, not a different category.
-_ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str]] = [
+#
+# Each entry's last element is a window direction: "before"/"after" search
+# only that side of the punctuation match, "any" (the default used by most
+# entries) searches both.
+#
+# The original single sql_injection separator entry matched "--"/";"/"/*"/
+# "*/" as one alternation with a symmetric window. That also matched an
+# ORDINARY complete statement's own keyword sitting right before its own
+# closing ";" (e.g. "UPDATE x SET y WHERE z;" -- not an attack, just a
+# normal terminated statement) (ISSUE-14). Split into two entries by how
+# strong a signal each punctuation shape actually is:
+#   - a SQL comment marker ("--", "/*", "*/") near a SQL keyword is a
+#     strong signal on its own, symmetric window -- "commenting out the
+#     rest of the query" is the classic injection technique, and comment
+#     markers essentially never appear near SQL keywords in ordinary prose
+#     or in a complete, uncommented statement.
+#   - a bare ";" is a much weaker signal (it terminates EVERY complete SQL
+#     statement), so it only counts when a keyword follows it -- the
+#     stacked-query shape ("...; DROP TABLE ...") -- not when a keyword
+#     merely precedes it as part of the very statement it's terminating.
+_ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str, str]] = [
     # A common English preposition (as in "differences X this", "aside X
     # that") was intentionally dropped from the keyword list below: it
     # false-positived constantly whenever it landed near a dash-style prose
     # separator or a markdown heading underline. select/where/table/etc.
     # alone already cover the real SQL shape without it.
     ("sql_injection",
-     re.compile(r"(--|;|/\*|\*/)"),
+     re.compile(r"(--|/\*|\*/)"),
      ["select", "insert", "update", "delete", "drop", "union",
       "where", "table", "database", "exec"],
-     "SQL comment/statement-separator near a SQL keyword"),
+     "SQL comment marker near a SQL keyword",
+     "any"),
+    ("sql_injection",
+     re.compile(r";"),
+     ["select", "insert", "update", "delete", "drop", "union",
+      "where", "table", "database", "exec"],
+     "stacked SQL statement after a statement separator",
+     "after"),
     # The classic auth-bypass shape ("admin' --") has no SQL keyword at
     # all -- it just closes a string literal and comments out the rest of
     # the query. A bare quote-then-comment-marker is still too ambiguous on
     # its own (ordinary quoted dialogue uses "word." -- like this too), so
     # this narrows to login/credential-field context instead of a SQL
-    # keyword, matching the actual attack scenario.
+    # keyword, matching the actual attack scenario. The credential keyword
+    # sits BEFORE the quote-then-comment shape in the real attack pattern
+    # ("admin' --"), so this window stays symmetric ("any") rather than
+    # after-only.
     ("sql_injection",
      re.compile(r"""['"]\s*(?:--|;)"""),
      ["admin", "login", "password", "username", "user=", "pwd", "auth"],
-     "quote-then-comment auth-bypass shape near a login/credential field"),
+     "quote-then-comment auth-bypass shape near a login/credential field",
+     "any"),
     ("shell_injection",
      re.compile(r"(\|\s*\w|&&|\|\||;\s*\w+\b|>\s*/|>>\s*/)"),
      ["curl", "wget", "netcat", " nc ", "chmod 777", "rm -rf",
       "/etc/passwd", "/etc/shadow", "base64 -d", "0.0.0.0", "/dev/tcp"],  # nosec B104
-     "shell chaining/redirection near a known dangerous command"),
+     "shell chaining/redirection near a known dangerous command",
+     "any"),
     # Demoted from the unconditional list above (SEC hardening pass): the
     # bare shape matches ANY JS/TS template literal or Ruby interpolation,
     # which is ordinary code, not an attack. Real template/SSTI injection
@@ -189,7 +229,24 @@ _ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str]] = [
      ["config", "__class__", "__globals__", "__init__", "__mro__",
       "__subclasses__", "self.", "request.", "os.", "subprocess",
       "import", "eval", "exec", "system", "popen", "getattr"],
-     "template syntax near a sandbox-escape keyword"),
+     "template syntax near a sandbox-escape keyword",
+     "any"),
+    # Demoted from the unconditional ssrf_attempt list (ISSUE-14): a bare
+    # loopback address (bind syntax, a local dev-server URL, a test fixture
+    # connecting to its own service) has no attack signal on its own. The
+    # real SSRF-bypass shape is a tool call fetching a caller-controlled
+    # URL that unexpectedly resolves to loopback/internal instead of the
+    # intended external host, so this requires an outbound-request verb or
+    # scheme nearby -- which a bare bind() call won't have.
+    ("ssrf_attempt",
+     re.compile(r"(localhost|\b127\.0\.0\.\d{1,3}\b|\b0\.0\.0\.0\b|::1)", re.IGNORECASE),
+     # Bare "connect" was dropped: it's an ordinary English verb ("connect
+     # to localhost for the test fixture") as often as it's code, unlike
+     # the function-call/scheme shapes below.
+     ["fetch", "curl", "wget", "http://", "https://", "requests.get",
+      "requests.post", "urlopen", "axios", ".get(", ".post("],
+     "loopback address near an outbound fetch/request call",
+     "any"),
 ]
 
 
@@ -254,12 +311,23 @@ def _backtick_hits(text, field):
 def _contextual_arg_injection_hits(text: str) -> list[dict]:
     """Same window-then-keyword-check design as ComplianceLayer.scrub()'s
     contextual patterns: a candidate match only counts when a real keyword
-    is nearby, not on the punctuation shape alone."""
+    is nearby, not on the punctuation shape alone. `direction` restricts
+    which side of the match is searched — see the design note above
+    _ARG_INJECTION_CONTEXTUAL for why the SQL-separator entry is after-only."""
     findings: list[dict] = []
-    for pid, rx, keywords, detail in _ARG_INJECTION_CONTEXTUAL:
+    for pid, rx, keywords, detail, direction in _ARG_INJECTION_CONTEXTUAL:
         for m in rx.finditer(text):
             s, e = m.start(), m.end()
-            window = text[max(0, s - _ARG_INJECTION_WINDOW): e + _ARG_INJECTION_WINDOW].lower()
+            if direction == "after":
+                window = text[e: e + _ARG_INJECTION_WINDOW].lower()
+            elif direction == "before":
+                window = text[max(0, s - _ARG_INJECTION_WINDOW): s].lower()
+            else:
+                # "any": the original symmetric window, including the
+                # matched span itself -- some patterns (e.g. template
+                # syntax) need to match a keyword sitting INSIDE the
+                # match, not just outside it.
+                window = text[max(0, s - _ARG_INJECTION_WINDOW): e + _ARG_INJECTION_WINDOW].lower()
             if any(_keyword_present(window, k) for k in keywords):
                 findings.append({"pattern_id": pid, "detail": detail})
                 break  # one contextual finding per pattern_id is enough

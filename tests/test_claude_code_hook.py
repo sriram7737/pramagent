@@ -90,6 +90,41 @@ def test_ordinary_command_chaining_is_not_flagged_as_injection():
     assert _decision(output) == "ask"
 
 
+def test_writing_a_migration_file_with_create_table_is_not_flagged():
+    """ISSUE-14: writing a schema migration file is completely ordinary
+    work for a coding assistant, not a SQL injection payload."""
+    output = HOOK.evaluate_event(
+        _event("Write", {
+            "file_path": "migrations/0001_init.sql",
+            "content": "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);",
+        })
+    )
+    assert "sql_injection" not in _reason(output)
+
+
+def test_editing_test_fixture_with_update_set_is_not_flagged():
+    output = HOOK.evaluate_event(
+        _event("Edit", {
+            "file_path": "tests/fixtures/seed.sql",
+            "old_string": "-- seed data",
+            "new_string": "UPDATE users SET email = 'new@example.com' WHERE id = 1;",
+        })
+    )
+    assert "sql_injection" not in _reason(output)
+
+
+def test_binding_a_dev_server_to_loopback_is_not_flagged():
+    """ISSUE-14: binding a local dev/test server to a loopback address is
+    ordinary code, not an SSRF attempt."""
+    output = HOOK.evaluate_event(
+        _event("Write", {
+            "file_path": "server.py",
+            "content": 'app.run(host="0.0.0.0", port=8080)',
+        })
+    )
+    assert "ssrf_attempt" not in _reason(output)
+
+
 def test_disregard_prior_instructions_is_isolation_ask():
     output = HOOK.evaluate_event(
         _event(

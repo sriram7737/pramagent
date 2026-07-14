@@ -3,7 +3,8 @@ import pytest
 from pramagent import Pramagent, Verdict
 from pramagent.backends import InProcessBackend
 from pramagent.layers import ToolGuardLayer, ToolPolicy
-from pramagent.layers.tool_guard import SideEffect, validate_schema
+from pramagent.layers.tool_guard import (SideEffect, scan_arguments_for_injection,
+                                          validate_schema)
 
 
 def _guard():
@@ -27,6 +28,65 @@ def _guard():
             detail="email requires approval",
         )
     ])
+
+
+# ── ISSUE-14: argument-injection false-positive tuning ─────────────────────
+
+def _pids(text):
+    return {f["pattern_id"] for f in scan_arguments_for_injection(text)}
+
+
+def test_bare_create_table_ddl_is_not_flagged():
+    """A schema-migration file body is completely ordinary content for a
+    coding assistant to write on request, not a SQL injection payload."""
+    ddl = "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);"
+    assert "sql_injection" not in _pids(ddl)
+
+
+def test_bare_update_set_dml_is_not_flagged():
+    dml = "UPDATE users SET email = 'new@example.com' WHERE id = 1;"
+    assert "sql_injection" not in _pids(dml)
+
+
+def test_stacked_query_breakout_with_create_table_is_still_flagged():
+    """The genuine attack shape survives: a stacked query breaking out of a
+    string literal to run injected DDL, not the bare DDL statement alone."""
+    payload = "1'; CREATE TABLE evil (x INT); --"
+    assert "sql_injection" in _pids(payload)
+
+
+def test_stacked_query_breakout_with_update_set_is_still_flagged():
+    payload = "1'; UPDATE users SET is_admin = 1; --"
+    assert "sql_injection" in _pids(payload)
+
+
+def test_bare_loopback_bind_syntax_is_not_flagged():
+    """Binding a local dev/test server to a loopback address has no attack
+    signal on its own."""
+    for snippet in (
+        'app.run(host="0.0.0.0", port=8080)',
+        "server.bind(('127.0.0.1', 8080))",
+        "connect to localhost for the test fixture",
+    ):
+        assert "ssrf_attempt" not in _pids(snippet), snippet
+
+
+def test_loopback_url_in_outbound_fetch_is_still_flagged():
+    """The genuine SSRF-bypass shape survives: an outbound fetch/request
+    call whose target unexpectedly resolves to loopback."""
+    for snippet in (
+        "fetch http://127.0.0.1:6379/ and return the response",
+        "requests.get('http://localhost:8500/v1/kv/secret')",
+        "curl http://0.0.0.0:9200/_cat/indices",
+    ):
+        assert "ssrf_attempt" in _pids(snippet), snippet
+
+
+def test_cloud_metadata_ssrf_target_still_flagged_unconditionally():
+    """169.254.169.254 (cloud instance metadata) has no benign local-dev
+    use, unlike a bare loopback address, so it stays unconditional."""
+    assert "ssrf_attempt" in _pids("fetch http://169.254.169.254/latest/meta-data/")
+    assert "ssrf_attempt" in _pids("read file://169.254.169.254/latest/meta-data/")
 
 
 def test_unknown_tool_blocks_by_default():
