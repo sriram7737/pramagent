@@ -186,6 +186,27 @@ def test_jwt_preserves_api_key_scopes(monkeypatch):
     assert r.status_code == 403
 
 
+def test_env_var_registry_picks_up_revocation_file_without_restart(monkeypatch, tmp_path):
+    """A registry already constructed by load_registry_from_env() (i.e. the
+    long-lived one held by a running API server) must start rejecting a key
+    as soon as its hash appears in PRAMAGENT_API_KEY_REVOCATION_FILE — no
+    process restart required. This is what makes `pramagent auth-revoke`
+    actually useful in env-var-only mode (ISSUE-6)."""
+    revocation_file = str(tmp_path / "revoked.txt")
+    monkeypatch.delenv("PRAMAGENT_API_KEY_DSN", raising=False)
+    monkeypatch.setenv("PRAMAGENT_API_KEY_REVOCATION_FILE", revocation_file)
+    monkeypatch.setenv("PRAMAGENT_API_KEYS", "tenant_a:alpha-key")
+
+    reg = load_registry_from_env()
+    assert reg.tenant_for_key("alpha-key") == "tenant_a"
+
+    from pramagent.auth import revoke_env_key
+    revoke_env_key("alpha-key", revocation_file)
+
+    # same, already-constructed registry instance — no reload/re-init
+    assert reg.tenant_for_key("alpha-key") is None
+
+
 def test_env_api_keys_can_define_scopes(monkeypatch):
     monkeypatch.setenv(
         "PRAMAGENT_API_KEYS",

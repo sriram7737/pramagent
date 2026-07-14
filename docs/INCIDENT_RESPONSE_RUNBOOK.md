@@ -94,6 +94,20 @@ at a real paging integration's webhook once paging exists.
 pramagent auth-revoke <api_key> --actor incident-commander
 ```
 
+  This command has two working backends and one hard failure mode,
+  depending on how this deployment issues keys:
+  - `PRAMAGENT_API_KEY_DSN` set (Postgres-backed registry): revokes
+    immediately and durably in the database.
+  - `PRAMAGENT_API_KEY_DSN` unset but `PRAMAGENT_API_KEY_REVOCATION_FILE`
+    set (the simpler `PRAMAGENT_API_KEYS=tenant:key,...` env-var mode):
+    appends the key's hash to that file. A running API process picks this
+    up on its next auth check (no restart needed) because the registry
+    reloads the file on mtime change.
+  - Neither set: the command fails with an actionable error. The only
+    real fallback in that configuration is to remove the compromised key
+    from `PRAMAGENT_API_KEYS` and redeploy/restart every API process —
+    do this immediately rather than treating the CLI failure as "done."
+
 - Rotate JWT signing keys by adding a new `kid:secret` to
   `PRAMAGENT_JWT_SECRETS`, setting `PRAMAGENT_JWT_ACTIVE_KID`, deploying, then
   retiring the old `kid` after active tokens expire.

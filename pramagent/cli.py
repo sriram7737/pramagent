@@ -200,9 +200,27 @@ def cmd_auth_issue(args) -> int:
 
 
 def cmd_auth_revoke(args) -> int:
+    import os
+
     try:
-        registry = _api_key_registry_from_env()
-        revoked = registry.revoke_key(args.api_key, actor=args.actor or "")
+        if os.environ.get("PRAMAGENT_API_KEY_DSN", "").strip():
+            registry = _api_key_registry_from_env()
+            revoked = registry.revoke_key(args.api_key, actor=args.actor or "")
+        else:
+            revocation_file = os.environ.get(
+                "PRAMAGENT_API_KEY_REVOCATION_FILE", "").strip()
+            if not revocation_file:
+                raise RuntimeError(
+                    "no revocation backend configured: set "
+                    "PRAMAGENT_API_KEY_DSN for persistent-store mode, or "
+                    "PRAMAGENT_API_KEY_REVOCATION_FILE to revoke keys "
+                    "configured via PRAMAGENT_API_KEYS. Without either, "
+                    "revoke by removing the key from PRAMAGENT_API_KEYS and "
+                    "redeploying/restarting every API process (see "
+                    "INCIDENT_RESPONSE_RUNBOOK.md)."
+                )
+            from .auth import revoke_env_key
+            revoked = revoke_env_key(args.api_key, revocation_file)
     except Exception as exc:
         print(f"[fail] {exc}", file=sys.stderr)
         return 2

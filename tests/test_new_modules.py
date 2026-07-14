@@ -384,6 +384,44 @@ class TestCLI:
         assert len(calls) == 3
         assert sleep_calls == [42.0, 42.0]
 
+    def test_auth_revoke_env_var_mode_writes_revocation_file(self, monkeypatch, tmp_path, capsys):
+        """auth-revoke must have a CLI-reachable path when the operator uses
+        PRAMAGENT_API_KEYS instead of a Postgres-backed registry — the
+        runbook tells responders to run this command unconditionally
+        (ISSUE-6)."""
+        from types import SimpleNamespace
+        from pramagent import cli
+        from pramagent.auth import _hash_key
+
+        monkeypatch.delenv("PRAMAGENT_API_KEY_DSN", raising=False)
+        revocation_file = str(tmp_path / "revoked.txt")
+        monkeypatch.setenv("PRAMAGENT_API_KEY_REVOCATION_FILE", revocation_file)
+
+        args = SimpleNamespace(api_key="pramagent_some_key", actor="oncall", json=True)
+        assert cli.cmd_auth_revoke(args) == 0
+        out = capsys.readouterr().out
+        assert '"revoked": true' in out
+
+        with open(revocation_file, "r", encoding="utf-8") as f:
+            lines = {line.strip() for line in f if line.strip()}
+        assert _hash_key("pramagent_some_key") in lines
+
+    def test_auth_revoke_without_any_backend_fails_with_actionable_message(self, monkeypatch, capsys):
+        """No PRAMAGENT_API_KEY_DSN and no PRAMAGENT_API_KEY_REVOCATION_FILE:
+        must fail with a clear, actionable error, not a bare RuntimeError
+        the operator can't act on mid-incident (ISSUE-6)."""
+        from types import SimpleNamespace
+        from pramagent import cli
+
+        monkeypatch.delenv("PRAMAGENT_API_KEY_DSN", raising=False)
+        monkeypatch.delenv("PRAMAGENT_API_KEY_REVOCATION_FILE", raising=False)
+
+        args = SimpleNamespace(api_key="pramagent_some_key", actor="", json=False)
+        assert cli.cmd_auth_revoke(args) == 2
+        err = capsys.readouterr().err
+        assert "PRAMAGENT_API_KEYS" in err
+        assert "PRAMAGENT_API_KEY_REVOCATION_FILE" in err
+
     def test_test_inject_detects_injection(self):
         import subprocess, sys
         r = subprocess.run(

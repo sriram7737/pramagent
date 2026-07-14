@@ -107,9 +107,35 @@ class AuthRecord:
 class APIKeyRegistry:
     """Maps API keys to tenants. Keys are stored as SHA-256, never plain text."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, revocation_file: str = "") -> None:
         # hashed_key -> AuthRecord
         self._keys: dict[str, AuthRecord] = {}
+        # PRAMAGENT_API_KEY_REVOCATION_FILE: revocation for env-var-configured
+        # keys (PRAMAGENT_API_KEYS), which have no persistent store for
+        # revoke_key() to write to. Each line is a hashed key (never plain
+        # text, matching the module's key-handling invariant); reloaded on
+        # mtime change so a running server picks up `pramagent auth-revoke`
+        # without a restart (ISSUE-6).
+        self._revocation_file = revocation_file
+        self._revoked_hashes: frozenset[str] = frozenset()
+        self._revocation_mtime: float = -1.0
+
+    def _reload_revocations_if_changed(self) -> None:
+        if not self._revocation_file:
+            return
+        try:
+            mtime = os.path.getmtime(self._revocation_file)
+        except OSError:
+            return
+        if mtime == self._revocation_mtime:
+            return
+        try:
+            with open(self._revocation_file, "r", encoding="utf-8") as f:
+                self._revoked_hashes = frozenset(
+                    line.strip() for line in f if line.strip())
+            self._revocation_mtime = mtime
+        except OSError:
+            pass
 
     def add_key(
         self,
@@ -154,16 +180,45 @@ class APIKeyRegistry:
         """Constant-time lookup. Returns the auth record or None."""
         if not presented:
             return None
+        self._reload_revocations_if_changed()
         target = _hash_key(presented)
         # iterate every entry so timing reveals nothing about presence
         match: Optional[AuthRecord] = None
         for hashed, record in self._keys.items():
             if secrets.compare_digest(hashed, target):
                 match = record
+        if target in self._revoked_hashes:
+            return None
         return match
 
     def __len__(self) -> int:
         return len(self._keys)
+
+
+def revoke_env_key(key: str, revocation_file: str) -> bool:
+    """Revoke a PRAMAGENT_API_KEYS-configured key with no persistent store.
+
+    `APIKeyRegistry.revoke_key()` only mutates one process's in-memory
+    dict — useless for revocation once the registry is rebuilt from env on
+    every process start. This instead appends the key's hash to a shared
+    file that `load_registry_from_env()`-built registries consult on every
+    lookup (reloading on mtime change), so a running server picks up the
+    revocation without a restart (ISSUE-6).
+
+    Idempotent and unconditional: this mode has no record of which keys
+    were ever valid, so it cannot report "key was not active" the way the
+    Postgres-backed path does — it can only block the hash going forward.
+    Always returns True.
+    """
+    hashed = _hash_key(key)
+    existing: set[str] = set()
+    if os.path.exists(revocation_file):
+        with open(revocation_file, "r", encoding="utf-8") as f:
+            existing = {line.strip() for line in f if line.strip()}
+    if hashed not in existing:
+        with open(revocation_file, "a", encoding="utf-8") as f:
+            f.write(hashed + "\n")
+    return True
 
 
 class PostgresAPIKeyRegistry(APIKeyRegistry):
@@ -585,7 +640,8 @@ def load_registry_from_env(
     if dsn:
         reg = PostgresAPIKeyRegistry.from_dsn(dsn)
     else:
-        reg = APIKeyRegistry()
+        revocation_file = os.environ.get("PRAMAGENT_API_KEY_REVOCATION_FILE", "").strip()
+        reg = APIKeyRegistry(revocation_file=revocation_file)
     raw = os.environ.get(env_var, "").strip()
     if not raw:
         return reg
