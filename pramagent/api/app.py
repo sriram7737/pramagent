@@ -1617,9 +1617,17 @@ def create_app(armor: Optional[Pramagent] = None,
         every other tenant's data (ISSUE-1/7)."""
         return tenant if tenant else (provided_tenant_id or "default")
 
-    def _fetch_trace(call_id: str, tenant: str):
-        """Fetch a trace, enforcing tenant ownership when auth is enabled."""
-        tenant_filter = tenant if tenant else None
+    def _fetch_trace(call_id: str, tenant: str, provided_tenant_id: str = ""):
+        """Fetch a trace, enforcing tenant ownership.
+
+        Routes through _resolve_tenant so the fetch is ALWAYS scoped to a
+        concrete tenant — the caller's tenant when auth is enabled, the
+        caller-supplied bucket (default "default") in no-auth mode. The
+        previous `tenant if tenant else None` left the get() unscoped
+        whenever auth was disabled, which returned any tenant's full
+        prompt/output (HIGH-1, same bug class as ISSUE-1/7 on more sensitive
+        data)."""
+        tenant_filter = _resolve_tenant(tenant, provided_tenant_id)
         try:
             return app.state.armor.store.get(call_id, tenant_id=tenant_filter)
         except KeyError:
@@ -1678,24 +1686,28 @@ def create_app(armor: Optional[Pramagent] = None,
                 data["block_reason"] = "blocked by output safety rule"
         return data
 
-    def _fetch_trace_for_dashboard(trace_id: str, tenant: str):
+    def _fetch_trace_for_dashboard(trace_id: str, tenant: str,
+                                   provided_tenant_id: str = ""):
         """Fetch by call_id, with this_hash fallback for copied dashboard URLs."""
         try:
-            return _fetch_trace(trace_id, tenant)
+            return _fetch_trace(trace_id, tenant, provided_tenant_id)
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise
 
         store = app.state.armor.store
-        tenant_filter = tenant if tenant else ""
-        if tenant_filter and hasattr(store, "list_by_tenant"):
+        # Always a concrete tenant (the caller's, or the caller-supplied
+        # bucket / "default" in no-auth mode) — never "" — so the this_hash
+        # fallback cannot walk another tenant's traces (HIGH-1).
+        tenant_filter = _resolve_tenant(tenant, provided_tenant_id)
+        if hasattr(store, "list_by_tenant"):
             traces = store.list_by_tenant(tenant_filter, None, 500)
         else:
             traces = store.list_all(500)
         for trace in traces:
             data = _trace_to_dict(trace)
             if data.get("this_hash") == trace_id:
-                if tenant and data.get("tenant_id") != tenant:
+                if data.get("tenant_id") != tenant_filter:
                     break
                 return trace
         raise HTTPException(status_code=404, detail="trace not found")
@@ -2443,8 +2455,9 @@ def create_app(armor: Optional[Pramagent] = None,
         )
 
     @app.get("/v1/trace/{call_id}", response_model=TraceModel)
-    async def get_trace(call_id: str, tenant: str = Depends(require_tenant)):
-        return _fetch_trace(call_id, tenant).to_dict()
+    async def get_trace(call_id: str, tenant_id: str = "",
+                        tenant: str = Depends(require_tenant)):
+        return _fetch_trace(call_id, tenant, tenant_id).to_dict()
 
     @app.get("/v1/audit/verify")
     async def verify_audit(tenant: str = Depends(require_audit_tenant)):
@@ -2712,9 +2725,12 @@ def create_app(armor: Optional[Pramagent] = None,
         When auth is enabled the listing is hard-scoped to the caller's tenant
         — the tenant_id query parameter cannot widen it. The tenant filter is
         pushed into SQL (idx_traces_tenant) so a busy neighbor tenant can
-        never crowd a caller's rows out of the page (P1-9)."""
-        if tenant:
-            tenant_id = tenant
+        never crowd a caller's rows out of the page (P1-9).
+
+        In no-auth mode the caller-supplied tenant_id selects the bucket,
+        defaulting to "default" — never an empty filter that would list every
+        tenant's prompts/outputs (HIGH-1)."""
+        tenant_id = _resolve_tenant(tenant, tenant_id)
 
         store = app.state.armor.store
         if tenant_id and hasattr(store, "list_by_tenant"):
@@ -2735,9 +2751,9 @@ def create_app(armor: Optional[Pramagent] = None,
         return items[-limit:]
 
     @app.get("/traces/{trace_id}")
-    async def trace_detail_unversioned(trace_id: str,
+    async def trace_detail_unversioned(trace_id: str, tenant_id: str = "",
                                        tenant: str = Depends(require_tenant)):
-        result = _fetch_trace_for_dashboard(trace_id, tenant)
+        result = _fetch_trace_for_dashboard(trace_id, tenant, tenant_id)
         if result is None:
             raise HTTPException(status_code=404, detail="trace not found")
         return _trace_to_dict(result)

@@ -1865,6 +1865,44 @@ def test_unversioned_traces_list_scoped_to_caller_tenant(auth_client):
     assert {item["tenant_id"] for item in r.json()} == {"tenant_b"}
 
 
+def test_noauth_trace_reads_scoped_to_resolved_tenant():
+    """HIGH-1: with no API keys configured, the trace-read endpoints must not
+    return every tenant's prompts/outputs. They resolve to the "default"
+    bucket (or the caller-supplied tenant_id), never an unscoped fetch — the
+    same empty-tenant bypass class as ISSUE-1/7, on more sensitive data."""
+    local_client = TestClient(create_app(armor=Pramagent()))
+
+    a = local_client.post(
+        "/v1/run", json={"prompt": "tenant_a secret", "tenant_id": "tenant_a"},
+    ).json()
+    b = local_client.post(
+        "/v1/run", json={"prompt": "tenant_b secret", "tenant_id": "tenant_b"},
+    ).json()
+
+    # GET /traces with no tenant_id resolves to "default" — neither tenant's
+    # records leak (pre-fix this returned both).
+    unscoped = local_client.get("/traces").json()
+    assert all(t["tenant_id"] == "default" for t in unscoped)
+    assert not any(t["tenant_id"] in {"tenant_a", "tenant_b"} for t in unscoped)
+
+    # Selecting a bucket returns only that bucket.
+    only_a = local_client.get("/traces", params={"tenant_id": "tenant_a"}).json()
+    assert {t["tenant_id"] for t in only_a} == {"tenant_a"}
+
+    # GET /v1/trace/{id}: cross-bucket fetch 404s; correct bucket succeeds.
+    assert local_client.get(f"/v1/trace/{b['call_id']}").status_code == 404
+    assert local_client.get(
+        f"/v1/trace/{b['call_id']}", params={"tenant_id": "tenant_b"},
+    ).status_code == 200
+
+    # GET /traces/{this_hash}: same scoping on the dashboard fallback path.
+    assert local_client.get(f"/traces/{a['this_hash']}").status_code == 404
+    ok = local_client.get(
+        f"/traces/{a['this_hash']}", params={"tenant_id": "tenant_a"})
+    assert ok.status_code == 200
+    assert ok.json()["tenant_id"] == "tenant_a"
+
+
 def test_unversioned_hitl_decide_blocks_cross_tenant(auth_client):
     """Tenant B must not be able to approve tenant A's pending action."""
     client, key_a, key_b = auth_client
