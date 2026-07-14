@@ -67,10 +67,17 @@ class SQLiteHITLQueue:
             )
         return request.request_id
 
-    def get(self, request_id: str) -> Optional[QueuedRequest]:
+    def get(self, request_id: str,
+            tenant_id: Optional[str] = None) -> Optional[QueuedRequest]:
+        if tenant_id is None:
+            sql = "SELECT * FROM hitl_queue WHERE request_id = ?"
+            args: tuple = (request_id,)
+        else:
+            sql = ("SELECT * FROM hitl_queue "
+                   "WHERE request_id = ? AND tenant_id = ?")
+            args = (request_id, tenant_id)
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT * FROM hitl_queue WHERE request_id = ?", (request_id,))
+            cur = self._conn.execute(sql, args)
             r = cur.fetchone()
         return from_row(dict(r)) if r else None
 
@@ -94,28 +101,42 @@ class SQLiteHITLQueue:
         return [from_row(dict(r)) for r in rows]
 
     def decide(self, request_id: str, *, approved: bool,
-               decided_by: str = "", notes: str = "") -> bool:
+               decided_by: str = "", notes: str = "",
+               tenant_id: Optional[str] = None) -> bool:
         new_status = (RequestStatus.APPROVED.value if approved
                       else RequestStatus.DENIED.value)
         import time
-        with self._lock:
-            cur = self._conn.execute(
-                """UPDATE hitl_queue
+        if tenant_id is None:
+            sql = ("""UPDATE hitl_queue
                    SET status = ?, decided_at = ?, decided_by = ?, notes = ?
-                   WHERE request_id = ? AND status = ?""",
-                (new_status, time.time(), decided_by, notes,
-                 request_id, RequestStatus.PENDING.value),
-            )
+                   WHERE request_id = ? AND status = ?""")
+            args: tuple = (new_status, time.time(), decided_by, notes,
+                           request_id, RequestStatus.PENDING.value)
+        else:
+            sql = ("""UPDATE hitl_queue
+                   SET status = ?, decided_at = ?, decided_by = ?, notes = ?
+                   WHERE request_id = ? AND status = ? AND tenant_id = ?""")
+            args = (new_status, time.time(), decided_by, notes,
+                    request_id, RequestStatus.PENDING.value, tenant_id)
+        with self._lock:
+            cur = self._conn.execute(sql, args)
             return cur.rowcount > 0
 
-    def expire(self, request_id: str) -> bool:
+    def expire(self, request_id: str,
+               tenant_id: Optional[str] = None) -> bool:
         import time
-        with self._lock:
-            cur = self._conn.execute(
-                """UPDATE hitl_queue
+        if tenant_id is None:
+            sql = ("""UPDATE hitl_queue
                    SET status = ?, decided_at = ?
-                   WHERE request_id = ? AND status = ?""",
-                (RequestStatus.EXPIRED.value, time.time(),
-                 request_id, RequestStatus.PENDING.value),
-            )
+                   WHERE request_id = ? AND status = ?""")
+            args: tuple = (RequestStatus.EXPIRED.value, time.time(),
+                           request_id, RequestStatus.PENDING.value)
+        else:
+            sql = ("""UPDATE hitl_queue
+                   SET status = ?, decided_at = ?
+                   WHERE request_id = ? AND status = ? AND tenant_id = ?""")
+            args = (RequestStatus.EXPIRED.value, time.time(),
+                    request_id, RequestStatus.PENDING.value, tenant_id)
+        with self._lock:
+            cur = self._conn.execute(sql, args)
             return cur.rowcount > 0

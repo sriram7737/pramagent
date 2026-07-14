@@ -46,8 +46,12 @@ class HITLQueueStore(Protocol):
         """Persist a new pending request. Returns the request_id."""
         ...
 
-    def get(self, request_id: str) -> Optional[QueuedRequest]:
-        """Fetch a single request, or None."""
+    def get(self, request_id: str,
+            tenant_id: Optional[str] = None) -> Optional[QueuedRequest]:
+        """Fetch a single request, or None. When tenant_id is given, a row
+        belonging to a different tenant is invisible (returns None) — this is
+        the cross-tenant isolation boundary for callers that act on a
+        request_id supplied from outside (e.g. a REST decide endpoint)."""
         ...
 
     def list_pending(self, tenant_id: Optional[str] = None,
@@ -56,12 +60,17 @@ class HITLQueueStore(Protocol):
         ...
 
     def decide(self, request_id: str, *, approved: bool,
-               decided_by: str = "", notes: str = "") -> bool:
-        """Record an approve/deny decision. Returns True if a pending row was updated."""
+               decided_by: str = "", notes: str = "",
+               tenant_id: Optional[str] = None) -> bool:
+        """Record an approve/deny decision. Returns True if a pending row was
+        updated. When tenant_id is given, a request owned by another tenant
+        is not updated (returns False)."""
         ...
 
-    def expire(self, request_id: str) -> bool:
-        """Mark a request as expired (timeout). Returns True if updated."""
+    def expire(self, request_id: str,
+               tenant_id: Optional[str] = None) -> bool:
+        """Mark a request as expired (timeout). Returns True if updated.
+        tenant_id scopes the update the same way decide() does."""
         ...
 
 
@@ -76,8 +85,12 @@ class InMemoryHITLQueue:
         self._rows[request.request_id] = request
         return request.request_id
 
-    def get(self, request_id: str) -> Optional[QueuedRequest]:
-        return self._rows.get(request_id)
+    def get(self, request_id: str,
+            tenant_id: Optional[str] = None) -> Optional[QueuedRequest]:
+        r = self._rows.get(request_id)
+        if r is None or (tenant_id is not None and r.tenant_id != tenant_id):
+            return None
+        return r
 
     def list_pending(self, tenant_id: Optional[str] = None,
                      limit: int = 100) -> list[QueuedRequest]:
@@ -88,9 +101,12 @@ class InMemoryHITLQueue:
         return out[:limit]
 
     def decide(self, request_id: str, *, approved: bool,
-               decided_by: str = "", notes: str = "") -> bool:
+               decided_by: str = "", notes: str = "",
+               tenant_id: Optional[str] = None) -> bool:
         r = self._rows.get(request_id)
         if r is None or r.status != RequestStatus.PENDING.value:
+            return False
+        if tenant_id is not None and r.tenant_id != tenant_id:
             return False
         r.status = (RequestStatus.APPROVED.value if approved
                     else RequestStatus.DENIED.value)
@@ -99,9 +115,12 @@ class InMemoryHITLQueue:
         r.notes = notes
         return True
 
-    def expire(self, request_id: str) -> bool:
+    def expire(self, request_id: str,
+               tenant_id: Optional[str] = None) -> bool:
         r = self._rows.get(request_id)
         if r is None or r.status != RequestStatus.PENDING.value:
+            return False
+        if tenant_id is not None and r.tenant_id != tenant_id:
             return False
         r.status = RequestStatus.EXPIRED.value
         r.decided_at = time.time()

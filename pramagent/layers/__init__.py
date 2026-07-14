@@ -457,6 +457,7 @@ class HITLLayer:
 
         req = QueuedRequest.new(action, context,
                                 tenant_id=str(context.get("tenant") or context.get("tenant_id") or "default"))
+        tenant_id = req.tenant_id
         self.store.enqueue(req)
 
         # Fire-and-forget notification (so a Slack DM is sent per request, etc.).
@@ -476,7 +477,7 @@ class HITLLayer:
         deadline = (time.time() + self.timeout_s) if self.timeout_s else None
 
         while True:
-            row = self.store.get(req.request_id)
+            row = self.store.get(req.request_id, tenant_id=tenant_id)
             if row is not None and row.status != RequestStatus.PENDING.value:
                 if row.status == RequestStatus.APPROVED.value:
                     return HITLStatus.APPROVED
@@ -494,17 +495,19 @@ class HITLLayer:
                     )
                     if answer is True:
                         self.store.decide(req.request_id, approved=True,
-                                          decided_by="approver")
+                                          decided_by="approver",
+                                          tenant_id=tenant_id)
                         return HITLStatus.APPROVED
                     if answer is False:
                         self.store.decide(req.request_id, approved=False,
-                                          decided_by="approver")
+                                          decided_by="approver",
+                                          tenant_id=tenant_id)
                         return HITLStatus.DENIED
                 except asyncio.TimeoutError:
                     pass  # keep polling the store
 
             if deadline is not None and time.time() >= deadline:
-                self.store.expire(req.request_id)
+                self.store.expire(req.request_id, tenant_id=tenant_id)
                 return HITLStatus.IDLE
 
             await asyncio.sleep(self.poll_interval_s)
