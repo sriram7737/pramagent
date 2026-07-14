@@ -256,6 +256,39 @@ def test_read_only_key_cannot_write_or_erase(monkeypatch):
                          headers=h).status_code == 403               # admin denied
 
 
+def test_revocation_file_never_existing_allows_keys(tmp_path):
+    """MEDIUM-2: a configured revocation file that has never been created is
+    the normal 'no revocations issued yet' state — keys must still work."""
+    reg = APIKeyRegistry(revocation_file=str(tmp_path / "revocations.txt"))
+    key = reg.issue_key("tenant_a", scopes="read")
+    assert reg.record_for_key(key) is not None
+
+
+def test_revocation_file_unreadable_fails_closed(tmp_path):
+    """MEDIUM-2: a configured revocation file that exists but cannot be read
+    means we cannot confirm a key isn't revoked → fail closed (deny)."""
+    # A directory stats fine but cannot be open()'d as a file — a portable
+    # stand-in for an unreadable revocation file.
+    unreadable = tmp_path / "revdir"
+    unreadable.mkdir()
+    reg = APIKeyRegistry(revocation_file=str(unreadable))
+    key = reg.issue_key("tenant_a", scopes="read")
+    assert reg.record_for_key(key) is None
+
+
+def test_revocation_file_vanishing_after_load_fails_closed(tmp_path):
+    """MEDIUM-2: once loaded, a revocation file that disappears is treated as
+    an operational failure/tampering (fail closed), not as 'revocations
+    cleared' (which would silently re-enable revoked keys)."""
+    revfile = tmp_path / "revocations.txt"
+    revfile.write_text("", encoding="utf-8")
+    reg = APIKeyRegistry(revocation_file=str(revfile))
+    key = reg.issue_key("tenant_a", scopes="read")
+    assert reg.record_for_key(key) is not None    # loads the empty file
+    revfile.unlink()
+    assert reg.record_for_key(key) is None         # gone → fail closed
+
+
 def test_public_runtime_requires_auth_or_explicit_dev_flag(monkeypatch):
     monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
     monkeypatch.delenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", raising=False)

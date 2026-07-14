@@ -131,23 +131,54 @@ class APIKeyRegistry:
         self._revocation_file = revocation_file
         self._revoked_hashes: frozenset[str] = frozenset()
         self._revocation_mtime: float = -1.0
+        # MEDIUM-2: track whether the configured revocation file can currently
+        # be read. When it can't (present but unreadable, or vanished after
+        # having been loaded), we cannot confirm which keys are revoked, so
+        # record_for_key() fails CLOSED (denies every key) rather than open
+        # (silently treating nothing as revoked). A file that has simply never
+        # existed is the normal "no revocations issued yet" state, not a
+        # failure.
+        self._revocations_readable: bool = True
+        self._revocation_loaded_once: bool = False
 
     def _reload_revocations_if_changed(self) -> None:
         if not self._revocation_file:
+            self._revocations_readable = True
             return
         try:
             mtime = os.path.getmtime(self._revocation_file)
-        except OSError:
+        except FileNotFoundError:
+            if self._revocation_loaded_once:
+                # It was loaded before and has now disappeared — treat as
+                # tampering / operational failure, not "revocations cleared".
+                self._revocations_readable = False
+                log.error(
+                    "revocation file %s disappeared after being loaded; failing "
+                    "closed (denying all keys) until it is restored",
+                    self._revocation_file)
+            else:
+                # Never existed → no revocations issued yet (normal).
+                self._revocations_readable = True
+            return
+        except OSError as exc:
+            self._revocations_readable = False
+            log.error("cannot stat revocation file %s (%s); failing closed",
+                      self._revocation_file, exc)
             return
         if mtime == self._revocation_mtime:
+            self._revocations_readable = True
             return
         try:
             with open(self._revocation_file, "r", encoding="utf-8") as f:
                 self._revoked_hashes = frozenset(
                     line.strip() for line in f if line.strip())
             self._revocation_mtime = mtime
-        except OSError:
-            pass
+            self._revocation_loaded_once = True
+            self._revocations_readable = True
+        except OSError as exc:
+            self._revocations_readable = False
+            log.error("cannot read revocation file %s (%s); failing closed",
+                      self._revocation_file, exc)
 
     def add_key(
         self,
@@ -193,6 +224,10 @@ class APIKeyRegistry:
         if not presented:
             return None
         self._reload_revocations_if_changed()
+        # MEDIUM-2: if a revocation file is configured but currently
+        # unreadable, we cannot confirm this key isn't revoked — fail closed.
+        if self._revocation_file and not self._revocations_readable:
+            return None
         target = _hash_key(presented)
         # iterate every entry so timing reveals nothing about presence
         match: Optional[AuthRecord] = None

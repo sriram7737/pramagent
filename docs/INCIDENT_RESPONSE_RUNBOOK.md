@@ -125,6 +125,18 @@ pramagent auth-revoke <api_key> --actor incident-commander
     from `PRAMAGENT_API_KEYS` and redeploy/restart every API process —
     do this immediately rather than treating the CLI failure as "done."
 
+  **Revocation-file permissions (MEDIUM-2).** `PRAMAGENT_API_KEY_REVOCATION_FILE`
+  is security-critical state. Store it on a persistent volume and make it
+  readable by every API process's runtime user (e.g. `chmod 640`, owned by the
+  service user/group). The registry now fails **closed**: if the file is
+  configured but unreadable (bad permissions, corrupted mount) or disappears
+  after having been loaded, `record_for_key()` denies **every** key and logs an
+  error, rather than silently treating nothing as revoked. That means a broken
+  revocation file is a hard auth outage by design — if auth starts failing for
+  all keys, check the API logs for "failing closed" and confirm the revocation
+  file is present and readable. A file that has simply never been created is the
+  normal "no revocations issued yet" state and does not trip this.
+
 - Rotate JWT signing keys by adding a new `kid:secret` to
   `PRAMAGENT_JWT_SECRETS`, setting `PRAMAGENT_JWT_ACTIVE_KID`, deploying, then
   retiring the old `kid` after active tokens expire.
