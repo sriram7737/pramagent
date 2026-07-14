@@ -301,6 +301,8 @@ class _PostgresBase:
         connect=None,
         encryption_key: "bytes | str | None" = None,
         signing_key: str = "",
+        signing_keys: dict | None = None,
+        active_kid: str | None = None,
     ) -> None:
         self._pool = _ThreadLocalPool(dsn, max_pool_size=max_pool_size,
                                       connect=connect)
@@ -314,8 +316,13 @@ class _PostgresBase:
         self._fernet = self._build_fernet(encryption_key)
         # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
         # docstring for why an unkeyed chain alone isn't tamper-evident
-        # against an actor with raw DB write access.
-        self._signing_key = signing_key
+        # against an actor with raw DB write access. signing_keys/active_kid
+        # enable kid-versioned rotation (G1).
+        from .audit import SigningKeyRing
+        self._keyring = SigningKeyRing.from_config(
+            signing_key=signing_key, signing_keys=signing_keys,
+            active_kid=active_kid)
+        self._signing_key = self._keyring.active_key()
 
     @staticmethod
     def _build_fernet(encryption_key: "bytes | str | None"):
@@ -373,6 +380,8 @@ class _PostgresBase:
         connect=None,
         encryption_key: "bytes | str | None" = None,
         signing_key: str = "",
+        signing_keys: dict | None = None,
+        active_kid: str | None = None,
     ) -> "_PostgresBase":
         """Construct, validate connectivity, run DDL, return instance."""
         instance = cls(
@@ -385,6 +394,8 @@ class _PostgresBase:
             connect=connect,
             encryption_key=encryption_key,
             signing_key=signing_key,
+            signing_keys=signing_keys,
+            active_kid=active_kid,
         )
         instance._validate_and_init()
         return instance
@@ -691,7 +702,8 @@ class PostgresStore(_PostgresBase):
         )
 
     def _redact_matching(self, predicate) -> int:
-        from .audit import canonical_hash, redact_chain_payload
+        from .audit import (CHAIN_KID_FIELD, canonical_hash,
+                            redact_chain_payload)
 
         def _read(conn, cur):
             cur.execute(
@@ -709,7 +721,10 @@ class PostgresStore(_PostgresBase):
                 redacted += 1
                 rehash = True
             if rehash:
-                new_hash = canonical_hash(payload, prev, self._signing_key)
+                # G1: re-sign each row with the key its own _kid names, so a
+                # rotated chain stays verifiable per-row after redaction.
+                row_key = self._keyring.key_for(payload.get(CHAIN_KID_FIELD))
+                new_hash = canonical_hash(payload, prev, row_key or self._signing_key)
 
                 def _update(conn, cur, *, _id=row_id, _payload=payload,
                             _hash=new_hash, _prev=prev):
@@ -768,7 +783,10 @@ class PostgresStore(_PostgresBase):
         subsequent link (T2-3). `prev` is re-read from the DB inside the
         transaction with FOR UPDATE, serializing concurrent writers across
         processes so the chain can never fork (P1-5 / T2-4)."""
-        from .audit import canonical_hash
+        from .audit import CHAIN_KID_FIELD, canonical_hash
+
+        if self._keyring.versioned:                  # G1: tag row's key version
+            payload = {**payload, CHAIN_KID_FIELD: self._keyring.active_kid}
 
         def _fn(conn, cur):
             cur.execute(
@@ -776,7 +794,7 @@ class PostgresStore(_PostgresBase):
             )
             row = cur.fetchone()
             prev = row[0] if row else GENESIS
-            this_hash = canonical_hash(payload, prev, self._signing_key)
+            this_hash = canonical_hash(payload, prev, self._keyring.active_key())
             cur.execute(
                 """
                 INSERT INTO pramagent_chain (this_hash, prev_hash, payload)
@@ -801,7 +819,7 @@ class PostgresStore(_PostgresBase):
 
     def verify(self) -> list[dict]:
         """Verify hash-chain integrity. Returns list of broken links (empty = ok)."""
-        from .audit import canonical_hash
+        from .audit import chain_link_hash_ok
 
         def _fn(conn, cur):
             cur.execute(
@@ -814,7 +832,7 @@ class PostgresStore(_PostgresBase):
         prev = GENESIS
         for this_hash, stored_prev, payload_raw in rows:
             payload = self._deserialize_payload(payload_raw)
-            if canonical_hash(payload, prev, self._signing_key) != this_hash:
+            if not chain_link_hash_ok(payload, prev, this_hash, self._keyring):
                 broken.append({"this_hash": this_hash, "reason": "hash mismatch"})
             elif stored_prev != prev:
                 broken.append({"this_hash": this_hash, "reason": "broken prev link"})

@@ -77,6 +77,84 @@ def canonical_hash(payload: dict, prev_hash: str, signing_key: str = "") -> str:
     return hashlib.sha256(material_bytes).hexdigest()
 
 
+# ── signing-key rotation (G1) ──────────────────────────────────────────────
+# The audit chain HMAC is keyed by PRAMAGENT_SIGNING_KEY. Naively rotating that
+# key breaks verify_chain() for every pre-rotation entry, and key compromise is
+# a SEV-1 in the incident runbook with no remediation step. SigningKeyRing
+# mirrors JWTManager's kid-based rotation: multiple named keys, one active for
+# new writes, all retained for verification. Each new chain payload carries the
+# active kid ("_kid"), so verification selects the key that actually signed
+# each row. Single-key mode (the default) embeds no kid and behaves byte-for-
+# byte like the pre-versioning chain, so existing deployments are unaffected.
+
+# Payload key holding the signing-key version. Leading underscore keeps it out
+# of the way of business fields; it is part of the signed material, so it
+# cannot be altered without invalidating the row's hash.
+CHAIN_KID_FIELD = "_kid"
+
+
+class SigningKeyRing:
+    """Versioned audit-chain signing keys.
+
+    Build with from_config(): pass a single ``signing_key`` for the classic
+    unversioned behaviour, or a ``signing_keys`` mapping ``{kid: key}`` plus an
+    optional ``active_kid`` to enable rotation.
+    """
+
+    def __init__(self, keys: dict, active_kid: str, *, versioned: bool) -> None:
+        self._keys = dict(keys)
+        self.active_kid = active_kid
+        self.versioned = versioned
+
+    @classmethod
+    def from_config(cls, signing_key: str = "",
+                    signing_keys: dict | None = None,
+                    active_kid: str | None = None) -> "SigningKeyRing":
+        if signing_keys:
+            keys = {str(k): str(v) for k, v in signing_keys.items() if k and v}
+            if not keys:
+                raise ValueError("signing_keys was provided but empty")
+            akid = str(active_kid) if active_kid else next(iter(keys))
+            if akid not in keys:
+                raise ValueError("active_kid must exist in signing_keys")
+            return cls(keys, akid, versioned=True)
+        # Single-key (or unkeyed) mode: no kid is embedded, chain bytes are
+        # identical to the pre-rotation implementation.
+        return cls({"_": signing_key or ""}, "_", versioned=False)
+
+    def active_key(self) -> str:
+        return self._keys[self.active_kid]
+
+    def key_for(self, kid) -> str | None:
+        if kid is None:
+            return self.active_key()
+        return self._keys.get(str(kid))
+
+    def all_keys(self) -> list:
+        return list(self._keys.values())
+
+
+def chain_link_hash_ok(payload: dict, prev_hash: str, stored_hash: str,
+                       keyring: "SigningKeyRing") -> bool:
+    """True if stored_hash is a valid HMAC for this payload+prev under the
+    key the payload's _kid names. For untagged rows (no _kid — written before
+    rotation, or in single-key mode) the active key is tried first, then any
+    other key in the ring, so a rotation does not invalidate pre-rotation
+    rows. Callers still check the prev-link separately."""
+    kid = payload.get(CHAIN_KID_FIELD) if isinstance(payload, dict) else None
+    if kid is not None:
+        key = keyring.key_for(kid)
+        if key is None:
+            return False   # unknown key version — cannot verify
+        return canonical_hash(payload, prev_hash, key) == stored_hash
+    if canonical_hash(payload, prev_hash, keyring.active_key()) == stored_hash:
+        return True
+    if keyring.versioned:
+        return any(canonical_hash(payload, prev_hash, k) == stored_hash
+                   for k in keyring.all_keys())
+    return False
+
+
 # Chain-payload fields that can carry user content and must be tombstoned on
 # GDPR Art. 17 erasure. pii_redactions holds only pattern labels, never values.
 # `reason` is included because a ToolGuard schema/validation reason can echo a

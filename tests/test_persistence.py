@@ -273,3 +273,36 @@ def test_sqlite_verify_returns_broken_links_like_postgres():
     finally:
         db.close()
         os.unlink(path)
+
+
+def test_sqlite_signing_key_rotation_preserves_old_entries():
+    """G1: rotating the audit-chain signing key must not invalidate
+    pre-rotation entries. Each row is tagged with the key version (_kid) that
+    signed it; a key ring holding both the old and new keys verifies the whole
+    chain, and a ring missing the old key fails exactly the old rows."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        # write two entries under key version v1
+        db1 = SQLiteStore(path, signing_keys={"v1": "key-one"}, active_kid="v1")
+        db1.append({"tenant_id": "t", "n": 1})
+        db1.append({"tenant_id": "t", "n": 2})
+        assert db1.verify_chain() is True
+        db1.close()
+
+        # rotate: v2 is now active, v1 retained for verification
+        db2 = SQLiteStore(path, signing_keys={"v1": "key-one", "v2": "key-two"},
+                          active_kid="v2")
+        db2.append({"tenant_id": "t", "n": 3})   # signed with v2
+        assert db2.verify_chain() is True         # old v1 + new v2 both verify
+        assert db2.verify() == []
+        db2.close()
+
+        # a ring that lost the old key cannot verify the pre-rotation rows
+        db3 = SQLiteStore(path, signing_keys={"v2": "key-two"}, active_kid="v2")
+        assert db3.verify_chain() is False
+        broken = db3.verify()
+        assert any(b["reason"] == "hash mismatch" for b in broken)
+        db3.close()
+    finally:
+        os.unlink(path)

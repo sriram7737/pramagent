@@ -61,11 +61,17 @@ class EncryptedSQLiteStore:
     """
 
     def __init__(self, path: str = "pramagent.db", key: bytes | str | None = None,
-                 signing_key: str = "") -> None:
+                 signing_key: str = "", *, signing_keys: dict | None = None,
+                 active_kid: str | None = None) -> None:
         # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
         # docstring for why an unkeyed chain alone isn't tamper-evident
-        # against an actor with raw DB write access.
-        self._signing_key = signing_key
+        # against an actor with raw DB write access. signing_keys/active_kid
+        # enable kid-versioned rotation (G1).
+        from .audit import SigningKeyRing
+        self._keyring = SigningKeyRing.from_config(
+            signing_key=signing_key, signing_keys=signing_keys,
+            active_kid=active_kid)
+        self._signing_key = self._keyring.active_key()
         try:
             from cryptography.fernet import Fernet
         except ImportError as e:
@@ -271,8 +277,11 @@ class EncryptedSQLiteStore:
                 "SELECT this_hash FROM audit_chain ORDER BY seq DESC LIMIT 1"
             ).fetchone()
             prev = row[0] if row else GENESIS       # re-read under the lock
+            if self._keyring.versioned:              # G1: tag row's key version
+                from .audit import CHAIN_KID_FIELD
+                payload = {**payload, CHAIN_KID_FIELD: self._keyring.active_kid}
             canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-            this_hash = canonical_hash(payload, prev, self._signing_key)
+            this_hash = canonical_hash(payload, prev, self._keyring.active_key())
             self._conn.execute(
                 "INSERT INTO audit_chain (payload_enc, prev_hash, this_hash) VALUES (?, ?, ?)",
                 (self._encrypt(canonical_json), prev, this_hash),
@@ -286,14 +295,15 @@ class EncryptedSQLiteStore:
         rows = self._conn.execute(
             "SELECT payload_enc, prev_hash, this_hash FROM audit_chain ORDER BY seq"
         ).fetchall()
+        from .audit import chain_link_hash_ok
         prev = GENESIS
         for payload_enc, stored_prev, stored_hash in rows:
             try:
                 payload = json.loads(self._decrypt(payload_enc))
             except Exception:
                 return False    # tampering with ciphertext or wrong key
-            expected = canonical_hash(payload, prev, self._signing_key)
-            if expected != stored_hash or stored_prev != prev:
+            if (not chain_link_hash_ok(payload, prev, stored_hash, self._keyring)
+                    or stored_prev != prev):
                 return False
             prev = stored_hash
         return True
@@ -306,6 +316,7 @@ class EncryptedSQLiteStore:
         rows = self._conn.execute(
             "SELECT payload_enc, prev_hash, this_hash FROM audit_chain ORDER BY seq"
         ).fetchall()
+        from .audit import chain_link_hash_ok
         broken: list[dict] = []
         prev = GENESIS
         for payload_enc, stored_prev, stored_hash in rows:
@@ -315,7 +326,7 @@ class EncryptedSQLiteStore:
                 broken.append({"this_hash": stored_hash, "reason": "hash mismatch"})
                 prev = stored_hash
                 continue
-            if canonical_hash(payload, prev, self._signing_key) != stored_hash:
+            if not chain_link_hash_ok(payload, prev, stored_hash, self._keyring):
                 broken.append({"this_hash": stored_hash, "reason": "hash mismatch"})
             elif stored_prev != prev:
                 broken.append({"this_hash": stored_hash, "reason": "broken prev link"})
