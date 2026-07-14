@@ -33,7 +33,15 @@ class QueuedRequest:
     notes: str = ""
 
     @classmethod
-    def new(cls, action: str, context: dict, *, tenant_id: str = "default") -> "QueuedRequest":
+    def new(cls, action: str, context: dict, *, tenant_id: str) -> "QueuedRequest":
+        """Create a new pending request. tenant_id is REQUIRED and must be a
+        non-empty string (D3): a HITL request silently bucketed as "default"
+        can, combined with the queue's tenant scoping (D1), let the wrong
+        party decide it. Callers must make the tenant an explicit choice."""
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError(
+                "QueuedRequest.new requires an explicit non-empty tenant_id; "
+                "refusing to silently bucket the request as 'default'")
         return cls(request_id=str(uuid.uuid4()), action=action,
                    context=dict(context), tenant_id=tenant_id)
 

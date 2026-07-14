@@ -228,6 +228,15 @@ def test_decide_rejects_cross_tenant(queue):
                     decided_by="owner", tenant_id="tenant-a") is True
 
 
+def test_queued_request_requires_explicit_tenant():
+    """D3: QueuedRequest.new must not silently bucket a request as 'default' —
+    an explicit, non-empty tenant is required."""
+    QueuedRequest.new("wire_transfer", {}, tenant_id="acme")   # ok
+    for bad in ("", "   ", None):
+        with pytest.raises(ValueError):
+            QueuedRequest.new("wire_transfer", {}, tenant_id=bad)
+
+
 def test_expire_rejects_cross_tenant(queue):
     q, db = queue
     req = _enqueue(q, tenant="tenant-a")

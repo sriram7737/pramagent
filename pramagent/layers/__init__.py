@@ -455,8 +455,13 @@ class HITLLayer:
         # Local import to avoid a hard package dependency at import time.
         from ..queue.base import QueuedRequest, RequestStatus
 
-        req = QueuedRequest.new(action, context,
-                                tenant_id=str(context.get("tenant") or context.get("tenant_id") or "default"))
+        # D3: the tenant must be an explicit, concrete value. The pipeline
+        # always supplies context["tenant"]; if a direct caller omits it,
+        # QueuedRequest.new raises rather than silently using "default".
+        ctx_tenant = context.get("tenant") or context.get("tenant_id")
+        req = QueuedRequest.new(
+            action, context,
+            tenant_id=str(ctx_tenant) if ctx_tenant else "")
         tenant_id = req.tenant_id
         self.store.enqueue(req)
 
