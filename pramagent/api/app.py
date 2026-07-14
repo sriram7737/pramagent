@@ -2078,9 +2078,11 @@ def create_app(armor: Optional[Pramagent] = None,
         return HTMLResponse(page.read_text(encoding="utf-8"))
 
     @app.get("/demo/admin/signals", response_class=HTMLResponse)
-    async def demo_admin_signals_page():
-        if not _demo_enabled() or not _demo_admin_key():
-            _demo_not_found()
+    async def demo_admin_signals_page(
+        authorization: Optional[str] = Header(None),
+        x_pramagent_demo_admin_key: Optional[str] = Header(None),
+    ):
+        _require_demo_admin(authorization, x_pramagent_demo_admin_key)
         return HTMLResponse(_demo_admin_page(), headers=_demo_admin_headers())
 
     @app.get("/demo/admin/signals.json")

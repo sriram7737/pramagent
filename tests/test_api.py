@@ -362,7 +362,20 @@ def test_demo_signal_admin_requires_key_and_hides_plaintext(monkeypatch):
         headers={"Authorization": "Bearer wrong"},
     ).status_code == 401
 
-    page = local_client.get("/demo/admin/signals")
+    # The HTML admin shell must require the same key as the JSON data
+    # endpoint — it used to render for anyone once demo mode + an admin key
+    # were configured, checking only that a key was configured, never that
+    # the caller presented it (ISSUE-8).
+    assert local_client.get("/demo/admin/signals").status_code == 401
+    assert local_client.get(
+        "/demo/admin/signals",
+        headers={"Authorization": "Bearer wrong"},
+    ).status_code == 401
+
+    page = local_client.get(
+        "/demo/admin/signals",
+        headers={"Authorization": "Bearer admin-test-key"},
+    )
     assert page.status_code == 200
     assert "Demo product signals" in page.text
     assert "buyer@example.com" not in page.text
