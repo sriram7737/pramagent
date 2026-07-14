@@ -71,3 +71,22 @@ def test_from_url_threads_fail_open_through(monkeypatch):
     backend = RedisBackend.from_url(f"redis://{host}:6379/0", fail_open=True)
     allowed, _ = backend.tb_allow("k1", capacity=10, refill_per_sec=1)
     assert allowed is True
+
+
+# ── C3: rediss:// TLS defaults ─────────────────────────────────────────────
+
+def test_tls_kwargs_verifies_cert_for_rediss():
+    """C3: a rediss:// URL defaults to verifying the server certificate."""
+    out = RedisBackend._tls_kwargs("rediss://cache.example:6380/0", {})
+    assert out["ssl_cert_reqs"] == "required"
+
+
+def test_tls_kwargs_no_ssl_for_plain_redis():
+    out = RedisBackend._tls_kwargs("redis://localhost:6379/0", {})
+    assert "ssl_cert_reqs" not in out
+
+
+def test_tls_kwargs_respects_explicit_override():
+    out = RedisBackend._tls_kwargs(
+        "rediss://cache.example:6380/0", {"ssl_cert_reqs": "none"})
+    assert out["ssl_cert_reqs"] == "none"

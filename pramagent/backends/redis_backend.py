@@ -363,6 +363,19 @@ class RedisBackend(AbstractBackend):
             cooldown_s=breaker_cooldown_s,
         )
 
+    @staticmethod
+    def _tls_kwargs(url: str, kwargs: dict) -> dict:
+        """C3: for a ``rediss://`` (TLS) URL, default to VERIFYING the server
+        certificate unless the caller explicitly overrides ``ssl_cert_reqs``.
+        Redis often carries PHI-adjacent content (approval previews, session
+        memory), so in-transit encryption should be a first-class, verified
+        option — ``rediss://`` is the standard way to reach TLS-terminated
+        Redis (ElastiCache in-transit encryption, Upstash, etc.)."""
+        out = dict(kwargs)
+        if url.startswith("rediss://"):
+            out.setdefault("ssl_cert_reqs", "required")
+        return out
+
     @classmethod
     def from_url(
         cls,
@@ -379,6 +392,9 @@ class RedisBackend(AbstractBackend):
         """Convenience constructor with connection pooling.
 
         ``RedisBackend.from_url('redis://localhost:6379/0', max_connections=20)``
+
+        Use a ``rediss://`` URL for TLS in transit; the server certificate is
+        verified by default (override with ``ssl_cert_reqs``).
         """
         try:
             import redis  # type: ignore
@@ -390,7 +406,7 @@ class RedisBackend(AbstractBackend):
             url,
             max_connections=max_connections,
             decode_responses=True,
-            **kwargs,
+            **cls._tls_kwargs(url, kwargs),
         )
         client = redis.Redis(connection_pool=pool)
         # Compose URLs embed the password (redis://:pw@host) — redact before
