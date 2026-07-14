@@ -601,10 +601,11 @@ def main():
     p_auth_issue.add_argument("tenant_id", help="Tenant that will own the key")
     p_auth_issue.add_argument(
         "--scopes",
-        default="read,write,admin",
+        default="read",
         help="Comma/pipe separated scopes: read, write, admin, audit "
              "(audit alone can check chain integrity without general read "
-             "access — for monitoring/alerting integrations)",
+             "access — for monitoring/alerting integrations). Defaults to "
+             "read-only (A1); grant write/admin/audit explicitly.",
     )
     p_auth_issue.add_argument("--actor", default="", help="Operator id for audit trail")
     p_auth_issue.add_argument("--json", action="store_true", help="Emit JSON")

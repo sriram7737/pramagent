@@ -46,7 +46,13 @@ ADMIN_SCOPE = "admin"
 # either scope — READ_SCOPE keeps working so this is additive, not a breaking
 # cutover for anyone already polling that endpoint with a read-scoped key.
 AUDIT_SCOPE = "audit"
-DEFAULT_SCOPES = frozenset({READ_SCOPE, WRITE_SCOPE, ADMIN_SCOPE, AUDIT_SCOPE})
+# Every scope the system recognises — used to validate scope input.
+ALL_SCOPES = frozenset({READ_SCOPE, WRITE_SCOPE, ADMIN_SCOPE, AUDIT_SCOPE})
+# A1: a key issued with NO scopes specified defaults to read-only, never the
+# full admin set. write/admin/audit must be opted into explicitly, so a key
+# that leaks (or the 2-field PRAMAGENT_API_KEYS="tenant:key" form, or
+# `auth-issue` with no --scopes) cannot silently mint/approve/erase.
+DEFAULT_SCOPES = frozenset({READ_SCOPE})
 
 
 def _hash_key(key: str) -> str:
@@ -74,7 +80,7 @@ def normalize_scopes(scopes: Optional[object] = None) -> frozenset[str]:
     normalized = {item for item in values if item}
     if not normalized:
         return DEFAULT_SCOPES
-    unknown = normalized - set(DEFAULT_SCOPES)
+    unknown = normalized - ALL_SCOPES
     if unknown:
         raise ValueError(f"unknown API key scope(s): {', '.join(sorted(unknown))}")
     return frozenset(normalized)
@@ -629,8 +635,9 @@ def load_registry_from_env(
     """Build a registry from an env var.
 
     Formats:
-      ``tenant1:key1,tenant2:key2`` keeps the legacy all-scope behavior.
-      ``tenant1:key1:read|write`` narrows the key to named scopes.
+      ``tenant1:key1,tenant2:key2`` — no scopes specified, so the key is
+      read-only (A1). Grant more with the 3-field form.
+      ``tenant1:key1:read|write`` sets the key's scopes explicitly.
 
     Returns an empty registry if the variable is unset. Useful for the demo
     server; real deployments load keys from a secret manager.

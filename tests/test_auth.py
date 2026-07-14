@@ -47,8 +47,12 @@ _TEST_JWT_SECRET = "unit-test-jwt-secret-0123456789abcdef"
 def auth_client(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_JWT_SECRET", _TEST_JWT_SECRET)
     reg = APIKeyRegistry()
-    key_a = reg.issue_key("tenant_a")
-    key_b = reg.issue_key("tenant_b")
+    # These keys exercise run/erase/rca, so grant the scopes explicitly.
+    # Unscoped keys default to read-only (A1); see
+    # test_unscoped_key_defaults_to_read_only for that guarantee.
+    all_scopes = "read|write|admin|audit"
+    key_a = reg.issue_key("tenant_a", scopes=all_scopes)
+    key_b = reg.issue_key("tenant_b", scopes=all_scopes)
     client = TestClient(create_app(registry=reg))
     return client, key_a, key_b
 
@@ -217,6 +221,39 @@ def test_env_api_keys_can_define_scopes(monkeypatch):
     assert reg.record_for_key("alpha").tenant_id == "tenant_a"
     assert reg.record_for_key("alpha").scopes == frozenset({"read", "write"})
     assert reg.record_for_key("bravo").scopes == frozenset({"read"})
+
+
+def test_unscoped_key_defaults_to_read_only(monkeypatch):
+    """A1: a key issued with NO scopes must be read-only, not full admin.
+    Covers both the programmatic issue_key() path and the 2-field
+    PRAMAGENT_API_KEYS="tenant:key" env form."""
+    reg = APIKeyRegistry()
+    prog_key = reg.issue_key("tenant_a")            # no scopes arg
+    assert reg.record_for_key(prog_key).scopes == frozenset({"read"})
+
+    monkeypatch.setenv("PRAMAGENT_API_KEYS", "tenant_b:barekey")  # 2-field form
+    env_reg = load_registry_from_env()
+    rec = env_reg.record_for_key("barekey")
+    assert rec.tenant_id == "tenant_b"
+    assert rec.scopes == frozenset({"read"})
+    # crucially, NOT write/admin/audit
+    assert not (rec.scopes & {"write", "admin", "audit"})
+
+
+def test_read_only_key_cannot_write_or_erase(monkeypatch):
+    """A1, behaviourally: a read-only key authenticates and reads, but a
+    write (/v1/run) and an admin op (GDPR erasure) are rejected."""
+    monkeypatch.setenv("PRAMAGENT_JWT_SECRET", _TEST_JWT_SECRET)
+    reg = APIKeyRegistry()
+    read_key = reg.issue_key("tenant_a")            # unscoped → read-only
+    client = TestClient(create_app(registry=reg))
+    h = {"Authorization": f"Bearer {read_key}"}
+
+    assert client.get("/traces", headers=h).status_code == 200      # read OK
+    assert client.post("/v1/run", json={"prompt": "hi"},
+                       headers=h).status_code == 403                 # write denied
+    assert client.delete("/v1/tenant/tenant_a/traces",
+                         headers=h).status_code == 403               # admin denied
 
 
 def test_public_runtime_requires_auth_or_explicit_dev_flag(monkeypatch):
