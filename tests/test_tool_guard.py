@@ -213,6 +213,41 @@ def test_tool_guard_backend_shares_dangerous_chain_across_instances():
     assert "dangerous tool chain" in decision.reason
 
 
+def test_schema_violation_reason_omits_raw_value_b1():
+    """B1: a failing argument value must not appear verbatim in the durable
+    ToolDecision.reason. Schema-violation reasons are written to the audit
+    log and are not always PII-pattern-shaped, so the instance is omitted
+    entirely rather than pattern-scrubbed."""
+    guard = _guard()
+    fake_ssn = "123-45-6789"
+    decision = guard.evaluate(
+        "send_email",
+        {"to": fake_ssn, "body": "hello"},   # 'to' fails the email pattern
+        tenant_id="tenant_a",
+        session_id="s1",
+        action_label="notify_user",
+    )
+    assert decision.verdict == Verdict.BLOCK
+    assert "schema violation" in decision.reason
+    assert fake_ssn not in decision.reason
+
+
+def test_validate_schema_redact_values_hides_instance():
+    """redact_values=True describes the failure without the instance; the
+    default (used for non-durable callers) keeps the informative message."""
+    schema = {"type": "object", "properties": {
+        "ssn": {"type": "string", "pattern": r"^ok$"}}}
+    val = "123-45-6789"
+
+    ok, reason = validate_schema({"ssn": val}, schema, redact_values=True)
+    assert not ok
+    assert val not in reason
+    assert "pattern" in reason
+
+    _, verbose = validate_schema({"ssn": val}, schema)
+    assert val in verbose          # default path is unchanged
+
+
 def test_validate_schema_uses_draft_2020_12_keywords():
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

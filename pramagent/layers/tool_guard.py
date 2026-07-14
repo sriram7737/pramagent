@@ -559,6 +559,7 @@ def validate_schema(
     path: str = "$",
     defs: Optional[dict[str, Any]] = None,
     validator: Any = None,
+    redact_values: bool = False,
 ) -> tuple[bool, str]:
     """Validate with JSON Schema Draft 2020-12.
 
@@ -567,6 +568,13 @@ def validate_schema(
     ``validator`` (see compile_schema_validator) to skip the per-call
     check_schema + constructor cost. If jsonschema is not importable, the
     legacy in-module validator below is used as a fallback.
+
+    redact_values=True omits the failing *instance* value from the returned
+    reason, describing the failure by location + the constraint that failed.
+    Callers that write the reason to the durable audit log MUST set this: the
+    default jsonschema message embeds the raw value (e.g. a rejected SSN- or
+    note-shaped argument), which the GDPR redaction fields did not scrub and
+    which is not always PII-pattern-shaped (B1).
     """
     if Draft202012Validator is not None:
         try:
@@ -584,6 +592,8 @@ def validate_schema(
         location = "$"
         for part in err.absolute_path:
             location += f"[{part}]" if isinstance(part, int) else f".{part}"
+        if redact_values:
+            return False, f"{location}: failed '{err.validator}' constraint"
         return False, f"{location}: {err.message}"
 
     # resolve $defs from root schema if not passed in
@@ -987,8 +997,11 @@ class ToolGuardLayer:
 
         # 4. Argument schema validation (full JSON Schema, compiled once
         #    at registration — P2-3)
+        # redact_values=True: this reason is written to the durable audit
+        # log, so it must not carry the raw failing argument value (B1).
         ok, schema_reason = validate_schema(arguments, policy.schema,
-                                            validator=policy._validator)
+                                            validator=policy._validator,
+                                            redact_values=True)
         if not ok:
             return self._block(tool_name, tenant_id, session_id, action_label,
                                f"argument schema violation: {schema_reason}",
@@ -1167,8 +1180,11 @@ class ToolGuardLayer:
         # Schema validation
         schema_ok = False
         if policy.output_schema is not None:
+            # redact_values: an output schema violation would otherwise echo
+            # the raw (possibly PHI-bearing) output value into the reason (B1).
             ok, reason = validate_schema(output, policy.output_schema,
-                                         validator=policy._output_validator)
+                                         validator=policy._output_validator,
+                                         redact_values=True)
             if not ok:
                 prov = _prov(False, [])
                 return OutputValidationResult(

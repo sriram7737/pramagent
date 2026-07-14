@@ -79,7 +79,11 @@ def canonical_hash(payload: dict, prev_hash: str, signing_key: str = "") -> str:
 
 # Chain-payload fields that can carry user content and must be tombstoned on
 # GDPR Art. 17 erasure. pii_redactions holds only pattern labels, never values.
-GDPR_TOMBSTONE_FIELDS = ("input_text", "output_text", "would_block_reason")
+# `reason` is included because a ToolGuard schema/validation reason can echo a
+# failing argument or output value; the write path now redacts those at source
+# (B1, see validate_schema(redact_values=True)), but tombstoning here also
+# covers the legacy non-jsonschema validator path and any pre-fix entries.
+GDPR_TOMBSTONE_FIELDS = ("input_text", "output_text", "would_block_reason", "reason")
 
 
 def _tombstone_value(value) -> str:
