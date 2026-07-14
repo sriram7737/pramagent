@@ -24,10 +24,13 @@ def client():
 
 @pytest.fixture
 def auth_client():
-    """Authenticated client with keys for two tenants."""
+    """Authenticated client with keys for two tenants. Keys are granted all
+    scopes explicitly because these tests exercise run/erase/decide — unscoped
+    keys are read-only by default (A1)."""
     reg = APIKeyRegistry()
-    key_a = reg.issue_key("tenant_a")
-    key_b = reg.issue_key("tenant_b")
+    all_scopes = "read|write|admin|audit"
+    key_a = reg.issue_key("tenant_a", scopes=all_scopes)
+    key_b = reg.issue_key("tenant_b", scopes=all_scopes)
     return TestClient(create_app(registry=reg)), key_a, key_b
 
 

@@ -47,8 +47,9 @@ def test_rate_limit_is_per_tenant_when_authenticated(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_RATE_BURST", "2")
     monkeypatch.setenv("PRAMAGENT_RATE_PER_SEC", "0.01")
     reg = APIKeyRegistry()
-    key_a = reg.issue_key("tenant_a")
-    key_b = reg.issue_key("tenant_b")
+    # write scope needed for /v1/run; unscoped keys are read-only (A1).
+    key_a = reg.issue_key("tenant_a", scopes="read|write")
+    key_b = reg.issue_key("tenant_b", scopes="read|write")
     client = TestClient(create_app(registry=reg))
 
     # exhaust tenant A
