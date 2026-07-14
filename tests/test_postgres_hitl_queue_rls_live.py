@@ -15,6 +15,7 @@ available, matching tests/test_postgres_rls_live.py.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import shutil
 import socket
@@ -27,8 +28,18 @@ from pramagent import _pg
 from pramagent.queue.base import QueuedRequest, RequestStatus
 from pramagent.queue.postgres import PostgresHITLQueue
 
+# T2/T3/T4: set PRAMAGENT_REQUIRE_LIVE_PG=1 in CI so a missing Docker CLI fails
+# loudly rather than silently skipping this tenant-isolation proof.
+_DOCKER = shutil.which("docker") is not None
+if not _DOCKER and os.environ.get("PRAMAGENT_REQUIRE_LIVE_PG", "").strip().lower() in {
+        "1", "true", "yes", "on"}:
+    raise RuntimeError(
+        "PRAMAGENT_REQUIRE_LIVE_PG is set but the docker CLI is unavailable; "
+        "the live-Postgres HITL isolation test cannot run and must not be "
+        "silently skipped")
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("docker") is None,
+    not _DOCKER,
     reason="docker CLI not available, cannot spin up a live Postgres for this test",
 )
 
