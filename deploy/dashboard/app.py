@@ -128,6 +128,22 @@ PRAMAGENT_DASHBOARD_STATS_TRACE_LIMIT = max(
 PRAMAGENT_DASHBOARD_DEFAULT_ROLE = os.environ.get(
     "PRAMAGENT_DASHBOARD_DEFAULT_ROLE", "viewer"
 )
+# Finding 1.x: open self-signup must never enrol a privileged role. Approver
+# (can approve HITL) and admin are privileged; granting them requires a
+# deliberate admin action, not open enrolment. Clamp the signup role to a
+# read-only set — if an operator points DEFAULT_ROLE at a privileged role, the
+# signup path falls back to viewer rather than minting privileged accounts.
+_SIGNUP_SAFE_ROLES = {"viewer", "auditor"}
+
+
+def _clamp_signup_role(role: str) -> str:
+    """Downgrade a privileged configured role to viewer for the open-signup
+    path (finding 1.x). Admin/approver are privileged; open enrolment must not
+    grant them."""
+    return role if role in _SIGNUP_SAFE_ROLES else "viewer"
+
+
+PRAMAGENT_DASHBOARD_SIGNUP_ROLE = _clamp_signup_role(PRAMAGENT_DASHBOARD_DEFAULT_ROLE)
 PRAMAGENT_DASHBOARD_SIGNUP_TENANT = _normalize_dashboard_tenant(
     os.environ.get("PRAMAGENT_DASHBOARD_SIGNUP_TENANT", PRAMAGENT_DASHBOARD_TENANT),
     False,
@@ -839,7 +855,7 @@ async def signup(
             email=email,
             phone=phone,
             tenant_id=PRAMAGENT_DASHBOARD_SIGNUP_TENANT,
-            role=PRAMAGENT_DASHBOARD_DEFAULT_ROLE,
+            role=PRAMAGENT_DASHBOARD_SIGNUP_ROLE,
         )
     except DashboardAuthError as exc:
         return RedirectResponse(f"/signup?error={quote_plus(str(exc))}", status_code=302)

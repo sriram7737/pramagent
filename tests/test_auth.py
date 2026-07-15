@@ -26,6 +26,17 @@ from pramagent.auth import (  # noqa: E402
 )
 
 
+# ── Finding 1.x: Postgres API-key schema default scope is read-only ──
+def test_postgres_api_key_schema_defaults_to_read_only_scope():
+    """A row inserted by direct SQL / a migration without a scopes value must
+    default to read-only, not admin — matching DEFAULT_SCOPES."""
+    from pramagent.auth import PostgresAPIKeyRegistry
+
+    ddl = PostgresAPIKeyRegistry._DDL
+    assert "DEFAULT 'read'" in ddl
+    assert "admin,read,write" not in ddl
+
+
 # ── Finding 1.4: issued API JWTs are revocable by jti ──
 def test_jwt_can_be_revoked_by_jti():
     mgr = JWTManager("a-strong-jwt-secret-value-123456")

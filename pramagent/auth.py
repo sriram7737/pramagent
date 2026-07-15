@@ -293,7 +293,7 @@ class PostgresAPIKeyRegistry(APIKeyRegistry):
     CREATE TABLE IF NOT EXISTS pramagent_api_keys (
         hashed_key TEXT PRIMARY KEY,
         tenant_id  TEXT NOT NULL,
-        scopes     TEXT NOT NULL DEFAULT 'admin,read,write',
+        scopes     TEXT NOT NULL DEFAULT 'read',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         revoked_at TIMESTAMPTZ NULL
     );
@@ -314,7 +314,7 @@ class PostgresAPIKeyRegistry(APIKeyRegistry):
     CREATE INDEX IF NOT EXISTS pramagent_api_key_audit_created
         ON pramagent_api_key_audit(created_at DESC);
     ALTER TABLE pramagent_api_keys
-        ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT 'admin,read,write';
+        ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT 'read';
     """
 
     def __init__(self, dsn: str, *, connect=None) -> None:

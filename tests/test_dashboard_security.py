@@ -753,6 +753,18 @@ def test_dashboard_reset_requires_preauth_csrf(tmp_path, monkeypatch):
     assert response.status_code == 403
 
 
+# ── Finding 1.x: open self-signup cannot enrol a privileged role ──
+def test_dashboard_signup_role_clamped_away_from_privileged():
+    # Privileged configured roles downgrade to viewer on the open-signup path;
+    # non-privileged roles pass through.
+    assert dashboard._clamp_signup_role("admin") == "viewer"
+    assert dashboard._clamp_signup_role("approver") == "viewer"
+    assert dashboard._clamp_signup_role("viewer") == "viewer"
+    assert dashboard._clamp_signup_role("auditor") == "auditor"
+    # the live constant is never privileged
+    assert dashboard.PRAMAGENT_DASHBOARD_SIGNUP_ROLE in {"viewer", "auditor"}
+
+
 # ── Finding 1.1: cross-service JWT confusion (API token → dashboard admin) ──
 import time  # noqa: E402
 
