@@ -18,7 +18,22 @@ import pytest
 
 from pramagent import Pramagent, Verdict
 from pramagent.layers import Rule, SafetyLayer
-from pramagent.layers.llm_judge import OutputJudgeLayer
+from pramagent.layers.llm_judge import LLMJudge, OutputJudgeLayer
+from pramagent.layers.llm_judge import JudgePolicy
+
+
+def test_judge_parse_error_does_not_log_raw_content(caplog):
+    """Finding 2.5: on an unparseable judge response the log must carry only
+    the exception type and a length — never the raw content, which can hold
+    PII/PHI/secrets from the model output or tool arguments."""
+    secret = "patient SSN 123-45-6789"
+    judge = LLMJudge(provider=lambda p: secret)
+    with caplog.at_level("WARNING"):
+        decision = judge._parse_response("wire_transfer", secret, 1.0, JudgePolicy())
+    # it must still fail closed (block/escalate), just not leak the content
+    assert decision.verdict.value in {"block", "escalate"}
+    for record in caplog.records:
+        assert secret not in record.getMessage()
 from pramagent.providers import MockProvider
 
 

@@ -346,7 +346,12 @@ class LLMJudge:
                 raise ValueError(f"unknown verdict {raw_verdict!r}")
 
         except Exception as exc:
-            log.warning("LLM judge parse error for %s: %s — raw: %r", tool_name, exc, raw[:200])
+            # Finding 2.5: never log the raw judged content — it can carry
+            # PII/PHI/secrets from the model output or tool arguments. Log the
+            # exception type and a length only, mirroring the ISSUE-5 pattern.
+            log.warning(
+                "LLM judge parse error for %s: %s (raw %d chars, not logged)",
+                tool_name, type(exc).__name__, len(raw))
             verdict = Verdict.BLOCK if policy.block_on_ambiguous else Verdict.ESCALATE
             reason = f"LLM response could not be parsed: {exc}"
             confidence = 0.0

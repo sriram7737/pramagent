@@ -243,6 +243,35 @@ def test_broken_rule_subclass_exception_does_not_leak_input_into_logs(caplog):
         assert not record.exc_info
 
 
+def test_hitl_preview_is_scrubbed_before_queue(caplog):
+    """Finding 2.5: the HITL gate runs before _finalize's scrub, and the HITL
+    queue/notifications get no later redaction pass — so the output_preview
+    handed to the approver must already be PII-scrubbed. Uses a provider that
+    emits an SSN in the OUTPUT (independent of the scrubbed input)."""
+    from pramagent.providers import BaseProvider, ProviderResult
+
+    ssn = "123-45-6789"
+
+    class _PIIProvider(BaseProvider):
+        async def complete(self, prompt, **kwargs):
+            return ProviderResult(text=f"ok, paying; SSN {ssn} on file", model="x")
+
+    captured = {}
+
+    async def _capture_approver(action, context):
+        captured.update(context)
+        return True  # approve so nothing blocks
+
+    armor = Pramagent(
+        provider=_PIIProvider(),
+        hitl=HITLLayer(require_approval_for=["pay"], approver=_capture_approver),
+    )
+    run(armor.run("please pay the invoice", action="pay"))
+
+    assert "output_preview" in captured
+    assert ssn not in captured["output_preview"]
+
+
 def test_hitl_idle_on_silence():
     async def no_answer(a, c): return None
     armor = Pramagent(

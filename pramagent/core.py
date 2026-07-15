@@ -561,8 +561,14 @@ class Pramagent:
             # so they can act before the model runs and per stage.
             t0 = time.perf_counter()
             with trace_layer("HITLLayer", attributes={"action": action}) as span:
+                # Finding 2.5: scrub the preview before it enters the HITL
+                # queue/notifications. The queue is not the audit chain and gets
+                # no later redaction pass, so an unscrubbed output_preview would
+                # persist raw PHI here (the HITL gate runs before _finalize's
+                # scrub of output_text).
+                hitl_preview, _ = self.compliance.scrub(output)
                 status = await self.hitl.gate(
-                    action, {"tenant": tenant_id, "output_preview": output[:120]})
+                    action, {"tenant": tenant_id, "output_preview": hitl_preview[:120]})
                 span.set_attribute("hitl.status", status.value)
             tr.hitl_status = status.value
             mark("HITLLayer", status.value, f"action={action}", t0)
@@ -605,10 +611,12 @@ class Pramagent:
         # an unregistered synthetic action). Silence (IDLE) is never consent.
         with trace_layer("HITLLayer",
                          attributes={"action": f"escalated_{stage}"}) as span:
+            # Finding 2.5: scrub before the preview enters the HITL queue.
+            escalate_preview, _ = self.compliance.scrub(output or tr.input_text or "")
             status = await self.hitl.propose(
                 f"escalated_{stage}",
                 {"tenant": tr.tenant_id, "stage": stage,
-                 "output_preview": (output or tr.input_text or "")[:120],
+                 "output_preview": escalate_preview[:120],
                  "reason": "SafetyLayer.ESCALATE"})
             span.set_attribute("hitl.status", status.value)
         tr.hitl_status = status.value
