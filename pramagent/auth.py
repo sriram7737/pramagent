@@ -33,7 +33,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -499,8 +499,16 @@ class JWTManager:
         *,
         issuer: str = "pramagent",
         active_kid: str | None = None,
+        revocation_check: Optional[Callable[[str], bool]] = None,
     ) -> None:
         self.issuer = issuer
+        # Finding 1.4: per-token revocation. Every issued JWT carries a `jti`;
+        # verify() rejects one whose jti is revoked. revoke() records into an
+        # in-process set (enough for a single worker/tests). For multi-worker
+        # deployments pass revocation_check — a callable that consults a shared
+        # store (e.g. Redis), mirroring the dashboard's jti revocation.
+        self._revocation_check = revocation_check
+        self._revoked_jtis: set[str] = set()
         if isinstance(secret, dict):
             if not secret:
                 raise ValueError("JWT secret registry must not be empty")
@@ -558,6 +566,30 @@ class JWTManager:
                 )
         return cls(fallback_secret, issuer=issuer)
 
+    def revoke(self, jti: str) -> None:
+        """Revoke a single issued token by its `jti` (finding 1.4). Recorded in
+        the in-process set; for multi-worker deployments a revocation_check
+        against a shared store should also be configured so the revocation is
+        seen by every worker."""
+        if jti:
+            self._revoked_jtis.add(jti)
+
+    def is_revoked(self, jti: str) -> bool:
+        if jti in self._revoked_jtis:
+            return True
+        if self._revocation_check is not None:
+            try:
+                return bool(self._revocation_check(jti))
+            except Exception as exc:
+                # Match the dashboard's behavior: a revocation-store outage
+                # must not reject every valid token (a self-inflicted DoS);
+                # exposure is already bounded by the <=1h TTL clamp. Warn so
+                # the degraded check is never silent.
+                log.warning("JWT revocation check failed for %s; treating as "
+                            "not revoked: %r", jti, exc)
+                return False
+        return False
+
     def rotate(self, kid: str, secret: str, *, activate: bool = True) -> None:
         """Register a new signing secret and optionally make it active."""
         if not kid or not secret:
@@ -597,6 +629,7 @@ class JWTManager:
             "scopes": normalized_scopes,
             "iat": now,
             "exp": now + int(ttl_s),
+            "jti": secrets.token_hex(16),   # finding 1.4: revocable token id
         }
         signing_input = ".".join([
             _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8")),
@@ -675,6 +708,11 @@ class JWTManager:
             raise JWTError("missing expiration")
         if (int(time.time()) if now is None else now) >= exp:
             raise JWTError("token expired")
+        # Finding 1.4: reject a revoked token even if its signature and
+        # expiry are still valid.
+        jti = payload.get("jti")
+        if jti and self.is_revoked(jti):
+            raise JWTError("token revoked")
         return payload
 
 

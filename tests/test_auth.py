@@ -26,6 +26,40 @@ from pramagent.auth import (  # noqa: E402
 )
 
 
+# ── Finding 1.4: issued API JWTs are revocable by jti ──
+def test_jwt_can_be_revoked_by_jti():
+    mgr = JWTManager("a-strong-jwt-secret-value-123456")
+    token = mgr.issue("tenant_a", ttl_s=900, scopes=["read"])
+    payload = mgr.verify(token)          # valid before revocation
+    jti = payload["jti"]
+    assert jti
+
+    mgr.revoke(jti)
+    with pytest.raises(JWTError, match="revoked"):
+        mgr.verify(token)
+
+
+def test_jwt_revocation_check_hook_consulted():
+    """A shared-store revocation check (multi-worker) is honored, and a failing
+    check does not reject valid tokens (bounded by the TTL)."""
+    revoked = {"deny-this-jti"}
+    mgr = JWTManager("a-strong-jwt-secret-value-123456",
+                     revocation_check=lambda j: j in revoked)
+    token = mgr.issue("tenant_a", scopes=["read"])
+    jti = mgr.verify(token)["jti"]
+    revoked.add(jti)
+    with pytest.raises(JWTError, match="revoked"):
+        mgr.verify(token)
+
+    # a failing revocation check must fail open (valid token still accepted)
+    def _boom(_j):
+        raise RuntimeError("store down")
+
+    mgr2 = JWTManager("a-strong-jwt-secret-value-123456", revocation_check=_boom)
+    tok2 = mgr2.issue("tenant_b", scopes=["read"])
+    assert mgr2.verify(tok2)["tenant_id"] == "tenant_b"
+
+
 # ── Finding 1.3: admin does not implicitly grant the approve scope ──
 def test_admin_scope_does_not_imply_approve():
     from pramagent.auth import (ADMIN_SCOPE, APPROVE_SCOPE, AuthRecord,
