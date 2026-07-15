@@ -111,7 +111,32 @@ Use Redis for ToolGuard side-effect history and per-session call counters across
 ```bash
 PRAMAGENT_TOOL_GUARD_REDIS_URL=redis://:password@redis:6379/2
 PRAMAGENT_TOOL_GUARD_TTL_S=300
+# For multi-worker production, make a missing/unreachable shared backend a hard
+# boot failure instead of silently degrading to per-process counting (5.2):
+PRAMAGENT_REQUIRE_SHARED_COUNTING=1
 ```
+
+### Key-revocation prerequisites (provision BEFORE an incident) — finding 7a-1
+
+`pramagent auth-revoke` needs a durable place to record a revocation. Set one
+of these up at deploy time, or the command has nowhere to write when you need
+it most:
+
+- With `PRAMAGENT_API_KEY_DSN` (above), revocations are stored in Postgres — no
+  extra setup.
+- With env-var keys (`PRAMAGENT_API_KEYS`), you MUST also provision a
+  revocation file on a persistent volume; live registries reload it on change,
+  so no restart is needed:
+
+```bash
+PRAMAGENT_API_KEY_REVOCATION_FILE=/var/lib/pramagent/revoked-keys   # chmod 640, persistent volume
+```
+
+If a revocation file is configured but unreadable at request time, key checks
+fail closed (all keys denied) — deliberately, so a missing revocation list
+never silently re-enables revoked keys. Also set
+`PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL` so tamper-detection alerts have somewhere
+to go. See `docs/INCIDENT_RESPONSE_RUNBOOK.md`.
 
 ## Dashboard rate limiting and usage page
 The dashboard uses Redis-backed per-IP rate limiting when

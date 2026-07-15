@@ -386,11 +386,14 @@ here so operators can decide whether each matters for their threat model.
   follow the same versioning approach; until then, treat encryption-key
   compromise as requiring a full re-encrypt/migrate, and store the key in a
   secrets manager.
-- **JWTs have no per-token revocation (A5).** Only whole-key retirement (drop
-  a `kid` from `PRAMAGENT_JWT_SECRETS`) invalidates tokens; an individual
-  leaked token cannot be revoked before its `exp`. Mitigate by keeping the max
-  token TTL short; a per-`jti` denylist would be needed for instant
-  single-token revocation.
+- **JWT per-token revocation (A5 — addressed in Round 3, finding 1.4).** Every
+  issued JWT now carries a `jti` and `JWTManager.verify()` rejects a revoked
+  one. `JWTManager.revoke(jti)` records into an in-process set; for multi-worker
+  deployments pass a `revocation_check` callable backed by a shared store (e.g.
+  Redis), mirroring the dashboard's jti revocation. Whole-key retirement (drop a
+  `kid` from `PRAMAGENT_JWT_SECRETS`) still invalidates every token signed by
+  that key. Residual: the in-process default set is per-worker — wire the shared
+  check for cluster-wide instant revocation.
 - **`/v1/audit/verify` returns a cross-tenant record count (A7).** The audit
   chain is a single global chain (deliberately not tenant-partitioned — see
   the redaction/tombstone design), so the `records` count it returns is not
@@ -411,6 +414,36 @@ here so operators can decide whether each matters for their threat model.
   The signing/encryption keys now route through `resolve_secret` (HIGH-2), but
   audit remaining `os.environ.get` reads before relying on secret-manager
   indirection for every secret.
+
+### Documented LOW-severity limitations (Round 3 audit)
+
+- **Metrics endpoints return process-wide aggregates (1.x).** `/v1/metrics`,
+  `/metrics`, and the usage report expose observability counters aggregated
+  across all tenants to any read-scoped caller. No per-tenant content leaks,
+  but block-rate/call-count totals are system-wide. Restrict these to an admin
+  scope (or a scrape-only network path) if cross-tenant aggregate visibility
+  matters for your model.
+- **Fernet is AES-128-CBC, not AES-256-GCM (3.x).** Application-level
+  encryption uses a fresh random IV per record (no nonce-reuse risk) but a
+  single static key and AES-128-CBC+HMAC, below the AES-256-GCM + KMS-envelope
+  bar expected for HIPAA production. Combine with provider-managed disk/TDE
+  encryption, or treat this as the ceiling of the built-in at-rest control.
+- **Audit-log timeline export is Postgres-only (7.x).** `pramagent
+  audit-export` (tenant-scoped JSONL) is implemented on `PostgresStore`;
+  `SQLiteStore`/`EncryptedSQLiteStore` have no export command, so
+  incident-timeline reconstruction on those tiers requires manual SQL. Use the
+  Postgres backend where audit export is an operational requirement.
+- **`TraceEvent` has no actor/approver field (2.x / 7.x).** Attribution is
+  tenant + client-supplied session id; there is no authenticated per-user
+  principal on the trace, so "who approved this" needs a manual join across the
+  HITL queue (`decided_by`) and the API-key audit table. A first-class
+  actor/approver field is the planned fix; until then reconstruct identity from
+  those two sources.
+- **Incident-response on-call roster is a placeholder (7.x).**
+  `docs/INCIDENT_RESPONSE_RUNBOOK.md` lists a single-person, email-only
+  contact. Populate a real escalation path (primary/secondary, phone/pager)
+  and point `PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL` at it before relying on the IR
+  process for a regulated deployment.
 - **`IsolationLayer` trusts the caller-supplied `tenant_id` (D4).** The binding
   of `tenant_id` to the authenticated identity happens upstream in the API
   layer (`api/app.py` `_resolve_tenant`/`_resolve_auth_record`); the isolation
