@@ -226,9 +226,12 @@ class Settings:
         if not self.postgres_dsn:
             return None
         try:
-            from .secrets import resolve_secret
+            from .secrets import resolve_secret, resolve_signing_key_ring
             from .store_postgres import PostgresStore
-            signing_key = resolve_secret("PRAMAGENT_SIGNING_KEY").strip()
+            # Finding 7.1/7.2: honor the PRAMAGENT_SIGNING_KEYS rotation ring
+            # (falls back to the single PRAMAGENT_SIGNING_KEY) so this path
+            # matches build_default_armor()/_store_from_env().
+            key_cfg = resolve_signing_key_ring()
             encryption_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
             return PostgresStore.from_dsn(
                 self.postgres_dsn,
@@ -236,7 +239,7 @@ class Settings:
                 breaker_threshold=self.breaker_threshold,
                 breaker_cooldown_s=self.breaker_cooldown_s,
                 encryption_key=encryption_key or None,
-                signing_key=signing_key,
+                **key_cfg,
             )
         except Exception:
             return None

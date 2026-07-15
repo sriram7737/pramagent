@@ -1004,11 +1004,14 @@ def build_default_armor() -> Pramagent:
     Refuses to start without one of the three so the reference deployment can
     never silently boot on a MemoryStore that loses every trace on restart
     (P0-1 / T1-12)."""
-    from ..secrets import resolve_secret
+    from ..secrets import resolve_secret, resolve_signing_key_ring
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
     encryption_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
-    signing_key = resolve_secret("PRAMAGENT_SIGNING_KEY").strip()
+    # Finding 7.1/7.2: resolve the (possibly rotated) signing-key ring from env
+    # — PRAMAGENT_SIGNING_KEYS for a versioned ring, else PRAMAGENT_SIGNING_KEY.
+    key_cfg = resolve_signing_key_ring()
+    has_signing_key = bool(key_cfg["signing_key"] or key_cfg["signing_keys"])
     require_encrypted_store = (
         _env_true("PRAMAGENT_REQUIRE_ENCRYPTED_STORE")
         or _phi_mode_enabled()
@@ -1019,13 +1022,14 @@ def build_default_armor() -> Pramagent:
     # tampering). Refuse to boot such a store unless an operator explicitly
     # accepts a non-tamper-evident chain (dev only). In-memory/opt-in volatile
     # storage is exempt: it is never presented as durable evidence.
-    if (dsn or db_path) and not signing_key and not _env_true("PRAMAGENT_ALLOW_UNSIGNED_AUDIT"):
+    if (dsn or db_path) and not has_signing_key and not _env_true("PRAMAGENT_ALLOW_UNSIGNED_AUDIT"):
         raise RuntimeError(
             "PRAMAGENT_SIGNING_KEY is required for a persistent audit chain: "
             "an unkeyed chain is plain SHA-256 and can be silently reforged by "
             "anyone with database write access, so it is not tamper-evident. "
-            "Set PRAMAGENT_SIGNING_KEY, or set PRAMAGENT_ALLOW_UNSIGNED_AUDIT=1 "
-            "to explicitly accept a non-tamper-evident chain (dev only)."
+            "Set PRAMAGENT_SIGNING_KEY (or PRAMAGENT_SIGNING_KEYS for a rotation "
+            "ring), or set PRAMAGENT_ALLOW_UNSIGNED_AUDIT=1 to explicitly accept "
+            "a non-tamper-evident chain (dev only)."
         )
     if dsn:
         # Two ways to satisfy "encrypted at rest" for Postgres: a real
@@ -1047,19 +1051,19 @@ def build_default_armor() -> Pramagent:
             )
         from ..store_postgres import PostgresStore
         db = PostgresStore.from_dsn(dsn, encryption_key=encryption_key or None,
-                                    signing_key=signing_key)
+                                    **key_cfg)
         store, audit = db, db          # single object handles both
     elif db_path:
         if encryption_key:
             from ..store_encrypted import EncryptedSQLiteStore
-            db = EncryptedSQLiteStore(db_path, key=encryption_key, signing_key=signing_key)
+            db = EncryptedSQLiteStore(db_path, key=encryption_key, **key_cfg)
         elif require_encrypted_store:
             raise RuntimeError(
                 "PHI/encrypted-store mode requires PRAMAGENT_ENCRYPTION_KEY "
                 "when PRAMAGENT_DB points at SQLite"
             )
         else:
-            db = SQLiteStore(db_path, signing_key=signing_key)
+            db = SQLiteStore(db_path, **key_cfg)
         store, audit = db, db          # single object handles both
     elif os.environ.get("PRAMAGENT_ALLOW_MEMORY_STORE", "").lower() in {"1", "true"}:
         if require_encrypted_store:

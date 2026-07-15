@@ -181,3 +181,59 @@ def test_cli_store_resolves_signing_key_via_indirection(tmp_path, monkeypatch):
     # Contrast: opening with the wrong (empty) key — the pre-fix behaviour,
     # since only the *_VAULT_PATH var was set — flags the chain as tampered.
     assert SQLiteStore(db, signing_key="").verify_chain() is False
+
+
+# ── Finding 7.1 / 7.2: audit-chain signing-key ROTATION via env ──
+def test_resolve_signing_key_ring_parses_multi_key(monkeypatch):
+    from pramagent.secrets import resolve_signing_key_ring
+
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEYS", "v1:key-one,v2:key-two")
+    monkeypatch.setenv("PRAMAGENT_SIGNING_ACTIVE_KID", "v2")
+    cfg = resolve_signing_key_ring()
+    assert cfg["signing_keys"] == {"v1": "key-one", "v2": "key-two"}
+    assert cfg["active_kid"] == "v2"
+    assert cfg["signing_key"] == ""
+
+
+def test_resolve_signing_key_ring_single_key_fallback(monkeypatch):
+    from pramagent.secrets import resolve_signing_key_ring
+
+    monkeypatch.delenv("PRAMAGENT_SIGNING_KEYS", raising=False)
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEY", "solo-key")
+    cfg = resolve_signing_key_ring()
+    assert cfg["signing_key"] == "solo-key"
+    assert cfg["signing_keys"] is None
+    assert cfg["active_kid"] is None
+
+
+def test_cli_store_verifies_rotated_chain_via_signing_keys_env(tmp_path, monkeypatch):
+    """7.2: a chain written across a key rotation (rows tagged v1 then v2) must
+    verify when the CLI store is built from PRAMAGENT_SIGNING_KEYS holding the
+    full ring. Pre-fix _store_from_env read only the single PRAMAGENT_SIGNING_KEY,
+    so audit-verify-watch/audit-export reported the post-rotation tail as
+    tampered and fired a false alarm."""
+    from pramagent import cli
+    from pramagent.store import SQLiteStore
+
+    db = str(tmp_path / "rotated.db")
+    for var in ("PRAMAGENT_SIGNING_KEY", "PRAMAGENT_POSTGRES_DSN",
+                "PRAMAGENT_ENCRYPTION_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    # write v1 rows, then rotate to v2 and write more (rows are _kid-tagged)
+    s1 = SQLiteStore(db, signing_keys={"v1": "key-one"}, active_kid="v1")
+    s1.append({"tenant_id": "t", "event": "one"})
+    s1.close()
+    s2 = SQLiteStore(db, signing_keys={"v1": "key-one", "v2": "key-two"},
+                     active_kid="v2")
+    s2.append({"tenant_id": "t", "event": "two"})
+    assert s2.verify_chain() is True
+    s2.close()
+
+    # CLI store built from the multi-key env must verify BOTH segments.
+    monkeypatch.setenv("PRAMAGENT_DB", db)
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEYS", "v1:key-one,v2:key-two")
+    monkeypatch.setenv("PRAMAGENT_SIGNING_ACTIVE_KID", "v2")
+    cli_store = cli._store_from_env()
+    assert cli_store.verify_chain() is True
+    cli_store.close()

@@ -142,20 +142,22 @@ pramagent auth-revoke <api_key> --actor incident-commander
   retiring the old `kid` after active tokens expire.
 - **Rotate the audit-chain signing key** (a compromised `PRAMAGENT_SIGNING_KEY`
   is SEV-1: an attacker with it AND raw DB write access can forge a
-  self-consistent chain). The store's `SigningKeyRing` supports `kid`-versioned
-  rotation, mirroring the JWT manager: construct the store with a
-  `signing_keys={kid: key, ...}` map and an `active_kid`, keeping the
-  compromised key in the map for verification only. Every new chain row is
-  tagged with the active `kid` and signed with the new key; pre-rotation rows
-  keep verifying under the retained old key, so `verify_chain()` /
-  `audit-verify-watch` do NOT break across the rotation (the naive "swap the
-  one env var" approach would flag every historical row as tampered). Do NOT
-  drop the old key from the map until every row it signed has been migrated or
-  aged out — verification of a row whose `kid` is absent from the ring fails
-  closed. Note this stops forward forgery with the leaked key; it does not
-  retroactively prove pre-rotation rows were untampered — external anchoring
-  (EthereumBackend/HyperledgerBackend) remains the defense against a DB-write
-  attacker rewriting a self-consistent tail.
+  self-consistent chain). Rotation is a **config action, no code change**
+  (findings 7.1/7.2): set `PRAMAGENT_SIGNING_KEYS` to a `kid1:key1,kid2:key2`
+  ring holding both the compromised key (verification only) and the new key,
+  set `PRAMAGENT_SIGNING_ACTIVE_KID` to the new `kid`, and redeploy. Every new
+  chain row is tagged with the active `kid` and signed with the new key;
+  pre-rotation rows keep verifying under the retained old key. The CLI tools
+  (`audit-verify-watch`, `audit-export`) read the SAME ring via
+  `PRAMAGENT_SIGNING_KEYS`, so they do NOT flag the post-rotation tail as
+  tampered — set that env var wherever those commands run. (The naive "swap the
+  single `PRAMAGENT_SIGNING_KEY`" approach WOULD flag every row signed by the
+  other key as tampered.) Do NOT drop the old key from the ring until every row
+  it signed has been migrated or aged out — verification of a row whose `kid` is
+  absent from the ring fails closed. This stops forward forgery with the leaked
+  key; it does not retroactively prove pre-rotation rows were untampered —
+  external anchoring (EthereumBackend/HyperledgerBackend) remains the defense
+  against a DB-write attacker rewriting a self-consistent tail.
 - If PHI may be involved, treat the event as potential ePHI exposure until the
   privacy/security owner documents otherwise.
 

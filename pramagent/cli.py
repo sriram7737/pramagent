@@ -237,26 +237,25 @@ def cmd_auth_revoke(args) -> int:
 def _store_from_env():
     import os
 
-    from .secrets import resolve_secret
+    from .secrets import resolve_secret, resolve_signing_key_ring
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
-    # HIGH-2: resolve signing/encryption keys through the SAME indirection
-    # layer the API's build_default_armor() uses (AWS Secrets Manager / Vault
-    # via *_AWS_SECRET_ID / *_VAULT_PATH). A bare os.environ.get() here opened
-    # the store with an empty key while the API wrote with the real one, so
-    # `audit verify`/`audit-export` reported a correctly-signed production
-    # chain as tampered.
-    signing_key = resolve_secret("PRAMAGENT_SIGNING_KEY").strip()
+    # HIGH-2 + finding 7.1/7.2: resolve signing/encryption keys through the SAME
+    # indirection layer the API's build_default_armor() uses, and honor the
+    # PRAMAGENT_SIGNING_KEYS rotation ring. A single-key path here reported a
+    # correctly-rotated chain (rows tagged with a newer kid) as tampered, so
+    # `audit verify`/`audit-verify-watch`/`audit-export` fired false alarms.
+    key_cfg = resolve_signing_key_ring()
     if dsn:
         from .store_postgres import PostgresStore
-        return PostgresStore.from_dsn(dsn, signing_key=signing_key)
+        return PostgresStore.from_dsn(dsn, **key_cfg)
     if db_path:
         key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
         if key:
             from .store_encrypted import EncryptedSQLiteStore
-            return EncryptedSQLiteStore(db_path, key=key, signing_key=signing_key)
+            return EncryptedSQLiteStore(db_path, key=key, **key_cfg)
         from .store import SQLiteStore
-        return SQLiteStore(db_path, signing_key=signing_key)
+        return SQLiteStore(db_path, **key_cfg)
     raise RuntimeError("set PRAMAGENT_POSTGRES_DSN or PRAMAGENT_DB")
 
 

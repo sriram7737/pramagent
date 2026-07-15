@@ -64,6 +64,51 @@ def resolve_secret(name: str, default: str = "") -> str:
     return default
 
 
+def resolve_signing_key_ring() -> dict:
+    """Resolve audit-chain signing-key configuration from the environment,
+    supporting key rotation (findings 7.1 / 7.2).
+
+    ``PRAMAGENT_SIGNING_KEYS`` (``kid1:key1,kid2:key2``) enables a versioned
+    key ring: every listed key is retained for verification and
+    ``PRAMAGENT_SIGNING_ACTIVE_KID`` picks the one that signs new rows (the
+    first listed if unset). This mirrors the JWT ``PRAMAGENT_JWT_SECRETS``
+    pattern, so a compromised audit-signing key can be rotated via config
+    alone — no source edit — and the CLI verify/export tools, which build
+    their store from this same helper, validate a rotated chain instead of
+    reporting its post-rotation tail as tampered.
+
+    When ``PRAMAGENT_SIGNING_KEYS`` is unset it falls back to the single
+    ``PRAMAGENT_SIGNING_KEY`` (resolved through the secret-manager indirection
+    layer, preserving HIGH-2), i.e. the classic unversioned behavior.
+
+    Returns kwargs suitable for ``**`` into any store constructor or
+    ``SigningKeyRing.from_config``:
+    ``{"signing_key", "signing_keys", "active_kid"}``.
+    """
+    raw = os.environ.get("PRAMAGENT_SIGNING_KEYS", "").strip()
+    if raw:
+        keys: dict[str, str] = {}
+        for pair in raw.split(","):
+            if ":" not in pair:
+                continue
+            kid, value = pair.split(":", 1)
+            kid, value = kid.strip(), value.strip()
+            if kid and value:
+                keys[kid] = value
+        if keys:
+            return {
+                "signing_key": "",
+                "signing_keys": keys,
+                "active_kid": os.environ.get(
+                    "PRAMAGENT_SIGNING_ACTIVE_KID", "").strip() or None,
+            }
+    return {
+        "signing_key": resolve_secret("PRAMAGENT_SIGNING_KEY").strip(),
+        "signing_keys": None,
+        "active_kid": None,
+    }
+
+
 def _fetch_aws_secret(secret_id: str) -> str:
     try:
         import boto3
