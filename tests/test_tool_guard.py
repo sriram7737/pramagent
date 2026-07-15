@@ -30,6 +30,24 @@ def _guard():
     ])
 
 
+# ── Finding 6.1: the injection scanner is bounded (depth + size) ──
+def test_scanner_rejects_deeply_nested_input_without_recursionerror():
+    nested = "x"
+    for _ in range(500):          # far deeper than the cap, but < Python's limit
+        nested = [nested]
+    findings = scan_arguments_for_injection(nested)
+    assert any(f["pattern_id"] == "arg_too_deeply_nested" for f in findings)
+
+
+def test_scanner_rejects_oversized_total_payload():
+    findings = scan_arguments_for_injection({"blob": "y" * 2_000_000})
+    assert any(f["pattern_id"] == "arg_payload_too_large" for f in findings)
+
+
+def test_scanner_still_clean_on_normal_input():
+    assert scan_arguments_for_injection({"to": "a@b.com", "body": "hello"}) == []
+
+
 # ── Finding 2.3: standalone ToolGuard decisions can reach the durable chain ──
 def test_standalone_toolguard_writes_to_durable_audit_when_configured():
     from pramagent.audit import HashChainBackend

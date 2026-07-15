@@ -1297,11 +1297,38 @@ def _scan_output_exfil(text: str) -> list[dict]:
 
 # ── module-level helpers ──────────────────────────────────────────────────────
 
-def scan_arguments_for_injection(arguments: Any, path: str = "$") -> list[dict]:
+# Finding 6.1: bound the recursive scan so a hostile argument tree cannot
+# exhaust resources. A depth cap stops deeply-nested JSON from raising
+# RecursionError (a 500/crash); a total-string-bytes budget stops a giant
+# payload from consuming unbounded scan time. Over-limit input is BLOCKed
+# (a finding), never silently passed.
+_MAX_SCAN_DEPTH = 40
+_MAX_SCAN_STRING_BYTES = 1_000_000
+
+
+def scan_arguments_for_injection(arguments: Any, path: str = "$", *,
+                                 _depth: int = 0,
+                                 _budget: "list[int] | None" = None) -> list[dict]:
     """Recursively scan all string values in arguments for injection patterns.
-    Returns a list of findings; empty means clean (not necessarily safe)."""
+    Returns a list of findings; empty means clean (not necessarily safe).
+
+    The scan is bounded (finding 6.1): nesting deeper than _MAX_SCAN_DEPTH or a
+    cumulative string size over _MAX_SCAN_STRING_BYTES yields a blocking finding
+    instead of recursing into a RecursionError or scanning an unbounded input.
+    """
+    if _budget is None:
+        _budget = [_MAX_SCAN_STRING_BYTES]
+    if _depth > _MAX_SCAN_DEPTH:
+        return [{"path": path, "pattern_id": "arg_too_deeply_nested",
+                 "detail": (f"argument nesting exceeds {_MAX_SCAN_DEPTH} levels "
+                            "— rejected as a possible resource-exhaustion input")}]
     findings: list[dict] = []
     if isinstance(arguments, str):
+        _budget[0] -= len(arguments)
+        if _budget[0] < 0:
+            return [{"path": path, "pattern_id": "arg_payload_too_large",
+                     "detail": ("total scanned argument size exceeds "
+                                f"{_MAX_SCAN_STRING_BYTES} bytes — rejected")}]
         for pid, rx, detail in _ARG_INJECTION:
             if rx.search(arguments):
                 findings.append({"path": path, "pattern_id": pid, "detail": detail})
@@ -1311,10 +1338,12 @@ def scan_arguments_for_injection(arguments: Any, path: str = "$") -> list[dict]:
             findings.append({"path": path, **hit})
     elif isinstance(arguments, dict):
         for key, val in arguments.items():
-            findings.extend(scan_arguments_for_injection(val, path=f"{path}.{key}"))
+            findings.extend(scan_arguments_for_injection(
+                val, path=f"{path}.{key}", _depth=_depth + 1, _budget=_budget))
     elif isinstance(arguments, list):
         for idx, item in enumerate(arguments):
-            findings.extend(scan_arguments_for_injection(item, path=f"{path}[{idx}]"))
+            findings.extend(scan_arguments_for_injection(
+                item, path=f"{path}[{idx}]", _depth=_depth + 1, _budget=_budget))
     return findings
 
 
