@@ -186,6 +186,19 @@ Current state:
   and replicates its marker; that residual risk is what external chain
   anchoring (`EthereumBackend`/`HyperledgerBackend` in `pramagent/audit`)
   exists for.
+- **Backend asymmetry for append-only (finding 2.4):** the DB-level
+  append-only trigger above exists ONLY on Postgres. The default `SQLiteStore`
+  (and `EncryptedSQLiteStore`) have no equivalent database-level guard: the
+  file is a single artifact, and any process that can open it can rewrite or
+  drop chain rows (and drop any trigger), so a SQLite trigger would add no real
+  protection against direct-file access. On SQLite, chain immutability rests on
+  (a) the store's single-writer discipline — chain rows are only ever appended,
+  and mutated solely by the GDPR redaction path — and (b) OS file permissions
+  restricting who can open the database. **For deployments that require
+  database-enforced audit immutability, use the Postgres backend** (or add
+  external chain anchoring). This is a deliberate, documented asymmetry, not an
+  oversight: the SQLite store is the zero-dependency default for dev and
+  small/single-writer deployments.
 - `deploy/postgres/hardening_rls.sql` remains as an *additional*, optional
   lockdown step (tighter migration-vs-runtime role split) for deployments
   that want it — it is no longer what makes tenant isolation or append-only
