@@ -60,8 +60,11 @@ PRAMAGENT_DASHBOARD_PASSWORD_RESET_ENABLED true
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -229,7 +232,13 @@ class Settings:
                 breaker_threshold=self.breaker_threshold,
                 breaker_cooldown_s=self.breaker_cooldown_s,
             )
-        except Exception:
+        except Exception as exc:
+            # Finding 3.x: a URL IS configured but construction failed — this is
+            # a silent downgrade of a control, so log it loudly (distinct from
+            # the "not configured" early return above) instead of swallowing.
+            log.warning("PRAMAGENT_REDIS_URL is set but the Redis backend "
+                        "could not be constructed (%s); continuing without it",
+                        type(exc).__name__)
             return None
 
     def postgres_store(self):
@@ -259,7 +268,13 @@ class Settings:
                 encryption_key=encryption_key or None,
                 **key_cfg,
             )
-        except Exception:
+        except Exception as exc:
+            # Finding 3.x: a DSN IS configured but construction failed (e.g. a
+            # malformed encryption key) — log loudly rather than silently
+            # downgrading to no persistent store.
+            log.warning("PRAMAGENT_POSTGRES_DSN is set but the Postgres store "
+                        "could not be constructed (%s); continuing without it",
+                        type(exc).__name__)
             return None
 
     def __repr__(self) -> str:

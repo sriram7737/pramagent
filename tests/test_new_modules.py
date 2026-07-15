@@ -61,6 +61,18 @@ class TestSettings:
         warnings = s.validate()
         assert not any("unencrypted at rest" in w.lower() for w in warnings)
 
+    def test_postgres_store_logs_loudly_when_construction_fails(self, monkeypatch, caplog):
+        """3.x: a configured-but-unbuildable store must log loudly, not silently
+        downgrade to no persistent store."""
+        pytest.importorskip("cryptography.fernet")
+        monkeypatch.setenv("PRAMAGENT_POSTGRES_DSN", "postgresql://u:p@127.0.0.1/db")
+        monkeypatch.setenv("PRAMAGENT_ENCRYPTION_KEY", "not-a-valid-fernet-key")
+        s = Settings()
+        with caplog.at_level("WARNING"):
+            result = s.postgres_store()
+        assert result is None
+        assert any("could not be constructed" in r.message for r in caplog.records)
+
     def test_is_production_false_by_default(self):
         s = Settings()
         if not s.api_key:

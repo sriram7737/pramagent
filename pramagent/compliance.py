@@ -137,8 +137,13 @@ class ComplianceReporter:
              "Hash-chained audit trail; ComplianceReporter evidence packages"),
             ("164.308(a)(4)", "Information access management",
              "Tenant isolation in IsolationLayer; per-tenant keys"),
-            ("164.312(a)(1)", "Access control — unique user identification",
-             "Tenant + session ids on every TraceEvent"),
+            # Finding 2.x: honest scope — the REST auth model identifies the
+            # tenant/API key, not an individual end user, and session_id is
+            # client-supplied (not derived from the credential). This is
+            # tenant/session attribution, not per-user identification.
+            ("164.312(a)(1)", "Access control — tenant/session attribution "
+             "(not per-individual-user; session_id is client-supplied)",
+             "Tenant + client-supplied session ids on every TraceEvent"),
             ("164.312(b)", "Audit controls",
              "HashChainBackend / EthereumBackend with chain verification"),
             ("164.312(c)(1)", "Integrity — protect ePHI from improper alteration",
