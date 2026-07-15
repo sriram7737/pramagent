@@ -41,6 +41,26 @@ class TestSettings:
         warnings = s.validate()
         assert any("JWT_SECRET" in w for w in warnings)
 
+    def test_validate_warns_on_persistent_store_without_encryption_key(self, monkeypatch):
+        """3.2: a persistent store with no PRAMAGENT_ENCRYPTION_KEY (and no
+        provider-managed at-rest attestation) stores trace/audit content in
+        plaintext — validate() must surface that."""
+        monkeypatch.delenv("PRAMAGENT_ENCRYPTION_KEY", raising=False)
+        monkeypatch.delenv("PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST", raising=False)
+        s = Settings()
+        s.postgres_dsn = ""
+        s.db_path = "/tmp/pramagent-test.db"
+        warnings = s.validate()
+        assert any("encrypt" in w.lower() for w in warnings)
+
+    def test_validate_no_encryption_warning_when_key_present(self, monkeypatch):
+        monkeypatch.setenv("PRAMAGENT_ENCRYPTION_KEY", "some-fernet-key")
+        s = Settings()
+        s.postgres_dsn = ""
+        s.db_path = "/tmp/pramagent-test.db"
+        warnings = s.validate()
+        assert not any("unencrypted at rest" in w.lower() for w in warnings)
+
     def test_is_production_false_by_default(self):
         s = Settings()
         if not s.api_key:

@@ -197,6 +197,24 @@ class Settings:
             warnings.append(
                 "no persistent store configured — set PRAMAGENT_POSTGRES_DSN or "
                 "PRAMAGENT_DB (or PRAMAGENT_ALLOW_MEMORY_STORE=1 for dev only)")
+        # Finding 3.2: encryption at rest is opt-in; a persistent store without
+        # a key (and without a provider-managed at-rest attestation) writes
+        # trace/audit content — which can include prompt/tool content — in
+        # plaintext. Surface it so a PHI deployment does not do so unknowingly.
+        if self.postgres_dsn or self.db_path:
+            import os
+            from .secrets import resolve_secret
+            enc_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
+            at_rest_attested = os.environ.get(
+                "PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST", "").strip().lower() in {
+                    "1", "true", "yes", "on"}
+            if not enc_key and not at_rest_attested:
+                warnings.append(
+                    "persistent store configured without PRAMAGENT_ENCRYPTION_KEY "
+                    "— trace/audit content is stored UNENCRYPTED at rest. Set "
+                    "PRAMAGENT_ENCRYPTION_KEY for application-level encryption, or "
+                    "PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST=1 to attest "
+                    "provider-managed disk/TDE encryption. Required for PHI.")
         return warnings
 
     def redis_backend(self):
