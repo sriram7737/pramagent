@@ -124,6 +124,13 @@ Current state:
   cap during that outage (a self-inflicted billing trade-off). Set
   `PRAMAGENT_QUOTA_FAIL_OPEN=0` for deployments where strict cost control
   outweighs availability during a quota-backend outage.
+  - **Regulated deployments (finding 5.1):** for SOC2 processing-integrity /
+    HIPAA postures, set `PRAMAGENT_QUOTA_FAIL_OPEN=0` so quotas keep enforcing
+    (fail closed) during a backend outage rather than silently allowing
+    unmetered calls. Pair with the recommended regulated baseline elsewhere in
+    this guide (`PRAMAGENT_REQUIRE_RLS=1`, `PRAMAGENT_ENFORCEMENT_MODE=enforce`,
+    API-key auth, a shared backend via `PRAMAGENT_REQUIRE_SHARED_COUNTING=1`,
+    and a set `PRAMAGENT_SIGNING_KEY`).
 
 Next:
 
