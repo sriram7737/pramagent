@@ -26,6 +26,22 @@ from pramagent.auth import (  # noqa: E402
 )
 
 
+# ── Finding 1.3: admin does not implicitly grant the approve scope ──
+def test_admin_scope_does_not_imply_approve():
+    from pramagent.auth import (ADMIN_SCOPE, APPROVE_SCOPE, AuthRecord,
+                                READ_SCOPE, WRITE_SCOPE)
+
+    admin = AuthRecord(tenant_id="t", scopes=frozenset({ADMIN_SCOPE}))
+    # admin still implies the ordinary scopes...
+    assert admin.has_scope(READ_SCOPE) is True
+    assert admin.has_scope(WRITE_SCOPE) is True
+    # ...but NOT approve — that must be held explicitly (separation of duties).
+    assert admin.has_scope(APPROVE_SCOPE) is False
+
+    both = AuthRecord(tenant_id="t", scopes=frozenset({ADMIN_SCOPE, APPROVE_SCOPE}))
+    assert both.has_scope(APPROVE_SCOPE) is True
+
+
 # ── unauthenticated mode (empty registry) ──────────────────────────────
 def test_unauthenticated_mode_works_when_no_keys_configured():
     """With no keys registered, the API runs open (single-tenant / dev mode)."""

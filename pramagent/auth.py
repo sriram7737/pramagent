@@ -108,7 +108,15 @@ class AuthRecord:
     created_at: float = 0.0
 
     def has_scope(self, scope: str) -> bool:
-        return scope in self.scopes or ADMIN_SCOPE in self.scopes
+        if scope in self.scopes:
+            return True
+        # Finding 1.3: admin implies every scope EXCEPT approve. Approving a
+        # HITL request must be held explicitly so a single admin credential
+        # cannot both propose a consequential action and approve its own
+        # (HITL separation of duties, SOC2 CC6.3).
+        if scope == APPROVE_SCOPE:
+            return False
+        return ADMIN_SCOPE in self.scopes
 
     def age_days(self) -> float:
         if self.created_at <= 0:

@@ -28,7 +28,9 @@ def auth_client():
     scopes explicitly because these tests exercise run/erase/decide — unscoped
     keys are read-only by default (A1)."""
     reg = APIKeyRegistry()
-    all_scopes = "read|write|admin|audit"
+    # approve is granted explicitly: admin no longer implies it (finding 1.3),
+    # and these tests exercise /hitl/{id}/decide.
+    all_scopes = "read|write|admin|audit|approve"
     key_a = reg.issue_key("tenant_a", scopes=all_scopes)
     key_b = reg.issue_key("tenant_b", scopes=all_scopes)
     return TestClient(create_app(registry=reg)), key_a, key_b
