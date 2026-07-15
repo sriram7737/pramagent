@@ -5,8 +5,29 @@ import tempfile
 
 import pytest
 
-from pramagent.backends.migrations import (MIGRATIONS, Migration,
+from pramagent.backends.migrations import (MIGRATIONS, MIGRATIONS_PG, Migration,
                                            MigrationRunner)
+
+
+def test_pg_migrations_provision_tenant_isolation_and_append_only_guard():
+    """4.2: the Postgres migration path must add the same tenant-isolation
+    policy and append-only chain guard the auto-DDL store applies — otherwise a
+    migration-only deployment runs with isolation and chain immutability absent.
+    The SQL is derived from PostgresStore's own templates (source of truth); the
+    enforcement itself is proven live in tests/test_postgres_rls_live.py, which
+    applies the identical statements."""
+    by_name = {m.name: m.up_sql.lower() for m in MIGRATIONS_PG}
+
+    assert "enable_traces_row_level_security" in by_name
+    rls = by_name["enable_traces_row_level_security"]
+    assert "row level security" in rls            # ENABLE + FORCE
+    assert "current_setting" in rls               # the per-tenant policy predicate
+    assert "policy" in rls
+
+    assert "chain_append_only_guard" in by_name
+    guard = by_name["chain_append_only_guard"]
+    assert "trigger" in guard
+    assert "append-only" in guard
 
 
 def _tmp_db():

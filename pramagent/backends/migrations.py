@@ -176,6 +176,25 @@ MIGRATIONS: list[Migration] = [
 # DDL; version 3 re-keys pre-0.7.1 rows from this_hash to call_id — the v0.7.1
 # protocol fix (P1-6/T2-3) keys pramagent_traces.trace_id by the payload's
 # call_id so /v1/trace/{call_id} can find rows written by older releases.
+# Versions 4-5 add the tenant-isolation policy and the append-only chain guard
+# (finding 4.2), reusing PostgresStore's own DDL so the two schema sources
+# cannot diverge.
+
+
+def _pg_traces_isolation_sql() -> str:
+    """The RLS/policy DDL PostgresStore applies to pramagent_traces, taken
+    verbatim from its template (source of truth). payload_type only affects the
+    idempotent CREATE TABLE line, so JSONB here is inconsequential to the
+    isolation statements this migration exists to add."""
+    from ..store_postgres import _PostgresBase
+    return _PostgresBase._DDL_TRACES_TEMPLATE.format(payload_type="JSONB")
+
+
+def _pg_chain_guard_sql() -> str:
+    """The append-only trigger DDL PostgresStore applies to pramagent_chain."""
+    from ..store_postgres import _PostgresBase
+    return _PostgresBase._DDL_CHAIN_TEMPLATE.format(payload_type="JSONB")
+
 
 MIGRATIONS_PG: list[Migration] = [
     Migration(
@@ -213,5 +232,25 @@ MIGRATIONS_PG: list[Migration] = [
             " WHERE payload->>'call_id' IS NOT NULL"
             " AND trace_id IS DISTINCT FROM payload->>'call_id'"
         ),
+    ),
+    # Finding 4.2: the runner used to omit tenant isolation and chain
+    # immutability entirely, so a deployment that provisions schema via the
+    # MigrationRunner (and never boots PostgresStore, which re-applies these on
+    # every startup) ran with RLS and the append-only guard absent. Rather than
+    # duplicate the DDL (and let it drift), these two migrations run the exact
+    # idempotent templates PostgresStore uses — that store is the source of
+    # truth and is what the live RLS test exercises. The templates are wholly
+    # idempotent (CREATE TABLE IF NOT EXISTS, ALTER ... ENABLE/FORCE, DROP
+    # POLICY IF EXISTS + CREATE POLICY, CREATE OR REPLACE FUNCTION, DROP TRIGGER
+    # IF EXISTS + CREATE TRIGGER), so re-running the table DDL is a no-op.
+    Migration(
+        version=4,
+        name="enable_traces_row_level_security",
+        up_sql=_pg_traces_isolation_sql(),
+    ),
+    Migration(
+        version=5,
+        name="chain_append_only_guard",
+        up_sql=_pg_chain_guard_sql(),
     ),
 ]
