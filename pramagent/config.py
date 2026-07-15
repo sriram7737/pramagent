@@ -164,8 +164,16 @@ class Settings:
         self.otel_service_name:  str = _env("PRAMAGENT_OTEL_SERVICE_NAME", "pramagent")
 
     def is_production(self) -> bool:
-        """True when critical secrets are set (not defaults)."""
-        return bool(self.api_key) and self.jwt_secret != "change-me-in-production"  # nosec B105
+        """True when critical secrets are set (not defaults).
+
+        Includes the audit signing key (finding 2.1): without it the audit
+        chain is unkeyed SHA-256 and not tamper-evident against a writer, so a
+        deployment missing it is not a production-grade posture."""
+        return (
+            bool(self.api_key)
+            and self.jwt_secret != "change-me-in-production"  # nosec B105
+            and bool(self.signing_key)
+        )
 
     def validate(self) -> list[str]:
         """Return list of configuration warnings. Empty = all good."""
@@ -177,7 +185,12 @@ class Settings:
         if self.jwt_secret.lower() in WEAK_SECRET_DENYLIST:
             warnings.append("PRAMAGENT_JWT_SECRET is using a published default value — insecure in production")
         if not self.signing_key:
-            warnings.append("PRAMAGENT_SIGNING_KEY is not set — audit chain cannot be verified")
+            warnings.append(
+                "PRAMAGENT_SIGNING_KEY is not set — the audit chain is unkeyed "
+                "SHA-256 and NOT tamper-evident (forgeable by anyone with DB "
+                "write access; detects accidental corruption only). "
+                "build_default_armor() refuses a persistent store without it "
+                "unless PRAMAGENT_ALLOW_UNSIGNED_AUDIT=1.")
         if not self.redis_url.startswith("redis"):
             warnings.append("PRAMAGENT_REDIS_URL does not look like a Redis URL")
         if not self.postgres_dsn and not self.db_path and not self.allow_memory_store:

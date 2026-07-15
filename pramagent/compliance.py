@@ -237,6 +237,27 @@ class ComplianceReporter:
         except Exception:
             return None
 
+    def _chain_tamper_evident(self) -> Optional[bool]:
+        """Whether the audit chain is tamper-evident *against a writer* (finding
+        2.1), not merely internally consistent.
+
+        A keyed HMAC chain (PRAMAGENT_SIGNING_KEY set) cannot be reforged
+        without the secret. An unkeyed chain is plain SHA-256: verify_chain()
+        can still return True, but anyone with write access can edit a row and
+        recompute every downstream hash, so it detects accidental corruption
+        only. Returns None when there is no verifiable chain at all."""
+        if self.audit is None or not hasattr(self.audit, "verify_chain"):
+            return None
+        key = getattr(self.audit, "_signing_key", None)
+        if not key:
+            keyring = getattr(self.audit, "_keyring", None)
+            if keyring is not None:
+                try:
+                    key = keyring.active_key()
+                except Exception:
+                    key = None
+        return bool(key)
+
     def build(self, *, tenant_id: Optional[str] = None,
               framework: str = "EU_AI_ACT") -> dict:
         """Return a structured compliance report as a dict (JSON-serialisable)."""
@@ -262,7 +283,13 @@ class ComplianceReporter:
                                               time.gmtime()),
             "tenant_id": tenant_id or "*ALL*",
             "audit": {
+                # hash_chain_verified means the chain is internally consistent.
+                # tamper_evident_against_writer means that consistency is
+                # HMAC-protected (finding 2.1): False here => an actor with DB
+                # write access could have reforged history undetectably, so an
+                # auditor must not read "verified: true" as tamper-evidence.
                 "hash_chain_verified": self._chain_valid(),
+                "hash_chain_tamper_evident_against_writer": self._chain_tamper_evident(),
                 "trace_records_total": stats["total"],
                 "trace_records_tenant": stats["tenant"],
                 **({"store_error": store_error} if store_error else {}),
@@ -315,8 +342,12 @@ class ComplianceReporter:
         policy comparison. Structural rows (scrubbing, HITL gating) are
         properties of the pipeline code itself."""
         base = [
+            # "Tamper-evident" requires BOTH a valid chain AND a signing key
+            # (finding 2.1): an unkeyed chain is not tamper-evident against a
+            # writer, so this control must not read in_place merely because the
+            # hashes are self-consistent.
             ("audit_trail", "Tamper-evident hash-chained audit log",
-             self._chain_valid() is True),
+             self._chain_valid() is True and self._chain_tamper_evident() is True),
             ("pii_minimization", "PII scrubbed before model exposure", True),
             ("access_control", "Per-tenant API-key + JWT auth, tenant isolation", True),
             ("human_oversight", "HITL approval gate for consequential actions", True),
@@ -348,6 +379,7 @@ class ComplianceReporter:
             "",
             "AUDIT",
             f"  Hash chain verified : {r['audit']['hash_chain_verified']}",
+            f"  Tamper-evident (HMAC): {r['audit']['hash_chain_tamper_evident_against_writer']}",
             f"  Trace records (all) : {r['audit']['trace_records_total']}",
             f"  Trace records (tnt) : {r['audit']['trace_records_tenant']}",
             "",

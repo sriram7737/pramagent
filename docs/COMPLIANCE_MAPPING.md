@@ -33,6 +33,14 @@ that must cover that combined threat requires external anchoring
 not the local chain alone — see "Audit Chain Threat Model" in
 `docs/HARDENING_GUIDE.md` for the full breakdown.
 
+An **unkeyed** chain (no `PRAMAGENT_SIGNING_KEY`) is plain SHA-256 and is not
+tamper-evident even against the application-layer threat — it detects only
+accidental corruption. The reference deployment therefore refuses to boot a
+persistent store without a signing key unless `PRAMAGENT_ALLOW_UNSIGNED_AUDIT=1`
+is set (dev only), and the compliance report exposes a
+`hash_chain_tamper_evident_against_writer` field so an unkeyed chain cannot be
+misread as tamper-evident from a `hash_chain_verified: true`.
+
 ## SOC 2 (Trust Services Criteria)
 | TSC | Pramagent control |
 |---|---|

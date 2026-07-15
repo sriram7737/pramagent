@@ -136,6 +136,31 @@ def test_forwarded_proto_ignored_from_untrusted_peer(monkeypatch):
     assert r.headers["location"].startswith("https://")
 
 
+def test_build_default_armor_requires_signing_key_for_persistent_store(monkeypatch, tmp_path):
+    """2.1: a persistent audit chain with no PRAMAGENT_SIGNING_KEY is unkeyed
+    plain SHA-256 (forgeable by anyone with DB write access). build_default_armor
+    must refuse to boot such a store rather than silently produce a
+    non-tamper-evident audit log."""
+    monkeypatch.delenv("PRAMAGENT_POSTGRES_DSN", raising=False)
+    monkeypatch.setenv("PRAMAGENT_DB", str(tmp_path / "unsigned.db"))
+    monkeypatch.delenv("PRAMAGENT_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("PRAMAGENT_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("PRAMAGENT_ALLOW_UNSIGNED_AUDIT", raising=False)
+    with pytest.raises(RuntimeError, match="PRAMAGENT_SIGNING_KEY"):
+        build_default_armor()
+
+
+def test_build_default_armor_allows_unsigned_audit_with_explicit_optin(monkeypatch, tmp_path):
+    """2.1: the requirement is bypassable only via an explicit dev opt-in."""
+    monkeypatch.delenv("PRAMAGENT_POSTGRES_DSN", raising=False)
+    monkeypatch.setenv("PRAMAGENT_DB", str(tmp_path / "optin.db"))
+    monkeypatch.delenv("PRAMAGENT_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("PRAMAGENT_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("PRAMAGENT_ALLOW_UNSIGNED_AUDIT", "1")
+    armor = build_default_armor()
+    assert armor.store.__class__.__name__ == "SQLiteStore"
+
+
 def test_build_default_armor_uses_encrypted_sqlite_when_key_present(monkeypatch, tmp_path):
     cryptography = pytest.importorskip("cryptography.fernet")
     key = cryptography.Fernet.generate_key().decode()

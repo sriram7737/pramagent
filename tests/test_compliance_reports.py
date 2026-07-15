@@ -58,9 +58,9 @@ def test_retention_cutoff_is_in_past():
 
 
 # ── ComplianceReporter ─────────────────────────────────────────────────────
-def _armed_store():
+def _armed_store(signing_key: str = ""):
     store = MemoryStore()
-    audit = HashChainBackend()
+    audit = HashChainBackend(signing_key=signing_key)
     for i in range(3):
         tr = TraceEvent(tenant_id="acme", session_id="s", input_text=f"x{i}")
         payload = tr.to_dict()
@@ -104,6 +104,29 @@ def test_report_pdf_writes_file():
         assert os.path.getsize(out) > 0
     finally:
         os.unlink(path)
+
+
+# ── Finding 2.1: unkeyed chain must not be reported as tamper-evident ──
+def test_report_unkeyed_chain_flagged_not_tamper_evident():
+    """An unkeyed (plain SHA-256) chain is internally consistent but forgeable
+    by anyone with write access. hash_chain_verified may be True, but the
+    report must also carry an explicit tamper-evidence caveat, and the
+    'audit_trail' control (described as tamper-evident) must NOT read in_place."""
+    store, audit = _armed_store()  # unkeyed
+    r = ComplianceReporter(store=store, audit=audit).build(tenant_id="acme")
+    assert r["audit"]["hash_chain_verified"] is True
+    assert r["audit"]["hash_chain_tamper_evident_against_writer"] is False
+    audit_ctrl = next(c for c in r["controls"] if c["control_id"] == "audit_trail")
+    assert audit_ctrl["in_place"] is False
+
+
+def test_report_keyed_chain_is_tamper_evident():
+    store, audit = _armed_store(signing_key="a-real-signing-secret-value")
+    r = ComplianceReporter(store=store, audit=audit).build(tenant_id="acme")
+    assert r["audit"]["hash_chain_verified"] is True
+    assert r["audit"]["hash_chain_tamper_evident_against_writer"] is True
+    audit_ctrl = next(c for c in r["controls"] if c["control_id"] == "audit_trail")
+    assert audit_ctrl["in_place"] is True
 
 
 def test_report_consent_counts():

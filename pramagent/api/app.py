@@ -999,6 +999,20 @@ def build_default_armor() -> Pramagent:
         _env_true("PRAMAGENT_REQUIRE_ENCRYPTED_STORE")
         or _phi_mode_enabled()
     )
+    # Finding 2.1: a persistent audit chain with no signing key is unkeyed
+    # plain SHA-256 — internally consistent but silently re-forgeable by anyone
+    # with database write access (it detects accidental corruption only, not
+    # tampering). Refuse to boot such a store unless an operator explicitly
+    # accepts a non-tamper-evident chain (dev only). In-memory/opt-in volatile
+    # storage is exempt: it is never presented as durable evidence.
+    if (dsn or db_path) and not signing_key and not _env_true("PRAMAGENT_ALLOW_UNSIGNED_AUDIT"):
+        raise RuntimeError(
+            "PRAMAGENT_SIGNING_KEY is required for a persistent audit chain: "
+            "an unkeyed chain is plain SHA-256 and can be silently reforged by "
+            "anyone with database write access, so it is not tamper-evident. "
+            "Set PRAMAGENT_SIGNING_KEY, or set PRAMAGENT_ALLOW_UNSIGNED_AUDIT=1 "
+            "to explicitly accept a non-tamper-evident chain (dev only)."
+        )
     if dsn:
         # Two ways to satisfy "encrypted at rest" for Postgres: a real
         # PRAMAGENT_ENCRYPTION_KEY (application-level Fernet encryption of
