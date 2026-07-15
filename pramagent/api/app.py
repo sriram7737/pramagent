@@ -435,10 +435,24 @@ def _unauthenticated_api_opt_in_expired() -> bool:
         return time.time() >= deadline_ts
 
 
+def _unauthenticated_api_allowed() -> bool:
+    """True when the operator has explicitly opted into running with no API-key
+    registry (dev/demo) and that opt-in has not expired.
+
+    This is the single gate consulted by BOTH startup enforcement and the
+    request-path scope check (finding 1.2), so an empty registry can never
+    silently fall through to an unauthenticated, no-scope request just because
+    the best-effort public-runtime heuristic failed to flag the deployment."""
+    return (
+        _env_true("PRAMAGENT_ALLOW_UNAUTHENTICATED_API")
+        and not _unauthenticated_api_opt_in_expired()
+    )
+
+
 def _enforce_authenticated_public_api(registry: APIKeyRegistry) -> None:
     if len(registry) > 0:
         return
-    if _env_true("PRAMAGENT_ALLOW_UNAUTHENTICATED_API") and not _unauthenticated_api_opt_in_expired():
+    if _unauthenticated_api_allowed():
         if _looks_like_public_runtime():
             log.warning(
                 "starting with PRAMAGENT_ALLOW_UNAUTHENTICATED_API=1 on what "
@@ -1601,6 +1615,21 @@ def create_app(armor: Optional[Pramagent] = None,
         ) -> str:
             """Resolve tenant, enforce scope, and apply tenant/IP rate limits."""
             if len(app.state.registry) == 0:
+                # Finding 1.2 — fail closed in the request path, not only at
+                # startup. Without an explicit (unexpired) opt-in, an empty
+                # registry means "no identity available", which must reject
+                # rather than fall through to an empty-tenant, no-scope pass.
+                if not _unauthenticated_api_allowed():
+                    raise HTTPException(
+                        status_code=401,
+                        detail=(
+                            "authentication required: no API key registry is "
+                            "configured. Set PRAMAGENT_API_KEYS or "
+                            "PRAMAGENT_API_KEY_DSN, or set "
+                            "PRAMAGENT_ALLOW_UNAUTHENTICATED_API=1 for a "
+                            "dev/demo deployment."
+                        ),
+                    )
                 tenant = ""
                 rate_key = (request.client.host if request and request.client else "anon")
                 _rate_limit_auth(request, rate_key)

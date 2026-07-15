@@ -366,6 +366,36 @@ def test_unauthenticated_opt_in_malformed_expiry_fails_closed(monkeypatch):
         create_app(registry=APIKeyRegistry())
 
 
+# ── Finding 1.2: auth required by default, enforced in the REQUEST PATH ──
+def test_empty_registry_denies_data_endpoint_without_optin(monkeypatch):
+    """1.2: with no API key registry and no explicit PRAMAGENT_ALLOW_
+    UNAUTHENTICATED_API opt-in, a data endpoint must fail closed (401) in the
+    request path — not fall through to an empty-tenant, no-scope pass. This
+    closes the 'bare container the startup heuristic can't detect' gap: the
+    gate no longer depends on public-runtime detection at boot."""
+    monkeypatch.delenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", raising=False)
+    # non-public runtime so the (unchanged) startup enforcement does not raise;
+    # the request-path gate is what must now reject.
+    monkeypatch.setattr(sys, "argv", ["pytest"])
+    for var in ("RAILWAY_ENVIRONMENT", "RAILWAY_SERVICE_NAME", "RENDER",
+                "FLY_APP_NAME", "K_SERVICE", "AWS_EXECUTION_ENV",
+                "KUBERNETES_SERVICE_HOST", "DYNO", "WEBSITE_SITE_NAME",
+                "GAE_INSTANCE", "ECS_CONTAINER_METADATA_URI_V4",
+                "PRAMAGENT_API_BIND_HOST", "UVICORN_HOST", "HOST"):
+        monkeypatch.delenv(var, raising=False)
+
+    client = TestClient(create_app(registry=APIKeyRegistry()))
+    assert client.get("/v1/metrics").status_code == 401
+
+
+def test_empty_registry_allows_data_endpoint_with_explicit_optin(monkeypatch):
+    """1.2: the explicit dev/demo opt-in still permits the empty-tenant pass."""
+    monkeypatch.setenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
+    monkeypatch.delenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL", raising=False)
+    client = TestClient(create_app(registry=APIKeyRegistry()))
+    assert client.get("/v1/metrics").status_code != 401
+
+
 def test_phi_mode_requires_authenticated_api(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_PHI_MODE", "1")
 

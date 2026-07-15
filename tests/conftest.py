@@ -12,3 +12,9 @@ os.environ.setdefault("PRAMAGENT_ALLOW_MEMORY_STORE", "1")
 # with a fixed non-secret key by default — the switch a real deployment flips —
 # and individual tests delenv it to exercise the refusal path.
 os.environ.setdefault("PRAMAGENT_SIGNING_KEY", "test-signing-key-not-a-real-secret")
+# The API now fails closed in the request path when no API-key registry is
+# configured (finding 1.2). Most tests run against an empty registry on purpose
+# (dev/demo mode), so the suite opts into unauthenticated access by default —
+# the same explicit switch a dev deployment flips — and auth tests delenv it to
+# exercise the fail-closed path.
+os.environ.setdefault("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
