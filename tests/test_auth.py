@@ -396,6 +396,32 @@ def test_empty_registry_allows_data_endpoint_with_explicit_optin(monkeypatch):
     assert client.get("/v1/metrics").status_code != 401
 
 
+# ── Finding 4.1: no-auth mode is single-tenant under strict flag ──
+def test_noauth_strict_flag_refuses_non_default_tenant(monkeypatch):
+    """4.1: in no-auth mode a client-supplied tenant_id is unauthenticated and
+    thus untrustworthy. With PRAMAGENT_STRICT_SINGLE_TENANT set, any tenant
+    other than the shared 'default' bucket is refused (403), so an operator can
+    hard-enforce the single-tenant contract no-auth mode implies."""
+    monkeypatch.setenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
+    monkeypatch.setenv("PRAMAGENT_STRICT_SINGLE_TENANT", "1")
+    client = TestClient(create_app(registry=APIKeyRegistry()))
+
+    refused = client.post("/v1/run", json={"prompt": "hi", "tenant_id": "victim"})
+    assert refused.status_code == 403
+    allowed = client.post("/v1/run", json={"prompt": "hi", "tenant_id": "default"})
+    assert allowed.status_code != 403
+
+
+def test_noauth_without_strict_flag_still_allows_tenant_selection(monkeypatch):
+    """4.1: default (flag unset) preserves no-auth multi-tenant for dev/test."""
+    monkeypatch.setenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
+    monkeypatch.delenv("PRAMAGENT_STRICT_SINGLE_TENANT", raising=False)
+    client = TestClient(create_app(registry=APIKeyRegistry()))
+    assert client.post(
+        "/v1/run", json={"prompt": "hi", "tenant_id": "acme"}
+    ).status_code != 403
+
+
 def test_phi_mode_requires_authenticated_api(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_PHI_MODE", "1")
 

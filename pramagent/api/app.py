@@ -1672,8 +1672,31 @@ def create_app(armor: Optional[Pramagent] = None,
         (never `if tenant: <enforce>`) — an empty resolved tenant used to be
         treated as "no tenant, skip the check" instead of "the tenant is
         the empty string", which let unauthenticated callers see and act on
-        every other tenant's data (ISSUE-1/7)."""
-        return tenant if tenant else (provided_tenant_id or "default")
+        every other tenant's data (ISSUE-1/7).
+
+        Finding 4.1: in no-auth mode (`tenant == ""`) the caller is
+        unauthenticated, so a client-chosen tenant_id is not a trustworthy
+        identity — no-auth mode is single-tenant by design. When
+        PRAMAGENT_STRICT_SINGLE_TENANT is set, any tenant_id other than the
+        shared "default" bucket is refused rather than silently honored, so an
+        operator can hard-enforce the single-tenant contract. It is opt-in so
+        that local dev/test can still exercise multi-tenant behavior without
+        provisioning keys; configure API-key auth for real multi-tenant use."""
+        if not tenant:
+            if (provided_tenant_id and provided_tenant_id != "default"
+                    and _env_true("PRAMAGENT_STRICT_SINGLE_TENANT")):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "unauthenticated (no-auth) mode is single-tenant: a "
+                        "client-supplied tenant_id other than 'default' is not "
+                        "honored while PRAMAGENT_STRICT_SINGLE_TENANT is set. "
+                        "Configure API-key auth (PRAMAGENT_API_KEYS / "
+                        "PRAMAGENT_API_KEY_DSN) for multi-tenant use."
+                    ),
+                )
+            return provided_tenant_id or "default"
+        return tenant
 
     def _fetch_trace(call_id: str, tenant: str, provided_tenant_id: str = ""):
         """Fetch a trace, enforcing tenant ownership.
