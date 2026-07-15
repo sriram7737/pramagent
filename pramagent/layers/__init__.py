@@ -60,6 +60,12 @@ class ComplianceLayer:
         false positives.
 
     Both sets are fully overridable via the constructor.
+
+    Auditing (finding 2.3): scrub() itself writes no audit record. Redaction
+    labels are durably recorded only when this layer runs inside
+    ``Pramagent.run()`` (persisted on the TraceEvent via ``_finalize()``).
+    Standalone scrub() calls are not audited — drive the pipeline for a
+    tamper-evident trail.
     """
 
     DEFAULT_PATTERNS = {

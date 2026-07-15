@@ -830,6 +830,14 @@ class ToolGuardLayer:
         out = guard.validate_output("query_db", result, tenant_id="acme", session_id="s1")
         if not out.ok:
             raise ValueError(out.reason)
+
+    Auditing standalone use (finding 2.3): decisions always land in the
+    in-process ``audit_log`` deque (bounded, lost on restart). For a durable,
+    tamper-evident trail when using this layer OUTSIDE ``Pramagent.run()``,
+    pass ``audit=<AuditBackend>`` (e.g. ``SQLiteStore``/``PostgresStore``);
+    every decision is then also written to the hash chain. Without it,
+    standalone decisions are NOT durably recorded — ``Pramagent.run()`` is the
+    only path that audits by default.
     """
 
     def __init__(
@@ -841,7 +849,15 @@ class ToolGuardLayer:
         backend: Optional[Any] = None,
         chain_ttl_s: int = 300,
         fail_open: bool = False,
+        audit: Optional[Any] = None,
     ) -> None:
+        # Finding 2.3: an AuditBackend (append/verify_chain). When provided,
+        # EVERY decision is also written to the durable, hash-chained log — so
+        # a caller using this layer STANDALONE (guard.evaluate(...), outside
+        # Pramagent.run()) still gets a tamper-evident trail. When None (the
+        # default), standalone decisions live only in the in-process
+        # audit_log deque and are NOT durably recorded (see class docstring).
+        self._audit = audit
         self.policies: dict[str, ToolPolicy] = {}
         self.default_verdict = default_verdict
         self.chain_window = chain_window
@@ -974,6 +990,27 @@ class ToolGuardLayer:
 
     def _record(self, decision: ToolDecision) -> ToolDecision:
         self.audit_log.append(decision)
+        # Finding 2.3: when a durable audit backend is configured, mirror the
+        # decision into the tamper-evident chain so standalone use is audited
+        # too. Best-effort: a store failure must not change the security
+        # verdict, but it is logged (never silently dropped). `reason` is
+        # already value-redacted for schema violations (B1), so no raw
+        # argument/output content is persisted here.
+        if self._audit is not None:
+            try:
+                self._audit.append({
+                    "source": "tool_guard",
+                    "decision_id": decision.decision_id,
+                    "tool_name": decision.tool_name,
+                    "tenant_id": decision.tenant_id,
+                    "session_id": decision.session_id,
+                    "action_label": decision.action_label,
+                    "verdict": decision.verdict.value,
+                    "reason": decision.reason,
+                    "side_effect": decision.side_effect,
+                })
+            except Exception as exc:
+                log.warning("tool guard durable audit append failed: %r", exc)
         return decision
 
     def _block(self, tool_name, tenant_id, session_id, action_label, reason,

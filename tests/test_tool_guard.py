@@ -30,6 +30,31 @@ def _guard():
     ])
 
 
+# ── Finding 2.3: standalone ToolGuard decisions can reach the durable chain ──
+def test_standalone_toolguard_writes_to_durable_audit_when_configured():
+    from pramagent.audit import HashChainBackend
+
+    audit = HashChainBackend()
+    guard = ToolGuardLayer(default_verdict=Verdict.BLOCK, audit=audit)
+    decision = guard.evaluate("unregistered_tool", {}, tenant_id="t", session_id="s")
+    assert decision.verdict == Verdict.BLOCK
+
+    records = audit.records()
+    assert len(records) == 1
+    payload = records[0]["payload"]
+    assert payload["source"] == "tool_guard"
+    assert payload["verdict"] == "block"
+    assert payload["tenant_id"] == "t"
+    assert audit.verify_chain() is True
+
+
+def test_standalone_toolguard_without_audit_backend_keeps_prior_behavior():
+    guard = ToolGuardLayer(default_verdict=Verdict.BLOCK)  # no durable audit
+    decision = guard.evaluate("unregistered_tool", {}, tenant_id="t", session_id="s")
+    assert decision.verdict == Verdict.BLOCK
+    assert len(guard.audit_log) == 1  # only the in-process deque
+
+
 # ── ISSUE-14: argument-injection false-positive tuning ─────────────────────
 
 def _pids(text):

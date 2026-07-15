@@ -262,6 +262,12 @@ class IsolationLayer:
     backend           : AbstractBackend for tenant memory. Defaults to
                         InProcessBackend. Pass RedisBackend for multi-worker.
     memory_ttl_s      : TTL for memory entries in seconds (default 3600).
+
+    Auditing (finding 2.3): this layer does NOT write to the audit chain. Its
+    decisions (InjectionSuspected / InputTooLarge / IsolationViolation) are
+    durably recorded only when it runs inside ``Pramagent.run()``, which audits
+    the whole pipeline via ``_finalize()``. Standalone use of these methods
+    forfeits the tamper-evident trail — drive the pipeline for a compliant log.
     """
 
     def __init__(
