@@ -4,6 +4,48 @@ from pramagent.security import (WEAK_SECRET_DENYLIST, UnsafeURLError,
                                 assert_strong_secret, validate_http_url)
 
 
+def test_require_shared_counting_fatal_without_backend(monkeypatch):
+    """5.2: with PRAMAGENT_REQUIRE_SHARED_COUNTING set, a missing shared
+    backend is a hard boot failure, not a silent degrade to per-process
+    counting (which multiplies call/chain limits by the worker count)."""
+    from pramagent.api.app import build_tool_guard_backend_from_env
+
+    monkeypatch.setenv("PRAMAGENT_REQUIRE_SHARED_COUNTING", "1")
+    monkeypatch.delenv("PRAMAGENT_TOOL_GUARD_REDIS_URL", raising=False)
+    monkeypatch.delenv("PRAMAGENT_REDIS_URL", raising=False)
+    with pytest.raises(RuntimeError, match="REQUIRE_SHARED_COUNTING"):
+        build_tool_guard_backend_from_env()
+
+
+def test_require_shared_counting_fatal_when_backend_unreachable(monkeypatch):
+    from pramagent.api.app import build_tool_guard_backend_from_env
+    from pramagent import backends
+
+    monkeypatch.setenv("PRAMAGENT_REQUIRE_SHARED_COUNTING", "1")
+    monkeypatch.setenv("PRAMAGENT_REDIS_URL", "redis://localhost:6379/0")
+
+    def _boom(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(backends.RedisBackend, "from_url", staticmethod(_boom))
+    with pytest.raises(RuntimeError, match="REQUIRE_SHARED_COUNTING"):
+        build_tool_guard_backend_from_env()
+
+
+def test_without_require_flag_unreachable_backend_degrades(monkeypatch):
+    from pramagent.api.app import build_tool_guard_backend_from_env
+    from pramagent import backends
+
+    monkeypatch.delenv("PRAMAGENT_REQUIRE_SHARED_COUNTING", raising=False)
+    monkeypatch.setenv("PRAMAGENT_REDIS_URL", "redis://localhost:6379/0")
+
+    def _boom(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(backends.RedisBackend, "from_url", staticmethod(_boom))
+    assert build_tool_guard_backend_from_env() is None
+
+
 def test_validate_http_url_allows_https_public_url():
     assert validate_http_url("https://api.example.com/hook") == "https://api.example.com/hook"
 

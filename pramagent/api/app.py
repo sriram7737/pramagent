@@ -1229,13 +1229,30 @@ def build_slack_approver_from_env() -> Optional[SlackHITLApprover]:
 
 
 def build_tool_guard_backend_from_env():
-    """Use Redis for ToolGuard distributed history when configured."""
+    """Use Redis for ToolGuard distributed history when configured.
+
+    Finding 5.2: without a shared backend, ToolGuard's per-session call-count
+    and dangerous-chain-depth limits are tracked per-process, so across N
+    workers the effective limits are multiplied by ~N. By default a missing or
+    unreachable Redis degrades to per-process counting with a warning. Set
+    PRAMAGENT_REQUIRE_SHARED_COUNTING=1 for multi-worker production so that a
+    missing/unreachable shared backend is a hard boot failure instead of a
+    silent under-enforcement.
+    """
+    require_shared = _env_true("PRAMAGENT_REQUIRE_SHARED_COUNTING")
     url = (
         os.environ.get("PRAMAGENT_TOOL_GUARD_REDIS_URL")
         or os.environ.get("PRAMAGENT_REDIS_URL")
         or ""
     ).strip()
     if not url:
+        if require_shared:
+            raise RuntimeError(
+                "PRAMAGENT_REQUIRE_SHARED_COUNTING is set but no "
+                "PRAMAGENT_TOOL_GUARD_REDIS_URL/PRAMAGENT_REDIS_URL is "
+                "configured. Multi-worker ToolGuard call/chain-count limits "
+                "require a shared backend; refusing to start with per-process "
+                "counting.")
         return None
     try:
         from ..backends import RedisBackend
@@ -1246,6 +1263,12 @@ def build_tool_guard_backend_from_env():
             breaker_cooldown_s=float(os.environ.get("PRAMAGENT_BACKEND_BREAKER_COOLDOWN_S", "30")),
         )
     except Exception as exc:
+        if require_shared:
+            raise RuntimeError(
+                "PRAMAGENT_REQUIRE_SHARED_COUNTING is set but the ToolGuard "
+                f"Redis backend is unreachable at boot: {exc}. Multi-worker "
+                "call/chain-count limits require a shared backend; refusing to "
+                "start with per-process counting.") from exc
         log.warning("ToolGuard Redis backend unavailable; using local history: %s", exc)
         return None
 
