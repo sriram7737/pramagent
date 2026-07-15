@@ -360,6 +360,19 @@ also has that key.** Treat external anchoring as required, not optional, for
 that threat model — the local chain alone, keyed or not, is still evidence
 recomputed from data that lives in the same trust boundary as the attacker.
 
+**Tail-truncation detection (finding 2.2).** Because `verify_chain()` walks
+only the rows that currently exist and recomputes forward from GENESIS, it
+cannot by itself detect that the most recent N links were deleted (the shorter
+prefix still verifies). The shipped defense is external head anchoring: with
+`EthereumBackend`/`HyperledgerBackend`, the last published anchor no longer
+matches a truncated local head, so the deletion is detectable. Regulated
+deployments that need truncation/rollback detection MUST enable external
+anchoring (a periodic head anchor is sufficient). A self-contained,
+signing-key-MAC'd head+count witness stored alongside a non-anchored
+`SQLiteStore`/`PostgresStore` chain is a planned enhancement for deployments
+that cannot anchor externally; until it lands, anchoring is the only control
+that closes this for the persistent backends.
+
 ## Known Limitations (Round 2 audit)
 
 These are documented, accepted limitations rather than open bugs — surfaced
