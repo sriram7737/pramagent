@@ -65,6 +65,19 @@ PRAMAGENT_API_URL       = os.environ.get("PRAMAGENT_API_URL", "http://localhost:
 PRAMAGENT_API_KEY       = resolve_secret("PRAMAGENT_API_KEY")
 PRAMAGENT_DASHBOARD_KEY = resolve_secret("PRAMAGENT_DASHBOARD_KEY", PRAMAGENT_API_KEY)  # shared key for browser
 PRAMAGENT_JWT_SECRET    = resolve_secret("PRAMAGENT_JWT_SECRET", _DEFAULT_JWT_SECRET)
+# Finding 1.1 — cross-service JWT confusion. Dashboard sessions are signed and
+# verified with a secret DISTINCT from the API's PRAMAGENT_JWT_SECRET. It falls
+# back to the API secret so single-secret deployments keep working, but the
+# aud/iss binding below rejects an API-minted token here even when the secret
+# IS shared — closing the path where a read-only API token (aud=pramagent-api)
+# became an all-tenant (tenant="*") dashboard admin session.
+DASHBOARD_JWT_SECRET = resolve_secret(
+    "PRAMAGENT_DASHBOARD_JWT_SECRET", PRAMAGENT_JWT_SECRET)
+# This dashboard mints and accepts only its own issuer/audience. The API uses
+# iss="pramagent"/aud="pramagent-api"; keeping these disjoint is what stops a
+# token minted for one service from authenticating against the other.
+_DASHBOARD_ISS = "pramagent-dashboard"
+_DASHBOARD_AUD = "pramagent-dashboard"
 PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN = os.environ.get(
     "PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN", "false"
 ).lower() in {"1", "true", "yes", "on"}
@@ -217,10 +230,15 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 def _sign(payload: dict) -> str:
+    # Stamp this dashboard's issuer/audience so a token minted here cannot be
+    # replayed against the API (and vice versa) even under a shared secret
+    # (finding 1.1). Existing iss/aud in the payload are overwritten so the
+    # binding can't be spoofed by the caller building the payload.
+    payload = {**payload, "iss": _DASHBOARD_ISS, "aud": _DASHBOARD_AUD}
     header  = _b64url(b'{"alg":"HS256","typ":"JWT"}')
     body    = _b64url(json.dumps(payload).encode())
     signing_input = f"{header}.{body}".encode()
-    sig = hmac.new(PRAMAGENT_JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
+    sig = hmac.new(DASHBOARD_JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
     return f"{header}.{body}.{_b64url(sig)}"
 
 def _verify(token: str, *, check_revocation: bool = True) -> Optional[dict]:
@@ -231,13 +249,18 @@ def _verify(token: str, *, check_revocation: bool = True) -> Optional[dict]:
         header, body, sig = parts
         signing_input = f"{header}.{body}".encode()
         expected = _b64url(
-            hmac.new(PRAMAGENT_JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
+            hmac.new(DASHBOARD_JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
         )
         if not hmac.compare_digest(expected, sig):
             return None
         # decode payload
         padded = body + "=" * (4 - len(body) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
+        # Reject anything not minted by THIS dashboard: an API token
+        # (aud=pramagent-api / iss=pramagent) fails here regardless of a shared
+        # signing secret — the core of the finding 1.1 fix.
+        if payload.get("iss") != _DASHBOARD_ISS or payload.get("aud") != _DASHBOARD_AUD:
+            return None
         if payload.get("exp", 0) < time.time():
             return None
         if check_revocation and payload.get("jti") and _is_session_revoked(payload["jti"]):
@@ -281,12 +304,20 @@ def _get_auth(request: Request) -> Optional[AuthContext]:
     if token:
         payload = _verify(token)
         if payload:
+            # Finding 1.1 — deny on absent tenant/role instead of defaulting to
+            # "*"/"admin". A legitimate dashboard token always carries both
+            # (see the login handler); a token missing either is treated as
+            # unauthenticated rather than silently promoted to super-admin.
+            tenant = payload.get("tenant")
+            role = payload.get("role")
+            if not tenant or not role:
+                return None
             return AuthContext(
                 payload.get("sub", ""),
-                payload.get("tenant", "*"),
+                tenant,
                 csrf_token=payload.get("csrf", ""),
                 auth_method="cookie",
-                role=payload.get("role", "admin"),
+                role=role,
                 user_id=payload.get("uid", ""),
             )
 
@@ -312,7 +343,7 @@ def _template_context(ctx: AuthContext, **values):
 
 
 def _sign_csrf_body(body: str) -> str:
-    return hmac.new(PRAMAGENT_JWT_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(DASHBOARD_JWT_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
 
 
 def _new_preauth_csrf() -> str:

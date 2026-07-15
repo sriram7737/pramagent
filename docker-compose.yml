@@ -154,7 +154,13 @@ services:
       PRAMAGENT_API_KEY: ${PRAMAGENT_API_KEY}
       PRAMAGENT_DASHBOARD_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/1"
       PRAMAGENT_DASHBOARD_KEY: ${PRAMAGENT_DASHBOARD_KEY:?PRAMAGENT_DASHBOARD_KEY is required}
+      # Finding 1.1: the dashboard signs its sessions with a secret DISTINCT
+      # from the API's PRAMAGENT_JWT_SECRET so an API-minted token can never
+      # authenticate a dashboard session. PRAMAGENT_JWT_SECRET is still passed
+      # only for the startup strength-check; DASHBOARD sessions use the value
+      # below. These MUST be different values.
       PRAMAGENT_JWT_SECRET: ${PRAMAGENT_JWT_SECRET:?PRAMAGENT_JWT_SECRET is required}
+      PRAMAGENT_DASHBOARD_JWT_SECRET: ${PRAMAGENT_DASHBOARD_JWT_SECRET:?PRAMAGENT_DASHBOARD_JWT_SECRET is required and must differ from PRAMAGENT_JWT_SECRET}
       PRAMAGENT_DASHBOARD_TENANT: ${PRAMAGENT_DASHBOARD_TENANT:-default}
       PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN: ${PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN:-false}
       # Default true, matching the app-level default — this compose file

@@ -751,3 +751,67 @@ def test_dashboard_reset_requires_preauth_csrf(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+# ── Finding 1.1: cross-service JWT confusion (API token → dashboard admin) ──
+import time  # noqa: E402
+
+
+def _request_with_session_cookie(token: str) -> Request:
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(b"cookie", ("pramagent_session=" + token).encode())],
+    }
+    return Request(scope)
+
+
+def test_dashboard_rejects_api_audience_token_even_with_shared_secret(monkeypatch):
+    """1.1: an API-minted JWT (aud=pramagent-api / iss=pramagent), even when
+    signed with a shared secret, must not authenticate a dashboard session.
+    Pre-fix the dashboard checked neither aud nor iss, so the token verified
+    and _get_auth promoted it to tenant='*'/role='admin' (all-tenant read)."""
+    shared = "a-strong-shared-secret-value-123456"
+    # Cover both the pre-fix (PRAMAGENT_JWT_SECRET) and post-fix
+    # (DASHBOARD_JWT_SECRET) variable names so the signature matches whichever
+    # the code verifies against.
+    monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", shared)
+    monkeypatch.setattr(dashboard, "DASHBOARD_JWT_SECRET", shared, raising=False)
+
+    from pramagent.auth import JWTManager
+
+    api_token = JWTManager(shared).issue("victim-tenant", ttl_s=900, scopes=["read"])
+
+    assert dashboard._verify(api_token) is None
+    assert dashboard._get_auth(_request_with_session_cookie(api_token)) is None
+
+
+def test_dashboard_denies_session_token_missing_tenant_or_role(monkeypatch):
+    """1.1: absent tenant/role claims must deny, not silently default to
+    '*'/'admin'. A dashboard-audience token lacking those claims is unusable."""
+    shared = "another-strong-shared-secret-654321"
+    monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", shared)
+    monkeypatch.setattr(dashboard, "DASHBOARD_JWT_SECRET", shared, raising=False)
+
+    token = dashboard._sign(
+        {"sub": "u", "csrf": "c", "exp": int(time.time()) + 300}
+    )
+    assert dashboard._get_auth(_request_with_session_cookie(token)) is None
+
+
+def test_api_rejects_dashboard_token(monkeypatch):
+    """1.1 (reverse direction, lock-in): a dashboard-minted token must never
+    verify against the API's JWTManager. Already safe via aud/iss pinning on
+    the API side; this locks it so the 1.1 fix can't regress it."""
+    shared = "shared-secret-for-reverse-check-000"
+    monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", shared)
+    monkeypatch.setattr(dashboard, "DASHBOARD_JWT_SECRET", shared, raising=False)
+
+    from pramagent.auth import JWTError, JWTManager
+
+    dash_token = dashboard._sign(
+        {"sub": "u", "tenant": "t", "role": "admin", "exp": int(time.time()) + 300}
+    )
+    with pytest.raises(JWTError):
+        JWTManager(shared).verify(dash_token)
