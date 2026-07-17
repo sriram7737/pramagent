@@ -1,0 +1,15 @@
+{
+  "name": "pramagent-marketplace",
+  "owner": {
+    "name": "Sriram Rampelli",
+    "url": "https://github.com/sriram7737"
+  },
+  "plugins": [
+    {
+      "name": "pramagent-guard",
+      "source": "./plugins/pramagent-guard",
+      "description": "Deterministic tool-call policy enforcement for coding agents, powered by Pramagent ToolGuard.",
+      "version": "0.1.0"
+    }
+  ]
+}

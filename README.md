@@ -562,6 +562,20 @@ Generic helpers are also available:
 from pramagent.adapters import protect, protect_tool
 ```
 
+## Coding-Agent Hooks
+
+Pramagent also ships a publishable hook plugin for coding agents:
+
+- Claude Code `PreToolUse`
+- Codex plugin hooks
+- Grok Build / xAI plugin hooks
+- any host that can emit Claude-style pre-tool-call JSON on stdin
+
+The plugin lives in `plugins/pramagent-guard/`, with publishing notes in
+[`docs/AGENT_HOOK_PUBLISHING.md`](docs/AGENT_HOOK_PUBLISHING.md). It is not an
+MCP server/client/proxy; it is a host-agent lifecycle hook that evaluates
+proposed tool calls before execution.
+
 ## Compliance Evidence
 
 `ComplianceReporter.generate()` can produce point-in-time evidence packages
