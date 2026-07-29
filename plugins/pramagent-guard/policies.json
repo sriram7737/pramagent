@@ -1,0 +1,157 @@
+{
+  "policies": [
+    {
+      "name": "Bash",
+      "side_effect": "destructive",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "detail": "Shell commands can modify the local machine; ask before running.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          }
+        },
+        "required": ["command"],
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "PowerShell",
+      "side_effect": "destructive",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "detail": "PowerShell commands can modify the local machine; ask before running.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          }
+        },
+        "required": ["command"],
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "run_shell_command",
+      "side_effect": "destructive",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "detail": "Shell commands can modify the local machine; ask before running.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          }
+        },
+        "required": ["command"],
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "Write",
+      "side_effect": "write",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "Edit",
+      "side_effect": "write",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "MultiEdit",
+      "side_effect": "write",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "apply_patch",
+      "side_effect": "write",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "write_file",
+      "side_effect": "write",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "replace",
+      "side_effect": "write",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "Read",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "LS",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "Grep",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "Glob",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "read_file",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "list_directory",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "glob",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "grep_search",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    },
+    {
+      "name": "search_file_content",
+      "side_effect": "read",
+      "action": "allow",
+      "schema": {"type": "object", "additionalProperties": true}
+    }
+  ]
+}

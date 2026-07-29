@@ -183,7 +183,7 @@ def finalize_trace_conformance(
     blocked: bool = False,
     block_reason: str = "",
 ) -> None:
-    """Populate conformance labels and metrics on a trace in-place."""
+    """Populate trace-local self-assessment indicators on a trace in-place."""
     trace.detection_tier = _highest_detection_tier(trace)
     trace.response_tier = _response_tier(trace, blocked=blocked)
     trace.attack_techniques = trace_attack_techniques(trace, block_reason=block_reason)

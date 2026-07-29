@@ -114,7 +114,8 @@ def _decision_output(permission_decision: str, reason: str) -> dict:
 # ── Policy registration ─────────────────────────────────────────────────
 # Adjust these to taste. Anything not registered here is BLOCKed by
 # ToolGuardLayer by default (fail-closed). That's deliberate: an
-# unrecognized tool_name (e.g. a new MCP tool) should not silently pass.
+# unrecognized tool_name (e.g. a new host or connector tool) should not
+# silently pass.
 _GUARD = ToolGuardLayer()
 
 _GUARD.register(ToolPolicy(

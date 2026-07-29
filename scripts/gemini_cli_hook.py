@@ -133,7 +133,8 @@ def _decision_output(decision: str, reason: str) -> dict:
 # would mean every real Gemini CLI tool call gets denied as "not
 # registered" by ToolGuardLayer's fail-closed default. Anything not
 # registered here is still BLOCKed by default, deliberately: an
-# unrecognized tool_name (e.g. a new MCP tool) should not silently pass.
+# unrecognized tool_name (e.g. a new host or connector tool) should not
+# silently pass.
 _GUARD = ToolGuardLayer()
 
 _GUARD.register(ToolPolicy(

@@ -1,0 +1,41 @@
+{
+  "name": "pramagent-guard",
+  "version": "0.1.0",
+  "description": "Deterministic PreToolUse policy checks for coding agents, powered by Pramagent ToolGuard.",
+  "author": {
+    "name": "Sriram Rampelli",
+    "email": "sriramrampelli@gmail.com",
+    "url": "https://github.com/sriram7737"
+  },
+  "homepage": "https://github.com/sriram7737/pramagent/tree/main/plugins/pramagent-guard",
+  "repository": "https://github.com/sriram7737/pramagent",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent-security",
+    "guardrails",
+    "tool-policy",
+    "hooks",
+    "audit"
+  ],
+  "interface": {
+    "displayName": "Pramagent Guard",
+    "shortDescription": "Gate coding-agent tool calls through Pramagent policy.",
+    "longDescription": "Pramagent Guard runs proposed tool calls through deterministic ToolGuard policies before they execute. It is designed for Claude Code, Codex, and Grok-style hook systems that emit PreToolUse-compatible JSON.",
+    "developerName": "Sriram Rampelli",
+    "category": "Security",
+    "capabilities": [
+      "Hooks",
+      "Security",
+      "Policy"
+    ],
+    "websiteURL": "https://github.com/sriram7737/pramagent",
+    "privacyPolicyURL": "https://github.com/sriram7737/pramagent/blob/main/README.md",
+    "termsOfServiceURL": "https://github.com/sriram7737/pramagent/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Show me how Pramagent Guard protects tool calls.",
+      "Audit my hook policy before I enable it.",
+      "Explain why this tool call was blocked."
+    ],
+    "brandColor": "#0F766E"
+  }
+}

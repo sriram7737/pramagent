@@ -51,9 +51,11 @@ The example matcher covers Claude Code's common local tools:
 Bash|PowerShell|Write|Edit|MultiEdit|Read|LS|Grep|Glob
 ```
 
-For strict fail-closed MCP experiments, change the matcher to a broad regular
-expression such as `.*`. With a broad matcher, any unregistered tool name is
-denied by `ToolGuardLayer` instead of silently passing through.
+For strict fail-closed host-tool experiments, change the matcher to a broad
+regular expression such as `.*`. This is not native MCP support; it only means
+Claude Code will send more matched tool names through this hook. With a broad
+matcher, any unregistered tool name is denied by `ToolGuardLayer` instead of
+silently passing through.
 
 ## Current Policy
 

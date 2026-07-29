@@ -1,37 +1,43 @@
-# Pramagent Conformance Map
+# Pramagent Agent-Security Self-Assessment Map
 
 This document maps Pramagent to the current agent-security vocabulary used by
 Google DeepMind and AWS. It is an engineering self-assessment, not a
-certification, penetration test, or claim of production compliance.
+certification, penetration test, system-level conformance claim, or production
+compliance claim.
 
 Pramagent's lane is the individual-agent control tier: deterministic checks
 outside the model, human approval for consequential actions, tamper-evident
 evidence, and portable traces that can run on top of any provider or hosting
 runtime.
 
+Important: the trace fields below are **trace-local self-assessed indicators**.
+They describe what Pramagent observed or did for one call. They do not prove
+DeepMind/AWS conformance for the system, customer deployment, organization, or
+hosting environment.
+
 ## What Is Implemented
 
 | Framework idea | Pramagent mechanism | Status |
 |---|---|---|
-| Deterministic controls outside the agent | `ToolGuardLayer`, `SafetyLayer`, `IsolationLayer`, HITL, output validation | Implemented |
-| AWS autonomy scope declaration | `Pramagent(agent_scope="scope_1" | "scope_2" | "scope_3")` and `PRAMAGENT_AGENT_SCOPE` for the API | Implemented |
+| Deterministic controls outside the agent | `ToolGuardLayer`, `SafetyLayer`, `IsolationLayer` content-boundary checks, HITL, output validation | Implemented |
+| AWS autonomy scope declaration | `Pramagent(agent_scope="scope_1" | "scope_2" | "scope_3")` and `PRAMAGENT_AGENT_SCOPE` for the API | Implemented as a self-declared configuration value |
 | AWS Scope 1: human-initiated read-only | Non-read tool side effects and registered consequential actions are blocked | Implemented |
 | AWS Scope 2: mandatory human approval | Non-read tool side effects require HITL even when a tool policy accidentally says `ALLOW` | Implemented |
-| AWS Scope 3: bounded autonomy | Scope is recorded on traces; enforcement comes from configured ToolGuard/HITL/rate-limit policies | Partial |
-| DeepMind-style detection tiers | Each trace receives `detection_tier` such as `D2_rule_detection` or `D4_runtime_containment` | Implemented |
-| DeepMind-style response tiers | Each trace receives `response_tier` such as `R1_log_and_monitor`, `R2_human_approval`, or `R3_block_or_safe_default` | Implemented |
+| AWS Scope 3: bounded autonomy | Scope is recorded on traces; enforcement comes from configured ToolGuard/HITL/rate-limit policies | Partial self-assessment |
+| DeepMind-style detection tier mapping | Each trace receives a local `detection_tier` indicator such as `D2_rule_detection` or `D4_runtime_containment` | Implemented as trace-local self-assessment metadata |
+| DeepMind-style response tier mapping | Each trace receives a local `response_tier` indicator such as `R1_log_and_monitor`, `R2_human_approval`, or `R3_block_or_safe_default` | Implemented as trace-local self-assessment metadata |
 | Trace-layer coverage metric | Each trace includes required/observed trust layers and a `trace_layer_coverage` value scoped to that single trace | Implemented |
 | Time-to-response metric | Each trace includes `time_to_response_ms`, computed to first block/escalation/containment decision | Implemented |
 | Seeded recall metric | `run_injection_benchmark()` reports `seeded_recall` over first-party seeded red-team prompts | Implemented for seeded evals |
 | MITRE ATT&CK-style tagging | Each trace receives `attack_techniques` derived from side effects, layer decisions, and scrubbed text | Implemented |
-| Tamper-evident evidence | Trace payload, conformance fields, and decisions are sealed into the hash chain | Implemented |
+| Tamper-evident evidence | Trace payload, self-assessment fields, and decisions are sealed into the hash chain | Implemented |
 | Agent-memory integrity contract | `IntegrityMemoryStore` verifies in-memory/SQLite agent memory chains and supports externally held heads | Implemented for optional memory stores |
 | Structured rationale capture | `DecisionRationale` captures scrubbed intent/policy/tool rationale without raw reasoning | Implemented as schema |
 | Overreach corpus | 26 human-labeled seeded cases plus `overreach_v0` counts-first evaluator | Implemented as corpus/eval, not runtime enforcement |
 
 ## Trace Fields
 
-New traces include:
+New traces include self-assessed mapping fields:
 
 ```json
 {

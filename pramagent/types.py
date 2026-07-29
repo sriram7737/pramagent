@@ -263,9 +263,9 @@ class TraceEvent:
     would_block: bool = False
     would_block_reason: str = ""
 
-    # Framework-conformance labels. Populated by the orchestrator at finalize
-    # time so every persisted trace can be read through DeepMind/AWS vocabulary
-    # without changing the core policy engine.
+    # Framework-inspired self-assessment metadata. Populated by the orchestrator
+    # at finalize time so every persisted trace can be read through
+    # DeepMind/AWS-style vocabulary without claiming system-level conformance.
     aws_scope: str = AgentScope.UNDECLARED.value
     detection_tier: str = ""
     response_tier: str = ""

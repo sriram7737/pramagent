@@ -38,6 +38,10 @@ examples/test_agent_db_threats.py
 *.sqlite
 *.sqlite3
 *.log
+.tmp-*.err
+debug_log.txt
+patient_note*.txt
+pramagent_*_hook.log
 .test*.txt
 test-results/
 
@@ -48,6 +52,7 @@ Thumbs.db
 .idea/
 .claude/
 .gemini/
+.codex/
 
 # Build artifacts & local working tree noise (P3-20)
 pramagent.egg-info/

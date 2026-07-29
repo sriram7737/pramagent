@@ -209,7 +209,7 @@ the provider detail.
 
 The demo includes opt-in product signals for evaluating adoption and retention:
 when a visitor checks the box, Pramagent records only a process-salted hashed
-visitor ID, provider kind, verdict, HITL state, and conformance tiers. Prompts,
+visitor ID, provider kind, verdict, HITL state, and trace-control indicators. Prompts,
 outputs, provider keys, IP addresses, and plaintext email are not recorded. The
 managed pilot form stores salted contact hashes and a short use-case label with
 obvious email/phone values redacted.

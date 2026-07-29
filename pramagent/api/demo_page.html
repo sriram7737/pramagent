@@ -292,7 +292,7 @@
             <small>Opt in to anonymous demo usage signal</small>
             <label class="switch"><input id="telemetryOptIn" type="checkbox"><span class="slider"></span></label>
           </div>
-          <div class="hint" style="margin-bottom:11px">When enabled, Pramagent records only hashed visitor ID, provider kind, verdict, HITL state, and conformance tiers. No prompts, outputs, API keys, IPs, or plaintext emails.</div>
+          <div class="hint" style="margin-bottom:11px">When enabled, Pramagent records only hashed visitor ID, provider kind, verdict, HITL state, and trace-control indicators. No prompts, outputs, API keys, IPs, or plaintext emails.</div>
           <div class="lead-grid">
             <input id="leadEmail" type="email" autocomplete="email" placeholder="email for managed pilot (optional)">
             <input id="leadCompany" type="text" autocomplete="organization" placeholder="company or team (optional)">
@@ -361,7 +361,7 @@
     const STAGES = [
       { key: "request",    name: "Request",        note: "Incoming prompt and action", match: null },
       { key: "compliance", name: "ComplianceLayer", note: "Redact PII before the model sees it", match: /compliance|pii/i },
-      { key: "isolation",  name: "IsolationLayer",  note: "Block destructive or out-of-scope actions", match: /isolation/i },
+      { key: "isolation",  name: "IsolationLayer",  note: "Content-boundary and injection checks", match: /isolation/i },
       { key: "safety",     name: "SafetyLayer",     note: "Deterministic block, escalate, or redact", match: /safety(?!.*post)|injection|policy/i },
       { key: "gate",       name: "Model gate",      note: "The provider is called only if the request earns it", gate: true },
       { key: "judge",      name: "OutputJudge",     note: "A second model withholds unsafe output", match: /judge|safety.*post|post/i },

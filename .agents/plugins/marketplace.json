@@ -1,0 +1,20 @@
+{
+  "name": "pramagent-local",
+  "interface": {
+    "displayName": "Pramagent Local"
+  },
+  "plugins": [
+    {
+      "name": "pramagent-guard",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pramagent-guard"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Security"
+    }
+  ]
+}

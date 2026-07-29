@@ -104,9 +104,10 @@ Missing:
 
 ### Conformance vocabulary
 
-Traces carry AWS-style `aws_scope`, response/detection tiers, attack technique
-labels, and seeded conformance metrics. Metrics that depend on a small seeded
-set are named and documented as seeded, not broad production recall.
+Traces carry a self-declared `aws_scope`, trace-local response/detection
+indicators, attack technique labels, and seeded self-assessment metrics.
+Metrics that depend on a small seeded set are named and documented as seeded,
+not broad production recall or system-level conformance.
 
 Missing:
 

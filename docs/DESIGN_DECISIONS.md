@@ -116,7 +116,8 @@ reports require external scope, evidence review, and remediation tracking.
 Project-owned tests are useful evidence but not certification.
 
 **Current control:** Security scans, unit/regression tests, red-team harnesses,
-load evidence, conformance labels, and hash-chain traces are documented.
+load evidence, trace-local self-assessment indicators, and hash-chain traces
+are documented.
 
 **Future gate:** Commission an external API/security assessment and publish a
 remediation summary before making production compliance claims.

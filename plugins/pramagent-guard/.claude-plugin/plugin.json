@@ -1,0 +1,20 @@
+{
+  "name": "pramagent-guard",
+  "version": "0.1.0",
+  "description": "Deterministic tool-call policy enforcement for Claude Code, Codex, and Grok-style coding agents, powered by Pramagent ToolGuard.",
+  "author": {
+    "name": "Sriram Rampelli",
+    "email": "sriramrampelli@gmail.com",
+    "url": "https://github.com/sriram7737"
+  },
+  "homepage": "https://github.com/sriram7737/pramagent/tree/main/plugins/pramagent-guard",
+  "repository": "https://github.com/sriram7737/pramagent",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent-security",
+    "guardrails",
+    "tool-policy",
+    "hooks",
+    "audit"
+  ]
+}

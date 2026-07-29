@@ -47,9 +47,11 @@ The example matcher covers Gemini CLI's built-in local tools:
 
     run_shell_command|write_file|replace|read_file|list_directory|glob|grep_search|search_file_content
 
-For strict fail-closed MCP experiments, change the matcher to a broad
-regular expression such as ".*". With a broad matcher, any unregistered
-tool name is denied by ToolGuardLayer instead of silently passing through.
+For strict fail-closed host-tool experiments, change the matcher to a broad
+regular expression such as ".*". This is not native MCP support; it only means
+Gemini CLI will send more matched tool names through this hook. With a broad
+matcher, any unregistered tool name is denied by ToolGuardLayer instead of
+silently passing through.
 
 ## Current Policy
 

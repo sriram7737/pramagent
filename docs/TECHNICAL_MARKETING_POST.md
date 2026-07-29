@@ -502,13 +502,12 @@ GitHub: https://github.com/sriram7737/pramagent
 
 Feedback welcome from people building production AI agents.
 
-## Rename Bridge Post
+## Internal Legacy-Name Bridge
 
-Use this once, before the main launch, only for people who saw the old package
-name.
+Use this once, before the main launch, only for people who saw the deprecated
+package name. Do not include this in public launch copy.
 
-Quick note: the project I previously published as `veritrace` is now
-**Pramagent**.
+Quick note: the package was renamed to **Pramagent**.
 
 The new package is:
 
@@ -516,7 +515,7 @@ The new package is:
 pip install pramagent
 ```
 
-The old `veritrace` PyPI package has a migration shim that depends on
+The deprecated PyPI package has a migration shim that depends on
 `pramagent>=0.5.0` and warns users to migrate.
 
 New repo:
@@ -680,10 +679,10 @@ generic guardrails:
 Run this before launch posts, release notes, or demo videos:
 
 ```powershell
-cd C:\Users\srira\OneDrive\Desktop\veritrace
+cd <repo-root>
 
-# Legacy-name scan. Expected hits: only migration docs or intentional mentions.
-rg -n "veritrace|Veritrace|VERITRACE" `
+# Legacy-name scan. Expected hits: none in public copy.
+rg -n "<legacy-name>|<LegacyName>|<LEGACY_NAME>" `
   -g "!dist/**" `
   -g "!build/**" `
   -g "!*.egg-info/**" `

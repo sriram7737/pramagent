@@ -21,7 +21,7 @@ Hardening guide: https://github.com/sriram7737/pramagent/blob/main/docs/HARDENIN
 Pramagent wraps LLM agent calls with trust layers that run outside the model:
 
 - ToolGuard: deterministic JSON Schema validation, tenant/action allow-lists, side-effect taxonomy, dangerous-chain detection, and HITL escalation before tools execute.
-- IsolationLayer: tenant/session scoping, prompt-injection heuristics, size caps, and decode-and-scan for base64, hex, and unicode-escape payloads.
+- IsolationLayer: legacy API name for content-boundary checks: tenant/session-scoped memory, prompt-injection heuristics, size caps, and decode-and-scan for base64, hex, and unicode-escape payloads. It is not process, network, credential, file, or tool sandboxing.
 - ComplianceLayer: context-guarded PII redaction for email, SSN, account IDs, routing numbers, DOB, IBAN, MRN, insurance IDs, and NPI.
 - HITLLayer: approve/deny flows where silence is never consent; Slack and persistent queue backends are available.
 - Trace/audit: SHA-256 hash-chained TraceEvent records for tamper-evident decisions.

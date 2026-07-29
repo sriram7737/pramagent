@@ -88,8 +88,9 @@
   plus `overreach_v0` and `evaluate_corpus()` for counts-first baseline
   evaluation.
 - Added opt-in public-demo product signals that record only hashed visitor
-  metadata, provider kind, verdict, HITL state, and conformance tiers; prompts,
-  outputs, provider keys, IP addresses, and plaintext email are not stored.
+  metadata, provider kind, verdict, HITL state, and trace-control indicators;
+  prompts, outputs, provider keys, IP addresses, and plaintext email are not
+  stored.
 - Added a managed-pilot request endpoint for the demo that stores hashed contact
   metadata and a short use-case label.
 - Salted demo signal/contact hashes per process and redacted obvious email/phone
@@ -110,7 +111,8 @@
 - Added `pramagent demo`, a one-command local demo launcher that starts the
   public demo with demo-safe local defaults.
 - Updated the demo UI to surface framework-adapter positioning and
-  DeepMind/AWS-style conformance fields next to the hash-chain evidence.
+  trace-local DeepMind/AWS-style self-assessment indicators next to the
+  hash-chain evidence.
 - Bounded Ollama generation with `num_predict`, configurable timeout/max-token
   knobs, and actionable Ollama HTTP/error/non-JSON messages.
 - Made missing Anthropic optional dependency errors point to
@@ -131,7 +133,8 @@
 
 ### Added
 
-- Added DeepMind/AWS-style conformance labels to every finalized trace:
+- Added trace-local DeepMind/AWS-style self-assessment indicators to every
+  finalized trace:
   `aws_scope`, `detection_tier`, `response_tier`, `attack_techniques`, and
   `conformance_metrics`.
 - Added `AgentScope` plus `Pramagent(agent_scope=...)` / `PRAMAGENT_AGENT_SCOPE`

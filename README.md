@@ -21,8 +21,8 @@ most differentiated layer is ToolGuard: deterministic tool validation with JSON
 Schema, tenant/action allow-lists, side-effect taxonomy, dangerous-chain
 detection, output scanning, and HITL escalation. The current package also
 ships curated safety rule corpora, persistent HITL queues, thin adapters for
-popular agent frameworks, compliance evidence generation, and
-DeepMind/AWS-style conformance labels on every trace. It also includes an
+popular agent frameworks, compliance evidence generation, and trace-local
+self-assessed control indicators mapped to DeepMind/AWS-style vocabulary. It also includes an
 optional agent-memory integrity contract, structured decision-rationale schema,
 and a human-labeled overreach corpus for measuring valid-goal overreach.
 
@@ -74,7 +74,7 @@ or third-party-validated safety from the bundled benchmarks alone. Read
 before using it in a customer-facing pilot.
 The June 11 active security prompt results are tracked in
 [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md).
-The DeepMind/AWS agent-security mapping is tracked in
+The self-assessed DeepMind/AWS agent-security mapping is tracked in
 [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md).
 Deferred controls and the reasoning behind them are tracked in
 [Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md).
@@ -117,7 +117,7 @@ async def main():
     resp = await Pramagent().run("Summarize this request", tenant_id="demo", session_id="s1")
     print(resp.output)
 print(resp.trace.this_hash)
-print(resp.trace.detection_tier, resp.trace.response_tier)
+print(resp.trace.detection_tier, resp.trace.response_tier)  # trace-local indicators
 
 asyncio.run(main())
 ```
@@ -156,8 +156,10 @@ Every Pramagent call produces a hash-chained `TraceEvent` with layer decisions,
 verdicts, provider metadata, PII redactions, HITL status, and `this_hash` /
 `prev_hash`. New traces also include `aws_scope`, `detection_tier`,
 `response_tier`, `attack_techniques`, and `conformance_metrics` so the same
-evidence can be read through DeepMind/AWS agent-security vocabulary. The local
-chain can be verified and optionally anchored externally.
+evidence can be read through DeepMind/AWS-style agent-security vocabulary. These
+fields are trace-local self-assessment metadata, not system-level conformance
+or certification claims. The local chain can be verified and optionally anchored
+externally.
 
 **How do I declare AWS agent autonomy scope?**
 Pass `agent_scope="scope_1"`, `"scope_2"`, or `"scope_3"` to `Pramagent`, or
@@ -167,7 +169,9 @@ was accidentally configured as `ALLOW`. Scope 3 records bounded-autonomy intent
 and relies on your configured ToolGuard/HITL/rate-limit policies.
 
 **How do I prevent prompt injection in a Python LLM agent?**  
-`IsolationLayer` scans inputs before the model sees them. It covers known
+`IsolationLayer` is a content-boundary layer: it scans inputs before the model
+sees them, enforces size caps, and scopes optional memory by tenant/session. It
+does not sandbox processes, networks, credentials, tools, or files. It covers known
 instruction overrides, chat-template wrapper attacks, authority framing,
 base64/hex/unicode-escape encoded payloads, and targeted multilingual override
 phrases. v0.8.0 adds structured classifier verdicts, held-out PINT/TensorTrust
@@ -276,12 +280,12 @@ Gemini key for `gemini-2.5-flash`. Pramagent uses that key only for the current
 provider call; it is not written to traces, logs, stores, usage records, or the
 hash-chain payload. Each demo run uses an isolated in-memory trace store and
 returns the output, trust-layer events, redactions, HITL state, latency,
-DeepMind/AWS-style conformance fields, `this_hash`, `prev_hash`, and local
-chain verification.
+self-assessed trace-control fields, `this_hash`, `prev_hash`, and local chain
+verification.
 
 The demo also includes optional product signals. If a visitor checks the
 anonymous usage box, Pramagent records only a process-salted hashed visitor ID,
-provider kind, verdict, HITL state, and conformance tiers. It never records
+provider kind, verdict, HITL state, and trace-control indicators. It never records
 prompts, outputs, provider keys, IP addresses, or plaintext email. The
 managed-pilot form stores salted contact hashes plus a short use-case label
 with obvious email/phone values redacted, so demand can show up as data without
@@ -561,6 +565,20 @@ Generic helpers are also available:
 ```python
 from pramagent.adapters import protect, protect_tool
 ```
+
+## Coding-Agent Hooks
+
+Pramagent also ships a publishable hook plugin for coding agents:
+
+- Claude Code `PreToolUse`
+- Codex plugin hooks
+- Grok Build / xAI plugin hooks
+- any host that can emit Claude-style pre-tool-call JSON on stdin
+
+The plugin lives in `plugins/pramagent-guard/`, with publishing notes in
+[`docs/AGENT_HOOK_PUBLISHING.md`](docs/AGENT_HOOK_PUBLISHING.md). It is not an
+MCP server/client/proxy; it is a host-agent lifecycle hook that evaluates
+proposed tool calls before execution.
 
 ## Compliance Evidence
 

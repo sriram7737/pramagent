@@ -89,9 +89,10 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - PII scrubbing (context-guarded patterns, bounded email handler, and
   pre-scrub input-size cap)
 - Deterministic safety rule engine (pre/post, precedence veto)
-- Isolation heuristics + size caps + tenant/session-scoped memory, including
+- Content-boundary checks (`IsolationLayer` API name) with injection heuristics,
+  size caps, and tenant/session-scoped memory, including
   decoded-base64 scanning, authority-framing patterns, and indirection-wrapper
-  patterns
+  patterns. This is not process, network, credential, file, or tool sandboxing.
 - Structured prompt-injection classifier verdicts (`InjectionVerdict`) with
   layer, score, threshold, matched exemplar/pattern, and traceable details;
   optional cached embedding and DeBERTa ensemble layers under `pramagent[ml]`;
@@ -102,13 +103,15 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   detection, Redis/back-end-backed side-effect history and session call counters,
   per-tenant/action allow-lists, decision recorded in the trace,
   **LLM-as-judge** tightening hook
-- **DeepMind/AWS conformance labels** on every finalized trace:
+- **Trace-local DeepMind/AWS-style self-assessment indicators** on every finalized trace:
   `aws_scope`, `detection_tier`, `response_tier`, `attack_techniques`, and
   `conformance_metrics`. `Pramagent(agent_scope="scope_1"|"scope_2"|"scope_3")`
   declares AWS autonomy scope; Scope 1 blocks non-read side effects, and Scope 2
   requires HITL for non-read tools even when a policy is accidentally configured
   as `ALLOW`. The API reference deployment declares Scope 2 by default through
-  `PRAMAGENT_AGENT_SCOPE=scope_2`.
+  `PRAMAGENT_AGENT_SCOPE=scope_2`. These fields describe one Pramagent call and
+  must not be presented as system-level conformance, certification, or external
+  validation.
 - **OutputJudgeLayer** — LLM-as-judge on the model OUTPUT, wired into the
   pipeline between output validation and the HITL gate. This is the "is the
   OUTPUT safe?" check that deterministic rules cannot give: it catches semantic
@@ -155,11 +158,12 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Public `/demo` front door: enabled by default unless explicitly disabled,
   zero-config financial HITL scenario using the deterministic mock provider,
   optional BYO provider keys for live OpenAI/Gemini/NVIDIA calls, visible
-  DeepMind/AWS-style trace labels, framework-adapter positioning, hash-chain
-  verification, privacy-preserving opt-in usage signals, and a salted-hash
-  managed-pilot request form. Demo signals do not store prompts, outputs,
-  provider keys, IP addresses, or plaintext email; managed-pilot use-case
-  labels redact obvious email/phone values.
+  DeepMind/AWS-style trace-local self-assessment indicators,
+  framework-adapter positioning, hash-chain verification,
+  privacy-preserving opt-in usage signals, and a salted-hash managed-pilot
+  request form. Demo signals do not store prompts, outputs, provider keys, IP
+  addresses, or plaintext email; managed-pilot use-case labels redact obvious
+  email/phone values.
 - `pramagent demo` CLI starts the public demo with demo-safe local defaults so
   a new evaluator can reach the financial HITL trace in one command.
 - Dashboard usage page, Redis-backed dashboard rate limiting with local
@@ -172,9 +176,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Seeded red-team recall reporting via `RedTeamReport.seeded_recall`; runtime
   traces intentionally mark `seeded_recall` as unavailable because live traffic
   is unlabeled.
-- Runtime trace conformance metrics use `trace_layer_coverage`, scoped to one
+- Runtime trace-control metrics use `trace_layer_coverage`, scoped to one
   trace's required local trust layers. This is not a fleet-level monitoring
-  coverage claim.
+  coverage or system-level conformance claim.
 - Agent memory integrity contract: `AgentMemoryStore` plus
   `IntegrityMemoryStore` with in-memory and SQLite backends. Reads verify the
   stored hash lineage; callers can pass an externally held `expected_head` to
@@ -253,9 +257,9 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   testing
 - RCA for complex branching agents — graph support added; heuristic, not a solver
 - OTel tracing — spans emitted; Grafana dashboards are provided as config, not battle-tested
-- Conformance map: `docs/CONFORMANCE.md` maps current controls to DeepMind
-  individual-agent security tiers and AWS Scopes 1-3. It is self-assessment
-  evidence, not external validation.
+- Self-assessment map: `docs/CONFORMANCE.md` maps current controls to
+  DeepMind individual-agent security tiers and AWS Scopes 1-3. It is
+  engineering evidence, not external validation.
 - Agent memory integrity: in-memory and SQLite backends exist, but Redis,
   Postgres, vector-store adapters, and automatic framework memory routing are
   not implemented. It detects mutation, not poisoned-but-valid writes.
@@ -403,7 +407,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   hardening raised it to **657 passed, 2 skipped**; v0.8.0 classifier
   hardening raised it to **661 passed, 2 skipped**; the dashboard evidence and
   metric hardening pass raised it to **673 passed, 2 skipped**; the v0.8.4
-  conformance-label release raised it to **684 passed, 2 skipped**; the
+  trace-control indicator release raised it to **684 passed, 2 skipped**; the
   v0.8.5 memory/rationale/overreach corpus, YC-readiness demo/onboarding, and
   live-provider/Ollama RCA pass raised it to **720 passed, 2 skipped**.
 
@@ -444,7 +448,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   `PRAMAGENT_DEMO_SIGNALS_POSTGRES_DSN` plus `PRAMAGENT_DEMO_SIGNAL_SALT` to
   persist repeat-visitor and managed-pilot hashes across restarts. The stored
   fields remain hashed/scrubbed only: provider kind, verdict, HITL state,
-  conformance tiers, and redacted use-case labels; no prompts, outputs, keys,
+  trace-control indicators, and redacted use-case labels; no prompts, outputs, keys,
   IPs, or plaintext contacts are collected.
 - Local verification: **568 passed, 1 skipped**; Bandit returned no findings.
 

@@ -11,7 +11,7 @@ Layers shipped here:
     ReliabilityLayer   - semaphore-bounded concurrency + timeout + circuit breaker
     HITLLayer          - propose-and-wait gateway; idle on silence
     ToolGuardLayer     - deterministic pre-execution tool-call policy checks
-    IsolationLayer     - tenant-scoped memory + injection heuristics + size limits
+    IsolationLayer     - content-boundary checks: scoped memory + injection heuristics + size limits
                          (see pramagent.layers.isolation)
     ObservabilityLayer - call counters, block rate, p50/p95 latency
                          (see pramagent.layers.observability)

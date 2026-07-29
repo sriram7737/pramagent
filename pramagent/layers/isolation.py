@@ -1,7 +1,8 @@
 """
 pramagent.layers.isolation
 ==========================
-Real isolation primitives. Three defenses:
+Content-boundary checks historically exposed as ``IsolationLayer``. Three
+defenses:
 
   1. Tenant-scoped memory backed by an AbstractBackend (in-process default,
      Redis for multi-worker deployments). Writing to tenant A does not bleed
@@ -19,6 +20,9 @@ Real isolation primitives. Three defenses:
 
 What this layer does NOT claim to do
 -------------------------------------
+Despite the legacy class name, this is not process, network, credential, file,
+or tool sandbox isolation. It does not create a container, microVM, syscall
+filter, egress firewall, credential boundary, or OS-level execution boundary.
 It does not defend against a determined attacker with novel injection prompts.
 Real defense requires fine-tuned classifiers, provenance tracking on tool
 outputs, and runtime constraints on the model action space.
@@ -250,7 +254,11 @@ _UNICODE_ESCAPE_RUN = re.compile(r"(?:\\u[0-9a-fA-F]{4}){4,}")
 
 class IsolationLayer:
     """
-    Tenant-scoped memory + injection heuristics + size limits.
+    Content-boundary checks: scoped memory + injection heuristics + size limits.
+
+    The public API name remains ``IsolationLayer`` for backwards
+    compatibility. Treat it as a content/input trust boundary, not as host,
+    process, network, credential, file, or tool sandboxing.
 
     Configuration
     -------------
