@@ -109,6 +109,20 @@ required.
 pip install pramagent
 ```
 
+### Google Gemini Cookbook Version Pin
+
+The merged Google Gemini Cookbook recipe is pinned to `pramagent==0.8.5` for
+reproducibility. That notebook should keep using the stable `0.8.5` baseline
+even as newer Pramagent releases ship additional hardening and coding-agent hook
+support. For the latest package in new projects, install or upgrade normally:
+
+```bash
+pip install -U pramagent
+```
+
+Only update the Cookbook pin for a security fix, a breakage fix, or a
+substantial recipe revision.
+
 ```python
 import asyncio
 from pramagent import Pramagent

@@ -68,6 +68,9 @@
 - Dashboard session cookies default to `secure=true` (was `false`).
 - Demo endpoints (`/demo/run`, `/demo/request-access`) validate request
   bodies through Pydantic models instead of hand-rolled dict checks.
+- README documents that the merged Google Gemini Cookbook recipe is pinned to
+  `pramagent==0.8.5` for reproducibility, while new projects should install or
+  upgrade to the latest release.
 
 ### Fixed
 
