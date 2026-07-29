@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.8.6 - 2026-07-29
+
 ### Added
 
 - Row-level tenant isolation on `pramagent_traces` is applied by default DDL
