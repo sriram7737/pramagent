@@ -4,11 +4,20 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/pramagent.svg)](https://pypi.org/project/pramagent/)
 [![License](https://img.shields.io/pypi/l/pramagent.svg)](https://github.com/sriram7737/pramagent/blob/main/LICENSE)
 [![CI](https://github.com/sriram7737/pramagent/actions/workflows/tests.yml/badge.svg)](https://github.com/sriram7737/pramagent/actions/workflows/tests.yml)
+[![Google Gemini Cookbook](https://img.shields.io/badge/Google%20Gemini%20Cookbook-merged-4285F4)](https://github.com/google-gemini/cookbook/blob/main/examples/Pramagent_trust_layer_for_gemini.ipynb)
 
 Trust middleware for LLM agents: deterministic tool policy, HITL approvals,
 and tamper-evident audit traces. **Alpha** - read the
 [implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
 before customer-facing pilots.
+
+Pramagent is listed in the
+[Google Gemini Cookbook examples index](https://github.com/google-gemini/cookbook/blob/main/examples/README.md)
+and included as the
+[Pramagent trust layer for Gemini agents notebook](https://github.com/google-gemini/cookbook/blob/main/examples/Pramagent_trust_layer_for_gemini.ipynb).
+The contribution was merged in
+[google-gemini/cookbook#1269](https://github.com/google-gemini/cookbook/pull/1269)
+on July 29, 2026.
 
 The wedge is narrow by design: Pramagent does not prevent your model from being
 wrong; it prevents your model from doing damage when it is wrong.
@@ -109,12 +118,16 @@ required.
 pip install pramagent
 ```
 
-### Google Gemini Cookbook Version Pin
+### Google Gemini Cookbook Recipe
 
-The merged Google Gemini Cookbook recipe is pinned to `pramagent==0.8.5` for
-reproducibility. That notebook should keep using the stable `0.8.5` baseline
-even as newer Pramagent releases ship additional hardening and coding-agent hook
-support. For the latest package in new projects, install or upgrade normally:
+The merged recipe appears in the
+[Google Gemini Cookbook examples index](https://github.com/google-gemini/cookbook/blob/main/examples/README.md)
+as "Pramagent trust layer for Gemini agents" and links to the direct
+[notebook in `examples/`](https://github.com/google-gemini/cookbook/blob/main/examples/Pramagent_trust_layer_for_gemini.ipynb).
+It is pinned to `pramagent==0.8.5` for reproducibility. That notebook should
+keep using the stable `0.8.5` baseline even as newer Pramagent releases ship
+additional hardening and coding-agent hook support. For the latest package in
+new projects, install or upgrade normally:
 
 ```bash
 pip install -U pramagent
