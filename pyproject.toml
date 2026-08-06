@@ -108,7 +108,7 @@ include-package-data = true
 "pramagent.api" = ["demo_page.html", "demo_signals_admin.html"]
 
 [tool.setuptools.data-files]
-"share/pramagent" = ["README.md", "CHANGELOG.md", "llms.txt", "pramagent_full_audit.md", "pramagent_security_test_results.md"]
+"share/pramagent" = ["README.md", "CHANGELOG.md", "llms.txt"]
 "share/pramagent/docs" = [
     "docs/IMPLEMENTATION_STATUS.md",
     "docs/HARDENING_GUIDE.md",
@@ -132,6 +132,11 @@ include-package-data = true
     "docs/TECHNICAL_MARKETING_POST.md",
     "docs/SECURITY_SCAN_REPORT_2026-06-07.md",
     "docs/quickstart-terminal.png",
+]
+"share/pramagent/docs/audits" = [
+    "docs/audits/pramagent_enterprise_audit.md",
+    "docs/audits/pramagent_full_audit.md",
+    "docs/audits/pramagent_security_test_results.md",
 ]
 "share/pramagent/corpus/overreach" = [
     "corpus/overreach/README.md",

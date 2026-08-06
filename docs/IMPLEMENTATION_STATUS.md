@@ -55,7 +55,7 @@ classifier or output-judge misses in the bundled suite.
 
 Additional release harnesses:
 
-- `python test_agent_v2.py --mock --api-url http://127.0.0.1:8010 --report test-results/test_agent_v2_full.json`
+- `python scripts/test_agent_v2.py --mock --api-url http://127.0.0.1:8010 --report test-results/test_agent_v2_full.json`
   -> **57/57 passing** across load, multi-tenant isolation, API/HTTP, and
   regression suites.
 - `python examples/dynamic_feed_agent.py --provider mock --reset-db` ->
@@ -469,7 +469,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   and safety classifiers for its broader corpus, while the API pipeline keeps
   weapon-construction blocking in `SafetyLayer` rather than `IsolationLayer`.
 - Local verification after remediation: **558 passed, 1 skipped**.
-- Full evidence is in `pramagent_security_test_results.md`.
+- Full evidence is in `docs/audits/pramagent_security_test_results.md`.
 
 2026-06-11 v0.7.2 CI/dependency cleanup:
 
@@ -496,7 +496,7 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
 - Added regression coverage for threaded chain writers, Postgres tamper
   detection, fallback providers, weak-secret startup refusal, tenant-scoped
   traces, and remediation-specific deployment/security behavior.
-- Remaining deferred items are documented in `pramagent_full_audit.md`:
+- Remaining deferred items are documented in `docs/audits/pramagent_full_audit.md`:
   keyset pagination, Redis quota Lua, chain verification watermark,
   Prometheus-specific metrics, `jti` denylist, dependency lockfile/SBOM, CI SHA
   pinning, and organizational artifacts such as breach runbook, DPA, and VDP.

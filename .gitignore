@@ -64,5 +64,10 @@ pramagent.egg-info/
 /assets/
 /*.png
 /*.docx
+/*.drawio
+/design_preview.html
+/pramagent-architecture.*
+/design/_rendered_overview_preview.html
+/docs/PRAMAGENT_BLOG_AND_SOCIAL_POSTING_KIT.*
 /pramagent_review.md
 /pramagent_security_assessment.md

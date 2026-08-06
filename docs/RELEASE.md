@@ -10,7 +10,7 @@ python -m pip install -e ".[dev,api,redis,postgres,dashboard]"
 pramagent --help
 python -m compileall -q pramagent tests
 python -m pytest -q --tb=no
-python test_agent_v2.py --mock --suite load tenant regression --report test-results/test_agent_v2_mock.json
+python scripts/test_agent_v2.py --mock --suite load tenant regression --report test-results/test_agent_v2_mock.json
 python examples/dynamic_feed_agent.py --provider mock --reset-db --report test-results/dynamic_feed_agent_mock.json
 python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
@@ -121,9 +121,9 @@ Create a GitHub Release from tag `v0.8.6` and include:
   reference `/v1/run` opt-in via `PRAMAGENT_OUTPUT_JUDGE=1`
 - Security prompt remediation result: `SEC-2026-06-11-01` and
   `SEC-2026-06-11-02` closed in commits `085c7b4` and `e8392aa`; evidence in
-  `pramagent_security_test_results.md`
+  `docs/audits/pramagent_security_test_results.md`
 - Enterprise audit remediation result: 2 P0, 10 P1, 18 P2, and 20 P3 findings
-  closed or explicitly deferred with reasons in `pramagent_full_audit.md`
+  closed or explicitly deferred with reasons in `docs/audits/pramagent_full_audit.md`
 - Rule corpus result: 129 importable deterministic rules
 - Persistent HITL queue result: in-memory/SQLite/Postgres backends packaged
 - Framework adapters result: LangGraph, AutoGen, CrewAI, and generic helpers packaged

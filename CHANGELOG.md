@@ -474,7 +474,7 @@
 
 ### Documentation
 
-- Added `pramagent_security_test_results.md` with the June 11 active security
+- Added `docs/audits/pramagent_security_test_results.md` with the June 11 active security
   prompt results and remediation status.
 - Refreshed README, implementation status, live test results, red-team results,
   release checklist, deployment examples, and full-audit notes for v0.7.3.
@@ -741,7 +741,7 @@ miss found by that harness.
 
 ### Added
 
-- `test_agent_v2.py`, a standalone release harness covering load,
+- `scripts/test_agent_v2.py`, a standalone release harness covering load,
   multi-tenant isolation, API/HTTP behavior, and regression checks.
 - `examples/dynamic_feed_agent.py`, a dynamic workflow agent that generates
   fresh invoices, support notes, retrieved tool output, and adversarial feed
@@ -758,7 +758,7 @@ miss found by that harness.
 ### Verified
 
 - `python -m pytest -q --tb=short` -> `402 passed, 2 warnings`.
-- `test_agent_v2.py` full run -> `57/57 passed`.
+- `scripts/test_agent_v2.py` full run -> `57/57 passed`.
 - Dynamic feed agent with mock provider -> `8/8 passed`, hash chain valid.
 - Dynamic feed agent with local Ollama `qwen2.5:1.5b` -> `8/8 passed`,
   hash chain valid.
@@ -774,7 +774,7 @@ model workflow testing.
   configuration. Existing callers keep the previous behavior by default, while
   production workflows can use strict input screening and narrower output
   screening.
-- `test_agent.py` now treats `[output withheld by safety rule]` as a failure
+- `scripts/test_agent.py` now treats `[output withheld by safety rule]` as a failure
   for non-blocked cases, preventing silent post-safety false positives from
   passing live workflow reports.
 

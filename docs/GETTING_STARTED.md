@@ -374,7 +374,7 @@ python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 ```
 
 - Read `docs/IMPLEMENTATION_STATUS.md`, `docs/HARDENING_GUIDE.md`, and
-  `pramagent_security_test_results.md`.
+  `docs/audits/pramagent_security_test_results.md`.
 
 ## 10. What To Build Next
 

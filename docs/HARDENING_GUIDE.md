@@ -13,7 +13,7 @@ controls, and third-party validation.
   - Isolation decodes printable base64-looking tokens before heuristic scans.
   - Authority-framing and translation/indirection wrapper probes are now in the
     deterministic isolation coverage and red-team corpus.
-  - Evidence is tracked in `pramagent_security_test_results.md`.
+  - Evidence is tracked in `docs/audits/pramagent_security_test_results.md`.
 - Curated deterministic rule corpora under `pramagent.rules` for jailbreaks,
   OWASP LLM risks, injection payloads, fictional-wrapper bypasses, PHI, and
   financial PII.

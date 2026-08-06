@@ -2,7 +2,7 @@
 
 **Reviewer:** Principal Engineer, line-level review
 **Date:** 2026-06-10
-**Scope:** every `.py` file in `pramagent/`, `deploy/`, `tests/`; `Dockerfile`, `docker-compose.yml`, Helm chart, `.env.example`; ground truth `docs/Pramagent-Design-Document.docx` and `pramagent_full_audit.md`
+**Scope:** every `.py` file in `pramagent/`, `deploy/`, `tests/`; `Dockerfile`, `docker-compose.yml`, Helm chart, `.env.example`; ground truth `docs/Pramagent-Design-Document.docx` and `docs/audits/pramagent_full_audit.md`
 **Baseline:** post-remediation `main` (commits `f50cfc4`…`de729b1`), suite 505 passed / 1 skipped
 
 > Severity scale: **P0** blocks deploy · **P1** fix before GA · **P2** fix before scale · **P3** hygiene.

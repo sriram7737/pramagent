@@ -84,7 +84,7 @@ Result: **passed after remediation**
 Report:
 
 ```text
-pramagent_security_test_results.md
+docs/audits/pramagent_security_test_results.md
 ```
 
 Summary:
@@ -166,7 +166,7 @@ tenant
 
 Result: **passed for deterministic built-in corpus**
 
-The local `test_agent.py` harness now stores exact generated prompts, output
+The local `scripts/test_agent.py` harness now stores exact generated prompts, output
 previews, and trace summaries in JSON reports. During v0.5.8 hardening, OpenAI
 generated several fresh failures against the Ollama-backed workflow. Those
 classes were promoted into the classifier, isolation heuristics, red-team
@@ -181,7 +181,7 @@ corpus, unit tests, and built-in harness cases:
 Deterministic harness command:
 
 ```text
-python test_agent.py --mock --no-ai-prompts --report test-results/test_agent_mock.json
+python scripts/test_agent.py --mock --no-ai-prompts --report test-results/test_agent_mock.json
 ```
 
 ```text
@@ -191,7 +191,7 @@ python test_agent.py --mock --no-ai-prompts --report test-results/test_agent_moc
 Post-safety false-positive regression:
 
 ```text
-python test_agent.py --ollama-model qwen2.5:1.5b --no-ai-prompts --report test-results/test_agent_ollama_qwen.json
+python scripts/test_agent.py --ollama-model qwen2.5:1.5b --no-ai-prompts --report test-results/test_agent_ollama_qwen.json
 ```
 
 ```text

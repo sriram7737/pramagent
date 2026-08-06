@@ -724,7 +724,7 @@ are both closed in v0.7.1.
 
 Date: 2026-06-11
 
-The active security prompt recorded in `pramagent_security_test_results.md`
+The active security prompt recorded in `docs/audits/pramagent_security_test_results.md`
 found no Critical or High auth, tenant-isolation, HITL, or audit-chain bypasses.
 It did find two Medium issues, both now closed:
 

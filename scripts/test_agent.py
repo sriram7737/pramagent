@@ -18,25 +18,25 @@ Four test suites:
 
 Usage:
   # Basic run (needs OPENAI_API_KEY env var, Ollama running on :11434)
-  python test_agent.py
+  python scripts/test_agent.py
 
   # Use a different Ollama model
-  python test_agent.py --ollama-model mistral
+  python scripts/test_agent.py --ollama-model mistral
 
   # Only run specific suites
-  python test_agent.py --suites toolguard compliance
+  python scripts/test_agent.py --suites toolguard compliance
 
   # Skip OpenAI-generated prompts (built-in set only)
-  python test_agent.py --no-ai-prompts
+  python scripts/test_agent.py --no-ai-prompts
 
   # Verbose -- print full traces for every test
-  python test_agent.py --verbose
+  python scripts/test_agent.py --verbose
 
   # Dry-run with MockProvider (no Ollama or OpenAI needed)
-  python test_agent.py --mock
+  python scripts/test_agent.py --mock
 
   # Save a JSON report
-  python test_agent.py --report report.json
+  python scripts/test_agent.py --report report.json
 """
 
 import argparse

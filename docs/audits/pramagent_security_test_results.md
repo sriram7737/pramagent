@@ -12,7 +12,7 @@ penetration test, formal certification, or production readiness attestation.
 - Remediated release version: `0.7.3`
 - Primary docs reviewed:
   - `docs/Pramagent-Design-Document.docx`
-  - `pramagent_full_audit.md`
+  - `docs/audits/pramagent_full_audit.md`
   - v0.7.1 and v0.7.3 remediation status in the audit document
 - Production code changes during the initial test pass: none; remediation
   changes are captured below and included in release `0.7.3`

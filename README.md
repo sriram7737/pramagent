@@ -1,7 +1,7 @@
 # Pramagent
 
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/pramagent?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/pramagent)
 [![PyPI version](https://img.shields.io/pypi/v/pramagent.svg)](https://pypi.org/project/pramagent/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/pramagent?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/pramagent)
 [![Python versions](https://img.shields.io/pypi/pyversions/pramagent.svg)](https://pypi.org/project/pramagent/)
 [![License](https://img.shields.io/pypi/l/pramagent.svg)](https://github.com/sriram7737/pramagent/blob/main/LICENSE)
 [![CI](https://github.com/sriram7737/pramagent/actions/workflows/tests.yml/badge.svg)](https://github.com/sriram7737/pramagent/actions/workflows/tests.yml)
@@ -64,8 +64,8 @@ three prior engineering audits whose release-blocking findings are remediated
 and verified in the current source. Those audit reports are kept in the repo
 **with remediation banners** so you can read both the original findings and
 their fixes — see
-[Full audit](https://github.com/sriram7737/pramagent/blob/main/pramagent_full_audit.md)
-and [Enterprise review](https://github.com/sriram7737/pramagent/blob/main/pramagent_enterprise_audit.md).
+[Full audit](https://github.com/sriram7737/pramagent/blob/main/docs/audits/pramagent_full_audit.md)
+and [Enterprise review](https://github.com/sriram7737/pramagent/blob/main/docs/audits/pramagent_enterprise_audit.md).
 
 ## Alpha Maturity Notice
 
@@ -83,7 +83,7 @@ or third-party-validated safety from the bundled benchmarks alone. Read
 [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
 before using it in a customer-facing pilot.
 The June 11 active security prompt results are tracked in
-[Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md).
+[Security test results](https://github.com/sriram7737/pramagent/blob/main/docs/audits/pramagent_security_test_results.md).
 The self-assessed DeepMind/AWS agent-security mapping is tracked in
 [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md).
 Deferred controls and the reasoning behind them are tracked in
@@ -764,7 +764,7 @@ metrics, and per-tenant usage.
 - [Incident-response runbook](https://github.com/sriram7737/pramagent/blob/main/docs/INCIDENT_RESPONSE_RUNBOOK.md) — key/credential compromise, audit-chain tamper response, and the security CLI: `pramagent auth-revoke` (revoke a leaked API key), `pramagent audit-verify-watch` (automated tamper detection), `pramagent audit-export` (export a tenant's trace rows)
 - [Google Dev Library submission draft](https://github.com/sriram7737/pramagent/blob/main/docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md)
 - [Cookbook submission plan](https://github.com/sriram7737/pramagent/blob/main/docs/COOKBOOK_SUBMISSIONS.md)
-- [Security test results](https://github.com/sriram7737/pramagent/blob/main/pramagent_security_test_results.md)
+- [Security test results](https://github.com/sriram7737/pramagent/blob/main/docs/audits/pramagent_security_test_results.md)
 - [More documentation](https://github.com/sriram7737/pramagent/tree/main/docs)
 
 ## Author

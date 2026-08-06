@@ -14,19 +14,19 @@ Four specialist suites that go deeper than v1's layer-by-layer tests.
 
 Usage:
   # Full run (all four suites, mock provider, no external deps)
-  python test_agent_v2.py --mock
+  python scripts/test_agent_v2.py --mock
 
   # API suite only - needs the FastAPI server running
-  python test_agent_v2.py --suite api --api-url http://localhost:8000
+  python scripts/test_agent_v2.py --suite api --api-url http://localhost:8000
 
   # Load suite with Ollama backend
-  python test_agent_v2.py --suite load --ollama-model llama3.2:1b
+  python scripts/test_agent_v2.py --suite load --ollama-model llama3.2:1b
 
   # Regression: compare today's run against yesterday's report
-  python test_agent_v2.py --mock --report today.json --baseline yesterday.json
+  python scripts/test_agent_v2.py --mock --report today.json --baseline yesterday.json
 
   # Run all four and save a report
-  python test_agent_v2.py --mock --report report_v2.json
+  python scripts/test_agent_v2.py --mock --report report_v2.json
 """
 
 import argparse
