@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v0.8.7 - 2026-08-12
+
+### Added
+
+- LangGraph integration guide with deterministic Pramagent tool-policy checks.
+- README visibility for merged Google Gemini Cookbook and LangChain docs
+  examples, while keeping the Google notebook pinned to `pramagent==0.8.5`.
+
+### Changed
+
+- Cleaned public repository layout by moving audit reports and scratch agent
+  scripts out of the root into `docs/audits/` and `scripts/`.
+
 ## v0.8.6 - 2026-07-29
 
 ### Added

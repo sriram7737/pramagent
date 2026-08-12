@@ -1,10 +1,11 @@
 include README.md
 include CHANGELOG.md
 include llms.txt
-include pramagent_full_audit.md
-include pramagent_security_test_results.md
-include test_agent.py
-include test_agent_v2.py
+include docs/audits/pramagent_enterprise_audit.md
+include docs/audits/pramagent_full_audit.md
+include docs/audits/pramagent_security_test_results.md
+include scripts/test_agent.py
+include scripts/test_agent_v2.py
 include examples/demo.py
 include examples/dynamic_feed_agent.py
 include examples/live_payment_agent.py
@@ -31,6 +32,7 @@ include docs/SECURITY_AUDIT_PROMPT.md
 include docs/INDEXING_AND_DISCOVERY.md
 include docs/SECURITY_SCAN_REPORT_2026-06-07.md
 include docs/TECHNICAL_MARKETING_POST.md
+include docs/integrations/langgraph.md
 include corpus/overreach/README.md
 include corpus/overreach/cases.jsonl
 include requirements-security.txt
