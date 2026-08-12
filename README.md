@@ -6,6 +6,7 @@
 [![License](https://img.shields.io/pypi/l/pramagent.svg)](https://github.com/sriram7737/pramagent/blob/main/LICENSE)
 [![CI](https://github.com/sriram7737/pramagent/actions/workflows/tests.yml/badge.svg)](https://github.com/sriram7737/pramagent/actions/workflows/tests.yml)
 [![Google Gemini Cookbook](https://img.shields.io/badge/Google%20Gemini%20Cookbook-merged-4285F4)](https://github.com/google-gemini/cookbook/blob/main/examples/Pramagent_trust_layer_for_gemini.ipynb)
+[![LangChain Docs](https://img.shields.io/badge/LangChain%20Docs-merged-1C3C3C)](https://github.com/langchain-ai/docs/pull/4806)
 
 Trust middleware for LLM agents: deterministic tool policy, HITL approvals,
 and tamper-evident audit traces. **Alpha** - read the
