@@ -21,6 +21,13 @@ The contribution was merged in
 [google-gemini/cookbook#1269](https://github.com/google-gemini/cookbook/pull/1269)
 on July 29, 2026.
 
+Pramagent is also listed in the
+[LangChain docs integrations index](https://github.com/langchain-ai/docs/blob/main/src/oss/python/integrations/providers/all_providers.mdx)
+as an external `ToolGuardLayer` integration for LangGraph tool calls. The
+contribution was merged in
+[langchain-ai/docs#4806](https://github.com/langchain-ai/docs/pull/4806)
+on August 11, 2026.
+
 The wedge is narrow by design: Pramagent does not prevent your model from being
 wrong; it prevents your model from doing damage when it is wrong.
 
