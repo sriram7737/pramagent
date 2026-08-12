@@ -131,6 +131,7 @@ include-package-data = true
     "docs/INDEXING_AND_DISCOVERY.md",
     "docs/TECHNICAL_MARKETING_POST.md",
     "docs/SECURITY_SCAN_REPORT_2026-06-07.md",
+    "docs/integrations/langgraph.md",
     "docs/quickstart-terminal.png",
 ]
 "share/pramagent/docs/audits" = [

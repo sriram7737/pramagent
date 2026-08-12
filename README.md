@@ -594,6 +594,15 @@ Generic helpers are also available:
 from pramagent.adapters import protect, protect_tool
 ```
 
+## Integration Listings
+
+Pramagent is listed in external ecosystem docs as a trust layer for agent tool
+calls:
+
+- [Google Gemini Cookbook recipe](https://github.com/google-gemini/cookbook/blob/main/examples/Pramagent_trust_layer_for_gemini.ipynb) - Gemini agent trust-layer notebook merged in `google-gemini/cookbook#1269`.
+- [LangChain/LangGraph integration guide](https://github.com/sriram7737/pramagent/blob/main/docs/integrations/langgraph.md) - deterministic `ToolGuardLayer` checks before LangGraph tool execution.
+- [LangChain docs integration listing](https://github.com/langchain-ai/docs/pull/4806) - merged external listing for `ToolGuardLayer` and `pramagent`.
+
 ## Coding-Agent Hooks
 
 Pramagent also ships a publishable hook plugin for coding agents:
@@ -755,6 +764,7 @@ metrics, and per-tenant usage.
 ## Docs
 
 - [Getting started](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
+- [LangGraph integration](https://github.com/sriram7737/pramagent/blob/main/docs/integrations/langgraph.md)
 - [Implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
 - [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md)
 - [Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md)
