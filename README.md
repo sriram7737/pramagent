@@ -145,6 +145,21 @@ pip install -U pramagent
 Only update the Cookbook pin for a security fix, a breakage fix, or a
 substantial recipe revision.
 
+### LangChain Docs Integration
+
+The merged LangChain docs entry appears in the
+[LangChain integrations index](https://github.com/langchain-ai/docs/blob/main/src/oss/python/integrations/providers/all_providers.mdx)
+as "Pramagent" and in the generated tools/downloads table as
+[`ToolGuardLayer`](https://github.com/sriram7737/pramagent). The contribution
+was merged in
+[langchain-ai/docs#4806](https://github.com/langchain-ai/docs/pull/4806)
+on August 11, 2026.
+
+For LangGraph users, start with the repo-hosted
+[Pramagent with LangGraph guide](https://github.com/sriram7737/pramagent/blob/main/docs/integrations/langgraph.md),
+which shows deterministic `ToolGuardLayer` checks before LangGraph tool
+execution.
+
 ```python
 import asyncio
 from pramagent import Pramagent
