@@ -40,14 +40,19 @@ class _QNode:
     def __init__(self, name="default.qubit", shots=500):
         self.device = _Device(name, shots)
         self.calls = 0
+        self.executed_shots = None
 
-        def circuit(theta):
+        def circuit(theta, shots=None):
             return theta
 
         self.func = circuit
 
-    def __call__(self, theta):
+    def __call__(self, theta, shots=None):
+        # PennyLane honors a call-time shots override; record what actually ran.
         self.calls += 1
+        self.executed_shots = (
+            shots if shots is not None else self.device.shots.total_shots
+        )
         return {"value": theta}
 
 
@@ -161,6 +166,96 @@ def test_hardware_escalates_when_priced_and_approval_required():
     assert payload["tool_name"] == "quantum_execute_hw"
     assert payload["pricing_key"] == "braket:rigetti"
     assert payload["est_cost_usd"] == 0.5125
+
+
+def test_call_time_shots_override_is_metered_before_execution():
+    # F1: a call-time shots= override must be metered (and blocked) against the
+    # per-call budget, not silently executed while the device default is priced.
+    armor = _armor(max_shots_per_call=100, max_shots_per_session=10_000)
+    qnode = _QNode(shots=100)
+    guarded = GuardedQNode(qnode, armor, session_id="s", specs_func=_specs)
+
+    with pytest.raises(QuantumBudgetExceeded):
+        guarded(0.3, shots=5_000)
+
+    assert qnode.calls == 0                 # never executed
+    assert qnode.executed_shots is None
+    payload = _quantum_payloads(armor)[0]
+    assert payload["event"] == "quantum_call_blocked"
+    assert payload["shots"] == 5_000        # metered the override, not the default
+    assert armor.audit.verify_chain()
+
+
+def test_call_time_shots_override_within_budget_is_metered_correctly():
+    # F1 (allow path): an in-budget override is metered at the override value.
+    armor = _armor(max_shots_per_call=500, max_shots_per_session=10_000)
+    qnode = _QNode(shots=100)
+    guarded = GuardedQNode(qnode, armor, session_id="s", specs_func=_specs)
+
+    guarded(0.3, shots=300)
+
+    assert qnode.executed_shots == 300
+    payload = _quantum_payloads(armor)[0]
+    assert payload["event"] == "quantum_call_executed"
+    assert payload["shots"] == 300
+    assert payload["session_shots_after"] == 300
+
+
+def test_session_budget_shared_across_adapter_instances():
+    # F2: session shot budget survives re-wrapping the same (tenant, session)
+    # with a fresh adapter instance — it is derived from the audit trail, not
+    # from volatile per-instance memory.
+    armor = _armor(max_shots_per_session=150)
+    qnode = _QNode(shots=100)
+    g1 = GuardedQNode(qnode, armor, tenant_id="t", session_id="sess", specs_func=_specs)
+    g1(0.1)
+
+    g2 = GuardedQNode(qnode, armor, tenant_id="t", session_id="sess", specs_func=_specs)
+    with pytest.raises(QuantumBudgetExceeded):
+        g2(0.2)                             # 100 + 100 = 200 > 150, still enforced
+
+    assert qnode.calls == 1
+    payloads = _quantum_payloads(armor)
+    assert [p["event"] for p in payloads] == [
+        "quantum_call_executed",
+        "quantum_call_blocked",
+    ]
+    assert payloads[-1]["session_shots_after"] == 200
+
+
+def test_hardware_name_with_simulator_prefix_is_not_free():
+    # F3: a hardware provider token forces a hardware classification even under
+    # a simulator-looking prefix, so the call is priced and escalated.
+    armor = _armor(max_cost=10_000.0)
+    qnode = _QNode(name="default.ionq_forte", shots=500)
+    guarded = GuardedQNode(qnode, armor, session_id="s", specs_func=_specs)
+
+    with pytest.raises(ApprovalRequired):
+        guarded(0.3)
+
+    assert qnode.calls == 0
+    payload = _quantum_payloads(armor)[0]
+    assert payload["event"] == "quantum_call_escalated"
+    assert payload["device_kind"] == "hardware"
+    assert payload["pricing_key"] == "braket:ionq"
+    assert payload["est_cost_usd"] > 0
+
+
+def test_unparseable_shot_count_fails_closed():
+    # F4: an uninterpretable shot count is refused, not metered as zero.
+    armor = _armor(max_cost=10_000.0)
+    qnode = _QNode(name="braket:ionq:forte", shots=500)
+    qnode.device.shots = object()           # opaque: no total_shots, not int()-able
+    guarded = GuardedQNode(qnode, armor, session_id="s", specs_func=_specs)
+
+    with pytest.raises(QuantumBudgetExceeded, match="could not determine shot count"):
+        guarded(0.3)
+
+    assert qnode.calls == 0
+    payload = _quantum_payloads(armor)[0]
+    assert payload["event"] == "quantum_shots_unparseable"
+    assert payload["verdict"] == "block"
+    assert armor.audit.verify_chain()
 
 
 def test_unknown_hardware_pricing_fails_closed_before_toolguard():

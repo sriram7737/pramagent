@@ -29,6 +29,16 @@ PRICING_USD_PER_SHOT: dict[str, float | None] = {
 
 _SIMULATOR_PREFIXES = ("default.", "lightning.", "null.")
 
+# Provider/device tokens that mean "real QPU, real money". Any of these in a
+# device name forces a hardware classification even when the name also carries
+# a simulator-looking prefix (e.g. a plugin device short-named
+# "default.ionq_forte"). Fail-safe: a metering/approval boundary must not be
+# defeated by a substring prefix (F3).
+_HARDWARE_TOKENS = (
+    "braket", "ibm", "rigetti", "cepheus", "ionq", "forte",
+    "quera", "aquila", "aqt", "ibex", "iqm", "garnet", "emerald",
+)
+
 
 class QuantumBudgetExceeded(PermissionError):
     """Raised when policy blocks execution or pricing is unknown."""
@@ -49,8 +59,14 @@ def _device_name(qnode) -> str:
 
 def _device_kind(device_name: str) -> str:
     name = device_name.lower()
+    # Hardware tokens win over any simulator-looking prefix (F3): a device
+    # named "default.ionq_forte" is an IonQ QPU, not a free simulator.
+    if any(tok in name for tok in _HARDWARE_TOKENS):
+        return "hardware"
     if name.startswith(_SIMULATOR_PREFIXES) or "simulator" in name:
         return "simulator"
+    # Unknown/undiscoverable device: fail safe to hardware so it must be
+    # priced (and, when unpriced, fails closed) rather than run free.
     return "hardware"
 
 
@@ -76,18 +92,33 @@ def _pricing_key(device_name: str, provider_hint: str = "") -> str:
     return ""
 
 
-def _shots_from(obj: Any) -> int:
-    if obj is None or isinstance(obj, bool):
+def _parse_shots(obj: Any) -> int | None:
+    """Best-effort integer shot count, or None when the value cannot be
+    interpreted. Callers fail closed on None instead of metering an
+    unknown-cost call as zero shots (F4). A genuine None/analytic device
+    maps to 0 shots (exact simulation runs no samples)."""
+    if obj is None:
         return 0
+    if isinstance(obj, bool):
+        return None
     if isinstance(obj, int):
         return obj
     total = getattr(obj, "total_shots", None)
     if total is not None:
-        return int(total or 0)
+        try:
+            return int(total)
+        except (TypeError, ValueError):
+            return None
     try:
         return int(obj)
     except (TypeError, ValueError):
-        return 0
+        return None
+
+
+def _shots_from(obj: Any) -> int:
+    """Backward-compatible wrapper: unparseable/None -> 0. Internal callers
+    that must fail closed use _parse_shots directly."""
+    return _parse_shots(obj) or 0
 
 
 def _lookup(obj: Any, *names: str, default: Any = None) -> Any:
@@ -207,8 +238,66 @@ class GuardedQNode:
         self._provider_hint = provider_hint
         self._specs_func = specs_func
         self._joules_per_shot = max(float(joules_per_shot), 0.0)
-        self._session_shots = 0
-        self._session_cost = 0.0
+
+    def _resolve_shots(self, specs, *args, **kwargs) -> int | None:
+        """Effective shot count for THIS call. A call-time ``shots=`` override
+        (PennyLane dynamic shots) wins over the device/QNode default because
+        the override is what actually executes — metering the device default
+        while executing the override is the F1 budget bypass. Returns None
+        when the count cannot be determined so the caller fails closed (F4)."""
+        if "shots" in kwargs and kwargs["shots"] is not None:
+            source = kwargs["shots"]
+        else:
+            source = (
+                _lookup(getattr(self._qnode, "device", None), "shots")
+                or _lookup(self._qnode, "shots")
+                or _lookup(specs, "shots")
+            )
+        return _parse_shots(source)
+
+    def _session_spent(self) -> tuple[int, float]:
+        """Cumulative executed shots and USD cost for this (tenant, session),
+        derived from the durable audit trail rather than volatile per-instance
+        counters (F2). With a durable/shared audit backend this is consistent
+        across adapter instances, workers, and processes; with the default
+        in-memory backend it is at least consistent across instances in one
+        process, closing the re-instantiation reset."""
+        shots = 0
+        cost = 0.0
+        for rec in self._armor.audit.records():
+            p = rec.get("payload", rec) if isinstance(rec, dict) else rec
+            if (isinstance(p, dict)
+                    and p.get("source") == "quantum_adapter"
+                    and p.get("event") == "quantum_call_executed"
+                    and p.get("tenant_id") == self._tenant_id
+                    and p.get("session_id") == self._session_id):
+                shots += int(p.get("shots", 0) or 0)
+                cost += float(p.get("est_cost_usd", 0.0) or 0.0)
+        return shots, round(cost, 6)
+
+    def _audit_refused(self, event: str, reason: str, *, shots: int, device: str,
+                       kind: str, pricing_key: str, wires: int, depth: int,
+                       estimated_joules: float, est_cost_usd: float,
+                       session_shots_after: int, session_cost_after_usd: float) -> None:
+        self._armor.audit.append({
+            "source": "quantum_adapter",
+            "event": event,
+            "tenant_id": self._tenant_id,
+            "session_id": self._session_id,
+            "action_label": getattr(getattr(self._qnode, "func", self._qnode), "__name__", "qnode"),
+            "verdict": Verdict.BLOCK.value,
+            "reason": reason,
+            "shots": shots,
+            "wires": wires,
+            "depth": depth,
+            "estimated_joules": estimated_joules,
+            "est_cost_usd": est_cost_usd,
+            "session_shots_after": session_shots_after,
+            "session_cost_after_usd": session_cost_after_usd,
+            "device": device,
+            "device_kind": kind,
+            "pricing_key": pricing_key,
+        })
 
     def _inspect(self, *args, **kwargs) -> dict[str, Any]:
         specs = (
@@ -220,42 +309,43 @@ class GuardedQNode:
         device = _device_name(self._qnode)
         kind = _device_kind(device)
         pricing_key = _pricing_key(device, self._provider_hint)
-        shots = _shots_from(
-            _lookup(getattr(self._qnode, "device", None), "shots")
-            or _lookup(self._qnode, "shots")
-            or _lookup(specs, "shots")
-        )
+        shots = self._resolve_shots(specs, *args, **kwargs)
         depth = int(_lookup(resources, "depth", default=0) or 0)
         wires = int(_lookup(resources, "num_wires", "wires", "num_allocs", default=0) or 0)
+        spent_shots, spent_cost = self._session_spent()
+
+        # F4: fail closed when the shot count is unknowable rather than
+        # metering it as zero and running an unbounded-cost call for free.
+        if shots is None:
+            reason = (
+                f"could not determine shot count for device '{device}'; "
+                "refusing to run"
+            )
+            self._audit_refused(
+                "quantum_shots_unparseable", reason,
+                shots=0, device=device, kind=kind,
+                pricing_key=pricing_key or "unknown", wires=wires, depth=depth,
+                estimated_joules=0.0, est_cost_usd=0.0,
+                session_shots_after=spent_shots, session_cost_after_usd=spent_cost,
+            )
+            raise QuantumBudgetExceeded(reason)
+
         estimated_joules = round(shots * self._joules_per_shot, 6)
         rate = self._pricing.get(pricing_key)
         if rate is None:
-            self._armor.audit.append({
-                "source": "quantum_adapter",
-                "event": "quantum_pricing_refused",
-                "tenant_id": self._tenant_id,
-                "session_id": self._session_id,
-                "action_label": getattr(getattr(self._qnode, "func", self._qnode), "__name__", "qnode"),
-                "verdict": Verdict.BLOCK.value,
-                "reason": (
-                    f"no price configured for hardware device '{device}' "
-                    f"(pricing_key={pricing_key or 'unknown'}); refusing to run"
-                ),
-                "shots": shots,
-                "wires": wires,
-                "depth": depth,
-                "estimated_joules": estimated_joules,
-                "est_cost_usd": 0.0,
-                "session_shots_after": self._session_shots + shots,
-                "session_cost_after_usd": self._session_cost,
-                "device": device,
-                "device_kind": kind,
-                "pricing_key": pricing_key or "unknown",
-            })
-            raise QuantumBudgetExceeded(
+            reason = (
                 f"no price configured for hardware device '{device}' "
                 f"(pricing_key={pricing_key or 'unknown'}); refusing to run"
             )
+            self._audit_refused(
+                "quantum_pricing_refused", reason,
+                shots=shots, device=device, kind=kind,
+                pricing_key=pricing_key or "unknown", wires=wires, depth=depth,
+                estimated_joules=estimated_joules, est_cost_usd=0.0,
+                session_shots_after=spent_shots + shots,
+                session_cost_after_usd=spent_cost,
+            )
+            raise QuantumBudgetExceeded(reason)
         per_task = (
             BRACKET_TASK_PRICE_USD
             if kind == "hardware" and pricing_key.startswith("braket:")
@@ -271,8 +361,8 @@ class GuardedQNode:
             "device_kind": kind,
             "pricing_key": pricing_key,
             "est_cost_usd": cost,
-            "session_shots_after": self._session_shots + shots,
-            "session_cost_after_usd": round(self._session_cost + cost, 6),
+            "session_shots_after": spent_shots + shots,
+            "session_cost_after_usd": round(spent_cost + cost, 6),
         }
 
     def _audit_quantum_event(self, decision, call_args: dict[str, Any], event: str) -> None:
@@ -317,8 +407,9 @@ class GuardedQNode:
             raise ApprovalRequired(decision)
 
         result = self._qnode(*args, **kwargs)
-        self._session_shots = call_args["session_shots_after"]
-        self._session_cost = call_args["session_cost_after_usd"]
+        # Session spend is derived from this executed event on the next call
+        # (see _session_spent), so there is no volatile per-instance counter
+        # to reset by re-wrapping the QNode (F2).
         self._audit_quantum_event(decision, call_args, "quantum_call_executed")
         return result
 
