@@ -32,6 +32,7 @@ Side-effect taxonomy (severity order, lowest to highest)
 ---------------------------------------------------------
   read            — read-only; no state change
   compute         — CPU/memory use; no external state
+  metered_compute — bounded scarce compute; no external state
   write           — mutates internal state
   config_change   — modifies system configuration
   external_message— sends data outside the system
@@ -84,13 +85,23 @@ class SideEffect:
     """Ordered severity levels. Higher = more dangerous."""
     READ             = "read"
     COMPUTE          = "compute"
+    METERED_COMPUTE  = "metered_compute"
     WRITE            = "write"
     CONFIG_CHANGE    = "config_change"
     EXTERNAL_MESSAGE = "external_message"
     PAYMENT          = "payment"
     DESTRUCTIVE      = "destructive"
 
-    _ORDER = [READ, COMPUTE, WRITE, CONFIG_CHANGE, EXTERNAL_MESSAGE, PAYMENT, DESTRUCTIVE]
+    _ORDER = [
+        READ,
+        COMPUTE,
+        METERED_COMPUTE,
+        WRITE,
+        CONFIG_CHANGE,
+        EXTERNAL_MESSAGE,
+        PAYMENT,
+        DESTRUCTIVE,
+    ]
 
     @classmethod
     def severity(cls, effect: str) -> int:

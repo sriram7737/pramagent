@@ -12,7 +12,7 @@ from typing import Any, Iterable, Optional
 from .types import AgentScope, TraceEvent
 
 
-READ_ONLY_SIDE_EFFECTS = {"read", "compute"}
+READ_ONLY_SIDE_EFFECTS = {"read", "compute", "metered_compute"}
 
 
 ATTACK_TECHNIQUE_MAP: dict[str, list[str]] = {

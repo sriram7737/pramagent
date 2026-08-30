@@ -21,7 +21,7 @@ Quick start
 from .core import Pramagent
 from .layers import (ComplianceLayer, HITLLayer, IsolationLayer,
                      ObservabilityLayer, ReliabilityLayer, Rule, SafetyLayer,
-                     ToolDecision, ToolGuardLayer, ToolPolicy)
+                     SideEffect, ToolDecision, ToolGuardLayer, ToolPolicy)
 from .providers import (AnthropicProvider, BaseProvider, FallbackProvider,
                         GeminiProvider, MockProvider, OllamaProvider,
                         NvidiaProvider,
@@ -81,6 +81,7 @@ __all__ = [
     "ToolGuardLayer",
     "ToolPolicy",
     "ToolDecision",
+    "SideEffect",
     "Rule",
     "MemoryStore",
     "SQLiteStore",

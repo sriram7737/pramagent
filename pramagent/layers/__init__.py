@@ -34,7 +34,7 @@ from ..types import HITLStatus, RuleResult, Verdict
 from .isolation import (IsolationLayer, IsolationViolation, InputTooLarge,
                         InjectionSuspected)
 from .observability import ObservabilityLayer
-from .tool_guard import ToolDecision, ToolGuardLayer, ToolPolicy
+from .tool_guard import SideEffect, ToolDecision, ToolGuardLayer, ToolPolicy
 
 log = logging.getLogger(__name__)
 

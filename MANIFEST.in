@@ -9,6 +9,7 @@ include scripts/test_agent_v2.py
 include examples/demo.py
 include examples/dynamic_feed_agent.py
 include examples/live_payment_agent.py
+recursive-include examples/quantum *.py *.md
 include pramagent/api/demo_page.html
 include pramagent/api/demo_signals_admin.html
 include deploy/dashboard/Dockerfile
