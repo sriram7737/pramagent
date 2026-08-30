@@ -220,13 +220,6 @@ class GuardedQNode:
         device = _device_name(self._qnode)
         kind = _device_kind(device)
         pricing_key = _pricing_key(device, self._provider_hint)
-        rate = self._pricing.get(pricing_key)
-        if rate is None:
-            raise QuantumBudgetExceeded(
-                f"no price configured for hardware device '{device}' "
-                f"(pricing_key={pricing_key or 'unknown'}); refusing to run"
-            )
-
         shots = _shots_from(
             _lookup(getattr(self._qnode, "device", None), "shots")
             or _lookup(self._qnode, "shots")
@@ -234,6 +227,35 @@ class GuardedQNode:
         )
         depth = int(_lookup(resources, "depth", default=0) or 0)
         wires = int(_lookup(resources, "num_wires", "wires", "num_allocs", default=0) or 0)
+        estimated_joules = round(shots * self._joules_per_shot, 6)
+        rate = self._pricing.get(pricing_key)
+        if rate is None:
+            self._armor.audit.append({
+                "source": "quantum_adapter",
+                "event": "quantum_pricing_refused",
+                "tenant_id": self._tenant_id,
+                "session_id": self._session_id,
+                "action_label": getattr(getattr(self._qnode, "func", self._qnode), "__name__", "qnode"),
+                "verdict": Verdict.BLOCK.value,
+                "reason": (
+                    f"no price configured for hardware device '{device}' "
+                    f"(pricing_key={pricing_key or 'unknown'}); refusing to run"
+                ),
+                "shots": shots,
+                "wires": wires,
+                "depth": depth,
+                "estimated_joules": estimated_joules,
+                "est_cost_usd": 0.0,
+                "session_shots_after": self._session_shots + shots,
+                "session_cost_after_usd": self._session_cost,
+                "device": device,
+                "device_kind": kind,
+                "pricing_key": pricing_key or "unknown",
+            })
+            raise QuantumBudgetExceeded(
+                f"no price configured for hardware device '{device}' "
+                f"(pricing_key={pricing_key or 'unknown'}); refusing to run"
+            )
         per_task = (
             BRACKET_TASK_PRICE_USD
             if kind == "hardware" and pricing_key.startswith("braket:")
@@ -244,7 +266,7 @@ class GuardedQNode:
             "shots": shots,
             "wires": wires,
             "depth": depth,
-            "estimated_joules": round(shots * self._joules_per_shot, 6),
+            "estimated_joules": estimated_joules,
             "device": device,
             "device_kind": kind,
             "pricing_key": pricing_key,

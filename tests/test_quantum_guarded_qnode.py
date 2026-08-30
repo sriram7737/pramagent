@@ -172,5 +172,11 @@ def test_unknown_hardware_pricing_fails_closed_before_toolguard():
         guarded(0.3)
 
     assert qnode.calls == 0
-    assert _quantum_payloads(armor) == []
-    assert armor.audit.records() == []
+    payload = _quantum_payloads(armor)[0]
+    assert payload["event"] == "quantum_pricing_refused"
+    assert payload["verdict"] == "block"
+    assert payload["shots"] == 500
+    assert payload["wires"] == 2
+    assert payload["depth"] == 3
+    assert payload["pricing_key"] == "ibm"
+    assert armor.audit.verify_chain()
