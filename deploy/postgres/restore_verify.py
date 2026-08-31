@@ -39,7 +39,8 @@ def _require_env(name: str) -> str:
 def _s3_client():
     import boto3
 
-    return boto3.client("s3")
+    endpoint_url = os.environ.get("AWS_ENDPOINT_URL") or None
+    return boto3.client("s3", endpoint_url=endpoint_url)
 
 
 def _latest_backup_key(bucket: str, prefix: str) -> str:
@@ -68,6 +69,10 @@ def _dsn_env(dsn: str) -> dict:
     return env
 
 
+def _dsn_database(dsn: str) -> str:
+    return (urlparse(dsn).path or "/postgres").lstrip("/") or "postgres"
+
+
 def run_drill() -> dict:
     started = time.time()
     bucket = _require_env("PRAMAGENT_BACKUP_S3_BUCKET")
@@ -83,7 +88,10 @@ def run_drill() -> dict:
         _s3_client().download_file(bucket, key, dump_path)
 
         result = subprocess.run(
-            ["pg_restore", "--clean", "--if-exists", "--no-owner", "-d", "postgres", dump_path],
+            [
+                "pg_restore", "--clean", "--if-exists", "--no-owner",
+                "-d", _dsn_database(scratch_dsn), dump_path,
+            ],
             env=_dsn_env(scratch_dsn),
             capture_output=True,
             text=True,

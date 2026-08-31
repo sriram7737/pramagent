@@ -1,8 +1,13 @@
 .git
 .github
+.agents
 .claude
+.claude-plugin
+.codex
+.gemini
 .pramagent
 .pytest_cache
+.venv
 __pycache__
 *.py[cod]
 
@@ -22,6 +27,7 @@ test-results
 # local build artifacts
 build
 dist
+dist-*
 *.egg-info
 pramagent-[0-9]*
 *.whl

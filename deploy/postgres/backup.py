@@ -43,7 +43,8 @@ def _s3_client():
             "boto3 is not installed; the backup image must include the "
             "'s3' extra"
         ) from exc
-    return boto3.client("s3")
+    endpoint_url = os.environ.get("AWS_ENDPOINT_URL") or None
+    return boto3.client("s3", endpoint_url=endpoint_url)
 
 
 def _dsn_env(dsn: str) -> dict:
@@ -61,7 +62,9 @@ def _dsn_env(dsn: str) -> dict:
 
 def run_backup() -> str:
     """Dump, upload, prune. Returns the uploaded object key."""
-    dsn = _require_env("PRAMAGENT_POSTGRES_DSN")
+    dsn = os.environ.get("PRAMAGENT_BACKUP_POSTGRES_DSN", "").strip()
+    if not dsn:
+        dsn = _require_env("PRAMAGENT_POSTGRES_DSN")
     bucket = _require_env("PRAMAGENT_BACKUP_S3_BUCKET")
     prefix = os.environ.get("PRAMAGENT_BACKUP_S3_PREFIX", "pramagent/backups").strip("/")
     retention_days = int(os.environ.get("PRAMAGENT_BACKUP_RETENTION_DAYS", "30"))

@@ -40,12 +40,43 @@ docker compose --profile backup up -d backup
 This runs `deploy/postgres/backup.py` on a loop (`PRAMAGENT_BACKUP_INTERVAL_S`,
 default hourly): `pg_dump -Fc` the database, upload it SSE-encrypted to
 `s3://$PRAMAGENT_BACKUP_S3_BUCKET/$PRAMAGENT_BACKUP_S3_PREFIX/`, then prune
-objects older than `PRAMAGENT_BACKUP_RETENTION_DAYS`. It connects as the same
-`pramagent_app` role the API uses (see `deploy/postgres/init.sh`), not the
-Postgres superuser.
+objects older than `PRAMAGENT_BACKUP_RETENTION_DAYS`.
+
+Use `PRAMAGENT_BACKUP_POSTGRES_DSN` for a dedicated backup/operator role. The
+runtime `pramagent_app` role is intentionally blocked by forced row-level
+security on `pramagent_traces`, so it cannot produce a complete `pg_dump`.
+For self-hosted local drills, the bootstrap Postgres role is acceptable only in
+the isolated drill network; production should use a tightly scoped backup role
+or a managed Postgres backup/PITR service.
 
 If you're on a managed Postgres (RDS, Cloud SQL, etc.) instead, use its native
 backup/PITR feature — `backup.py` is only for the self-hosted compose path.
+
+### Local S3-Compatible Drill With Floci
+
+For local or CI proof without real AWS spend, run the S3 paths against Floci:
+
+```bash
+docker run -d --name floci -p 4566:4566 floci/floci:latest
+export AWS_ENDPOINT_URL="http://localhost:4566"
+export AWS_ACCESS_KEY_ID="test"
+export AWS_SECRET_ACCESS_KEY="test"
+export AWS_DEFAULT_REGION="us-east-1"
+export PRAMAGENT_BACKUP_S3_BUCKET="pramagent-backups"
+export PRAMAGENT_BACKUP_POSTGRES_DSN="postgresql://postgres:<local-password>@postgres:5432/pramagent?sslmode=disable"
+```
+
+Create the bucket before running the backup profile or restore drill:
+
+```bash
+aws --endpoint-url "$AWS_ENDPOINT_URL" s3 mb "s3://$PRAMAGENT_BACKUP_S3_BUCKET"
+```
+
+The same endpoint also runs the cold-archive integration test:
+
+```bash
+PRAMAGENT_S3_ENDPOINT="$AWS_ENDPOINT_URL" python -m pytest tests/test_store_s3_integration.py -q
+```
 
 ## Restore Drill
 

@@ -196,6 +196,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      PRAMAGENT_BACKUP_POSTGRES_DSN: ${PRAMAGENT_BACKUP_POSTGRES_DSN:-}
       PRAMAGENT_POSTGRES_DSN: "postgresql://pramagent_app:${PRAMAGENT_APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-pramagent}"
       # Soft default here, not `:?required` — compose validates every
       # service's interpolation on every `docker compose up`, even ones
@@ -208,6 +209,7 @@ services:
       PRAMAGENT_BACKUP_RETENTION_DAYS: ${PRAMAGENT_BACKUP_RETENTION_DAYS:-30}
       PRAMAGENT_BACKUP_KMS_KEY_ID: ${PRAMAGENT_BACKUP_KMS_KEY_ID:-}
       PRAMAGENT_BACKUP_INTERVAL_S: ${PRAMAGENT_BACKUP_INTERVAL_S:-3600}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
