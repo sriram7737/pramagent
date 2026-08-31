@@ -191,3 +191,28 @@ larger security program.
 
 For a provider-specific example, see the merged
 [Google Gemini Cookbook recipe](https://github.com/google-gemini/cookbook/blob/main/examples/Pramagent_trust_layer_for_gemini.ipynb).
+
+## Since The Cookbook Pin
+
+The Gemini Cookbook notebook is pinned to an older `pramagent` release so its
+outputs stay reproducible. Keep that notebook frozen. Current projects should
+upgrade Pramagent from PyPI before using the newer hook console, tenant
+controls, or quantum examples.
+
+The current package keeps the public `Pramagent`, `ToolGuardLayer`,
+`ToolPolicy`, `SideEffect`, `Verdict`, and `validate_tool()` surface intact,
+then adds optional controls around it:
+
+- Local Claude, Gemini CLI, Codex, and plugin hooks can send proposed tool work
+  through the same ToolGuard policy layer.
+- The dashboard `/hooks` console lets an admin enable or disable hook surfaces,
+  block tools globally, edit ToolGuard JSON policies, and manage per-tenant
+  tool permissions from one place.
+- Hook configuration changes are written to a SHA-256 hash-chained audit log.
+- Quantum examples live under `examples/quantum/` and show guarded PennyLane
+  QNode execution with shot and cost accounting, input checks,
+  circuit-structure checks, result sanity checks, and replayable fingerprints.
+
+None of these additions require changing the upstream LangChain listing or the
+frozen cookbook link. They land here, in the repository those links already send
+readers to.

@@ -784,6 +784,20 @@ python -m pramagent.cli redteam --json --dynamic --attacks 200 --seed 999
 Then use the dashboard to inspect traces, pending HITL approvals, audit status,
 metrics, and per-tenant usage.
 
+## Current Integration Notes
+
+The merged Gemini Cookbook notebook remains pinned for reproducibility, and the
+LangChain docs listing points back to this repository. Newer integration work
+should stay additive here: keep the public `Pramagent`, `ToolGuardLayer`,
+`ToolPolicy`, `SideEffect`, `Verdict`, and `validate_tool()` surface stable,
+then document newer controls in this repo.
+
+Recent additions include the local hook control plane, per-tenant hook
+permissions, hash-chained hook-admin audit records, and the guarded PennyLane
+QNode example under `examples/quantum/`. Users coming from the cookbook or
+LangChain listing can upgrade Pramagent from PyPI and follow the docs in this
+repository without changing either upstream link.
+
 ## Docs
 
 - [Getting started](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
