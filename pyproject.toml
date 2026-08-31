@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pramagent"
-version = "0.8.7"
+version = "0.8.8"
 description = "Alpha agent trust middleware: audit trails, safety guardrails, HITL, and tool validation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -73,7 +73,7 @@ policy = ["pyyaml>=6.0"]
 quantum = ["pennylane>=0.39"]
 # Embedding-based injection classifier (EmbeddingInjectionClassifier) and
 # DeBERTa fine-tuned classifier (DeBERTaInjectionClassifier).
-# Heavy (pulls torch) — deliberately NOT part of `all`. Without it the
+# Heavy (pulls torch) -- deliberately NOT part of `all`. Without it the
 # classifier falls back to keyword matching.
 ml = ["sentence-transformers>=3.0", "transformers>=4.40"]
 supply-chain = ["pip-audit>=2.8", "cyclonedx-bom>=5"]
