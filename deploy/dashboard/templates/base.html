@@ -522,6 +522,12 @@
       <span class="rail-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5H8z"/><path d="M8 2.5V8"/></svg></span>
       <span>Usage</span>
     </a>
+    {% if role == 'admin' %}
+    <a class="rail-button {% if path.startswith('/hooks') %}active{% endif %}" href="/hooks">
+      <span class="rail-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 2.5h8v3H4zM4 10.5h8v3H4zM8 5.5v5"/></svg></span>
+      <span>Hooks</span>
+    </a>
+    {% endif %}
     <div class="rail-spacer"></div>
     {% if user is defined %}
     <div class="rail-section">Session</div>

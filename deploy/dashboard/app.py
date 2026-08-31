@@ -54,22 +54,22 @@ def _normalize_dashboard_tenant(raw_tenant: str, allow_super_admin: bool) -> str
     return raw_tenant or "default"
 
 
-_DEFAULT_JWT_SECRET = "change-me-in-production"  # nosec B105 — sentinel, refused at startup
+_DEFAULT_JWT_SECRET = "change-me-in-production"  # nosec B105  -  sentinel, refused at startup
 
 from pramagent.secrets import resolve_secret
 
 # resolve_secret() falls back to AWS Secrets Manager/Vault when
 # <NAME>_AWS_SECRET_ID / <NAME>_VAULT_PATH is set, otherwise behaves exactly
-# like plain os.environ.get() — no change for existing env-var deployments.
+# like plain os.environ.get()  -  no change for existing env-var deployments.
 PRAMAGENT_API_URL       = os.environ.get("PRAMAGENT_API_URL", "http://localhost:8080")
 PRAMAGENT_API_KEY       = resolve_secret("PRAMAGENT_API_KEY")
 PRAMAGENT_DASHBOARD_KEY = resolve_secret("PRAMAGENT_DASHBOARD_KEY", PRAMAGENT_API_KEY)  # shared key for browser
 PRAMAGENT_JWT_SECRET    = resolve_secret("PRAMAGENT_JWT_SECRET", _DEFAULT_JWT_SECRET)
-# Finding 1.1 — cross-service JWT confusion. Dashboard sessions are signed and
+# Finding 1.1  -  cross-service JWT confusion. Dashboard sessions are signed and
 # verified with a secret DISTINCT from the API's PRAMAGENT_JWT_SECRET. It falls
 # back to the API secret so single-secret deployments keep working, but the
 # aud/iss binding below rejects an API-minted token here even when the secret
-# IS shared — closing the path where a read-only API token (aud=pramagent-api)
+# IS shared  -  closing the path where a read-only API token (aud=pramagent-api)
 # became an all-tenant (tenant="*") dashboard admin session.
 DASHBOARD_JWT_SECRET = resolve_secret(
     "PRAMAGENT_DASHBOARD_JWT_SECRET", PRAMAGENT_JWT_SECRET)
@@ -83,7 +83,7 @@ PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN = os.environ.get(
 ).lower() in {"1", "true", "yes", "on"}
 # The shared-key LOGIN FORM fallback (password field == PRAMAGENT_DASHBOARD_KEY)
 # is a single bearer secret that logs anyone who knows it in as an admin
-# session — a de facto backdoor alongside the per-user bcrypt store. Off by
+# session  -  a de facto backdoor alongside the per-user bcrypt store. Off by
 # default; the X-API-Key header path (a separate, documented CLI/curl
 # mechanism, not a browser login) is unaffected by this flag.
 PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN = os.environ.get(
@@ -131,7 +131,7 @@ PRAMAGENT_DASHBOARD_DEFAULT_ROLE = os.environ.get(
 # Finding 1.x: open self-signup must never enrol a privileged role. Approver
 # (can approve HITL) and admin are privileged; granting them requires a
 # deliberate admin action, not open enrolment. Clamp the signup role to a
-# read-only set — if an operator points DEFAULT_ROLE at a privileged role, the
+# read-only set  -  if an operator points DEFAULT_ROLE at a privileged role, the
 # signup path falls back to viewer rather than minting privileged accounts.
 _SIGNUP_SAFE_ROLES = {"viewer", "auditor"}
 
@@ -153,7 +153,7 @@ def validate_dashboard_config() -> None:
     """Refuse to serve with a missing or well-known JWT secret.
 
     Uses the shared denylist from ``pramagent.security`` so EVERY published
-    placeholder spelling (hyphenated, underscored, "changeme", …) is refused —
+    placeholder spelling (hyphenated, underscored, "changeme", ...) is refused  -
     the previous equality check only caught the hyphenated variant, letting
     the repo's own ``change_me_in_production`` example value sail through
     (P0-2 / T1-1). The JWT secret signs every session cookie, so a known
@@ -166,7 +166,7 @@ def validate_dashboard_config() -> None:
             "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN=1: the browser login "
             "form accepts PRAMAGENT_DASHBOARD_KEY as a password for ANY "
             "username, logging that person in as an admin session not tied "
-            "to a real account. Meant for single-team alpha pilots only — "
+            "to a real account. Meant for single-team alpha pilots only  -  "
             "configure a real dashboard user store instead for anything else."
         )
 
@@ -238,7 +238,7 @@ async def no_store_dashboard_pages(request: Request, call_next):
     return response
 
 
-# ── minimal JWT (HS256, no external deps) ────────────────────────────────────
+# -- minimal JWT (HS256, no external deps) ------------------------------------
 
 import base64, struct
 
@@ -274,7 +274,7 @@ def _verify(token: str, *, check_revocation: bool = True) -> Optional[dict]:
         payload = json.loads(base64.urlsafe_b64decode(padded))
         # Reject anything not minted by THIS dashboard: an API token
         # (aud=pramagent-api / iss=pramagent) fails here regardless of a shared
-        # signing secret — the core of the finding 1.1 fix.
+        # signing secret  -  the core of the finding 1.1 fix.
         if payload.get("iss") != _DASHBOARD_ISS or payload.get("aud") != _DASHBOARD_AUD:
             return None
         if payload.get("exp", 0) < time.time():
@@ -286,7 +286,7 @@ def _verify(token: str, *, check_revocation: bool = True) -> Optional[dict]:
         return None
 
 
-# ── auth dependency ───────────────────────────────────────────────────────────
+# -- auth dependency -----------------------------------------------------------
 
 class AuthContext:
     def __init__(
@@ -320,7 +320,7 @@ def _get_auth(request: Request) -> Optional[AuthContext]:
     if token:
         payload = _verify(token)
         if payload:
-            # Finding 1.1 — deny on absent tenant/role instead of defaulting to
+            # Finding 1.1  -  deny on absent tenant/role instead of defaulting to
             # "*"/"admin". A legitimate dashboard token always carries both
             # (see the login handler); a token missing either is treated as
             # unauthenticated rather than silently promoted to super-admin.
@@ -441,7 +441,7 @@ def require_csrf(request: Request, ctx: AuthContext, supplied: str = "") -> None
         raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
 
 
-# ── rate limit (Redis-backed when configured, in-process fallback) ────────────
+# -- rate limit (Redis-backed when configured, in-process fallback) ------------
 
 _rl_state: dict[str, tuple[float, float]] = {}  # ip -> (tokens, last_refill)
 _revoked_sessions: dict[str, float] = {}        # dashboard session id -> exp
@@ -547,7 +547,7 @@ def _rate_limit(request: Request) -> None:
     _rl_state[ip] = (tokens - 1, now)
 
 
-# ── API proxy helpers ─────────────────────────────────────────────────────────
+# -- API proxy helpers ---------------------------------------------------------
 
 def _upstream_headers() -> dict:
     if not PRAMAGENT_API_KEY:
@@ -701,11 +701,23 @@ async def _dashboard_metrics_and_traces(
 
 
 _APPROVER_ROLES = {"approver", "admin"}
+_ADMIN_ROLES = {"admin"}
+
+
+def _require_admin_role(ctx: AuthContext) -> None:
+    """The hook console can disable enforcement and rewrite tool policies  -
+    strictly an admin capability. Viewer/approver/auditor are refused even with
+    a valid session and CSRF token."""
+    if ctx.role not in _ADMIN_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin may change hook enforcement or policies",
+        )
 
 
 def _require_approver_role(ctx: AuthContext) -> None:
     """A3: the dashboard role model was defined (viewer/approver/auditor/
-    admin) but never enforced — approve/deny gated only on auth + tenant +
+    admin) but never enforced  -  approve/deny gated only on auth + tenant +
     CSRF, so a viewer or auditor could approve consequential actions. Only
     approver/admin may decide."""
     if ctx.role not in _APPROVER_ROLES:
@@ -735,14 +747,14 @@ async def _require_pending_approval_scope(request_id: str, ctx: AuthContext) -> 
     raise HTTPException(status_code=404, detail="Approval request not found")
 
 
-# ── health (no auth) ──────────────────────────────────────────────────────────
+# -- health (no auth) ----------------------------------------------------------
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "ts": time.time()}
 
 
-# ── login / logout ────────────────────────────────────────────────────────────
+# -- login / logout ------------------------------------------------------------
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = ""):
@@ -801,7 +813,7 @@ async def login(
             return _session_response(user)
 
     # Fallback: password == PRAMAGENT_DASHBOARD_KEY (hashed compare). Off
-    # unless explicitly enabled — anyone holding the shared key otherwise
+    # unless explicitly enabled  -  anyone holding the shared key otherwise
     # gets an admin browser session, not just the documented X-API-Key
     # header path this flag does not affect.
     if not PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN:
@@ -814,7 +826,7 @@ async def login(
 
     log.warning(
         "dashboard login via shared-key fallback (PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN) "
-        "for username=%r — this session is not tied to a specific user account",
+        "for username=%r  -  this session is not tied to a specific user account",
         username,
     )
     # Scope the session from config. Use "*" only for a deliberate super-admin.
@@ -974,7 +986,7 @@ async def logout(
     return _logout_response(request)
 
 
-# ── overview ──────────────────────────────────────────────────────────────────
+# -- overview ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 async def overview(
@@ -991,7 +1003,7 @@ async def overview(
     ))
 
 
-# ── traces ────────────────────────────────────────────────────────────────────
+# -- traces --------------------------------------------------------------------
 
 @app.get("/traces", response_class=HTMLResponse)
 async def trace_browser(
@@ -1045,7 +1057,7 @@ async def trace_detail(
     return templates.TemplateResponse(request, "trace_detail.html", _template_context(ctx, trace=trace))
 
 
-# ── approvals ─────────────────────────────────────────────────────────────────
+# -- approvals -----------------------------------------------------------------
 
 @app.get("/approvals", response_class=HTMLResponse)
 async def approvals(
@@ -1078,7 +1090,7 @@ async def approve(
         msg, cls = "Approved", "badge-ok"
     except Exception as exc:
         msg, cls = f"Error: {exc}", "badge-block"
-    # Upstream error bodies can carry markup — escape before rendering (T2-1)
+    # Upstream error bodies can carry markup  -  escape before rendering (T2-1)
     return HTMLResponse(f'<span class="badge {cls}">{html.escape(msg)}</span>')
 
 
@@ -1096,11 +1108,11 @@ async def deny(
         msg, cls = "Denied", "badge-block"
     except Exception as exc:
         msg, cls = f"Error: {exc}", "badge-block"
-    # Upstream error bodies can carry markup — escape before rendering (T2-1)
+    # Upstream error bodies can carry markup  -  escape before rendering (T2-1)
     return HTMLResponse(f'<span class="badge {cls}">{html.escape(msg)}</span>')
 
 
-# ── metrics ───────────────────────────────────────────────────────────────────
+# -- metrics -------------------------------------------------------------------
 
 @app.get("/metrics", response_class=HTMLResponse)
 async def metrics_page(
@@ -1165,7 +1177,166 @@ async def audit_verify_page(
     )
 
 
-# ── export ────────────────────────────────────────────────────────────────────
+# -- hook admin console --------------------------------------------------------
+# Admin-only. Enable/disable hook surfaces and individual tools, edit ToolGuard
+# policy schemas, and review the SHA-256 hash-chained audit of every change.
+# Reads/writes the central config via pramagent.hook_admin (same host as the
+# hooks), not the API proxy  -  the config is local to the deployment.
+
+@app.get("/hooks", response_class=HTMLResponse)
+async def hooks_console(
+    request: Request,
+    error: str = "",
+    ctx: AuthContext = Depends(require_auth),
+    _rl=Depends(_rate_limit),
+):
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    config = hook_admin.get_config()
+    audit = hook_admin.read_audit(50)
+    policy_by_name = {p.get("name"): p for p in config["policies"]}
+    return templates.TemplateResponse(request, "hooks.html", _template_context(
+        ctx,
+        config=config,
+        audit=audit,
+        error=error,
+        policies_json={
+            name: json.dumps(policy, indent=2)
+            for name, policy in policy_by_name.items()
+        },
+    ))
+
+
+@app.post("/hooks/surface/{surface}")
+async def hooks_toggle_surface(
+    request: Request,
+    surface: str,
+    enabled: str = Form(...),
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        hook_admin.set_surface_enabled(
+            surface, enabled == "true", actor=ctx.username or "admin")
+    except ValueError as exc:
+        return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
+    return RedirectResponse("/hooks", status_code=303)
+
+
+@app.post("/hooks/tool")
+async def hooks_toggle_tool(
+    request: Request,
+    tool: str = Form(...),
+    enabled: str = Form(...),
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        hook_admin.set_tool_enabled(
+            tool, enabled == "true", actor=ctx.username or "admin")
+    except ValueError as exc:
+        return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
+    return RedirectResponse("/hooks", status_code=303)
+
+
+@app.post("/hooks/policy")
+async def hooks_upsert_policy(
+    request: Request,
+    policy_json: str = Form(...),
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        policy = json.loads(policy_json)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return RedirectResponse(
+            f"/hooks?error={quote_plus('Invalid JSON: ' + str(exc))}", status_code=303)
+    try:
+        hook_admin.upsert_policy(policy, actor=ctx.username or "admin")
+    except ValueError as exc:
+        return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
+    return RedirectResponse("/hooks", status_code=303)
+
+
+@app.post("/hooks/policy/{name}/delete")
+async def hooks_delete_policy(
+    request: Request,
+    name: str,
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    hook_admin.delete_policy(name, actor=ctx.username or "admin")
+    return RedirectResponse("/hooks", status_code=303)
+
+
+def _parse_tool_list(raw: str) -> Optional[list[str]]:
+    """Parse a comma/whitespace-separated tool list from a form field. An empty
+    field means None ('all tools'); a non-empty field yields the explicit list."""
+    items = [t.strip() for t in raw.replace(",", " ").split()]
+    items = [t for t in items if t]
+    return items or None
+
+
+@app.post("/hooks/tenant")
+async def hooks_upsert_tenant(
+    request: Request,
+    tenant_id: str = Form(...),
+    enabled: str = Form("false"),  # unchecked checkbox sends nothing -> disabled
+    allowed_tools: str = Form(""),
+    denied_tools: str = Form(""),
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        hook_admin.upsert_tenant(
+            tenant_id.strip(),
+            enabled=(enabled == "true"),
+            allowed_tools=_parse_tool_list(allowed_tools),
+            denied_tools=_parse_tool_list(denied_tools) or [],
+            actor=ctx.username or "admin",
+        )
+    except ValueError as exc:
+        return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
+    return RedirectResponse("/hooks", status_code=303)
+
+
+@app.post("/hooks/tenant/{tenant_id}/delete")
+async def hooks_delete_tenant(
+    request: Request,
+    tenant_id: str,
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    hook_admin.delete_tenant(tenant_id, actor=ctx.username or "admin")
+    return RedirectResponse("/hooks", status_code=303)
+
+
+# -- export --------------------------------------------------------------------
 
 @app.get("/export/traces.csv")
 async def export_csv(

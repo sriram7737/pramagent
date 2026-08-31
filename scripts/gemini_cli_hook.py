@@ -41,6 +41,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from pramagent.hook_scan import scan_injection, scan_pii
+from pramagent.hook_state import is_enabled as _hook_enabled
+from pramagent.hook_state import get_policies as _central_policies
+from pramagent.hook_state import tool_enabled as _tool_enabled
+from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
+from pramagent.hook_state import targets_protected_path as _targets_protected_path
+
+# Tenant this hook runs as (PRAMAGENT_TENANT_ID). See claude_code_hook.py.
+_TENANT_ID = os.environ.get("PRAMAGENT_TENANT_ID", "gemini-cli-local")
 from pramagent.layers.tool_guard import ToolGuardLayer, ToolPolicy, SideEffect
 from pramagent.layers.isolation import IsolationLayer
 from pramagent.layers import HITLLayer, ComplianceLayer
@@ -53,13 +62,12 @@ _COMPLIANCE = ComplianceLayer()  # PII/PHI regex scan, deterministic, no network
 # clear reason, not have it raise. The hook decides what to do with hits.
 _ISOLATION = IsolationLayer(block_on_injection=False)
 
-# Which tool_input fields carry free-text content worth scanning for
-# injected instructions. "instruction" covers the replace tool's
-# natural-language edit instruction field, which Claude Code's Edit tool
-# has no equivalent of.
-_SCANNABLE_FIELDS = ("command", "content", "new_string", "old_string", "pattern", "instruction")
+# Content scanning now covers EVERY string argument (see pramagent.hook_scan),
+# so there is no hardcoded field list to keep in sync with each host's tool
+# surface  -  the replace tool's "instruction" field, or any future field, is
+# scanned automatically.
 
-# ── Audit chain ──────────────────────────────────────────────────────────
+# -- Audit chain ----------------------------------------------------------
 # File-backed so the hash chain survives across hook invocations: Gemini
 # CLI runs this script as a brand-new process per tool call, so anything
 # in-memory would restart at genesis every time and never actually link
@@ -80,7 +88,7 @@ _AUDIT_DB_PATH = os.environ.get(
 )
 
 
-# ── HITL switch ──────────────────────────────────────────────────────────
+# -- HITL switch ----------------------------------------------------------
 # OFF by default, same as scripts/claude_code_hook.py. When off, ESCALATE
 # verdicts deny (see (1) in the module docstring -- there is no "ask" to
 # fall back to here). When PRAMAGENT_HOOK_ENABLE_HITL=1, ESCALATE instead
@@ -126,7 +134,7 @@ def _decision_output(decision: str, reason: str) -> dict:
     return {"decision": decision, "reason": reason}
 
 
-# ── Policy registration ─────────────────────────────────────────────────
+# -- Policy registration -------------------------------------------------
 # Tool names and parameter schemas are Gemini CLI's own built-in tool
 # surface (confirmed against the google-gemini/gemini-cli docs/tools
 # reference), not Claude Code's tool names -- registering the wrong names
@@ -177,13 +185,21 @@ for _read_tool in ("read_file", "list_directory", "glob", "grep_search", "search
     ))
 
 
-def _scan_tool_input_for_injection(tool_input: dict) -> list[dict]:
-    hits = []
-    for field in _SCANNABLE_FIELDS:
-        value = tool_input.get(field)
-        if isinstance(value, str) and value:
-            hits.extend(_ISOLATION.scan_for_injection(value))
-    return hits
+def _apply_central_policy_overrides() -> None:
+    """Merge admin-console policies over the built-in defaults (see the same
+    helper in scripts/claude_code_hook.py). Invalid overrides are skipped."""
+    try:
+        from pramagent.policies import tool_policy_from_dict
+        for _policy in _central_policies() or []:
+            try:
+                _GUARD.register(tool_policy_from_dict(_policy))
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_apply_central_policy_overrides()
 
 
 def evaluate_event(event: dict) -> dict:
@@ -202,10 +218,39 @@ def evaluate_event(event: dict) -> dict:
     tool_input = event.get("tool_input", {}) or {}
     session_id = event.get("session_id", "local")
 
+    # Control-plane self-protection (see scripts/claude_code_hook.py for the
+    # rationale). Refuse any tool call that would write the hook's own config or
+    # admin audit DB, checked BEFORE the master switch so a tampering write
+    # cannot turn the surface off and slip through.
+    protected_hit = _targets_protected_path(tool_name, tool_input)
+    if protected_hit:
+        return _decision_output(
+            "deny",
+            f"Pramagent hook self-protection: tool '{tool_name}' may not modify "
+            f"the hook control plane ({protected_hit}). Change hook settings "
+            f"through the admin console instead.")
+
+    # Admin master switch (fail-safe; see pramagent.hook_state). Disabled ->
+    # allow-no-comment. The call is still recorded by main()'s audit append.
+    if not _hook_enabled("gemini"):
+        return {}
+
+    # Per-tool master switch from the admin console: a disabled tool denies.
+    if not _tool_enabled(tool_name):
+        return _decision_output(
+            "deny", f"Pramagent hook admin: tool '{tool_name}' is disabled")
+
+    # Per-tenant permission from the admin console.
+    if not _tenant_tool_allowed(_TENANT_ID, tool_name):
+        return _decision_output(
+            "deny",
+            f"Pramagent hook admin: tenant '{_TENANT_ID}' is not permitted "
+            f"to use tool '{tool_name}'")
+
     decision = _GUARD.evaluate(
         tool_name=tool_name,
         arguments=tool_input,
-        tenant_id="gemini-cli-local",
+        tenant_id=_TENANT_ID,
         session_id=session_id,
         action_label="gemini_cli_tool_call",
     )
@@ -213,9 +258,9 @@ def evaluate_event(event: dict) -> dict:
     if decision.verdict == Verdict.BLOCK:
         return _decision_output("deny", f"Pramagent ToolGuard: {decision.reason}")
 
-    injection_hits = _scan_tool_input_for_injection(tool_input)
-    if injection_hits:
-        pattern_ids = ", ".join(h["pattern_id"] for h in injection_hits)
+    injection_ids = scan_injection(tool_input, _ISOLATION)
+    if injection_ids:
+        pattern_ids = ", ".join(injection_ids)
         reason = (
             f"Pramagent Isolation: possible prompt injection in "
             f"tool arguments ({pattern_ids}). Blocked -- Gemini CLI's hook "
@@ -224,14 +269,9 @@ def evaluate_event(event: dict) -> dict:
         )
         return _decision_output("deny", reason)
 
-    pii_labels: list[str] = []
-    for field in _SCANNABLE_FIELDS:
-        value = tool_input.get(field)
-        if isinstance(value, str) and value:
-            _, redactions = _COMPLIANCE.scrub(value)
-            pii_labels.extend(redactions)
+    pii_labels = scan_pii(tool_input, _COMPLIANCE)
     if pii_labels:
-        labels = ", ".join(sorted(set(pii_labels)))
+        labels = ", ".join(pii_labels)
         reason = (
             f"Pramagent Compliance: possible PII/PHI in tool arguments "
             f"({labels}). Blocked pending review."

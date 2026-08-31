@@ -21,6 +21,26 @@ import json
 import os
 import sys
 
+# Ensure the hook imports the pramagent package from the repo it lives in,
+# not whatever build/site-packages copy happens to be importable for the
+# interpreter that runs it (which may lag behind the repo). Mirrors the same
+# guard in scripts/gemini_cli_hook.py.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from pramagent.hook_scan import scan_injection, scan_pii
+from pramagent.hook_state import is_enabled as _hook_enabled
+from pramagent.hook_state import get_policies as _central_policies
+from pramagent.hook_state import tool_enabled as _tool_enabled
+from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
+from pramagent.hook_state import targets_protected_path as _targets_protected_path
+
+# Tenant this hook runs as. Operators running a coding agent on behalf of a
+# specific tenant set PRAMAGENT_TENANT_ID; the admin console's per-tenant
+# permissions are then enforced against it. Defaults to the local surface
+# tenant, which is unmanaged by default (no restriction).
+_TENANT_ID = os.environ.get("PRAMAGENT_TENANT_ID", "claude-code-local")
 from pramagent.layers.tool_guard import ToolGuardLayer, ToolPolicy, SideEffect
 from pramagent.layers.isolation import IsolationLayer
 from pramagent.layers import HITLLayer, ComplianceLayer
@@ -32,21 +52,8 @@ _COMPLIANCE = ComplianceLayer()  # PII/PHI regex scan, deterministic, no network
 # clear reason, not have it raise. The hook decides what to do with hits.
 _ISOLATION = IsolationLayer(block_on_injection=False)
 
-# Which tool_input fields actually carry free-text content worth scanning
-# for injected instructions (as opposed to structural args like file paths).
-_SCANNABLE_FIELDS = ("command", "content", "new_string", "old_string", "pattern")
 
-
-def _scan_tool_input_for_injection(tool_input: dict) -> list[dict]:
-    hits = []
-    for field in _SCANNABLE_FIELDS:
-        value = tool_input.get(field)
-        if isinstance(value, str) and value:
-            hits.extend(_ISOLATION.scan_for_injection(value))
-    return hits
-
-
-# ── HITL switch ──────────────────────────────────────────────────────────
+# -- HITL switch ----------------------------------------------------------
 # OFF by default. When off, an ESCALATE verdict just becomes Claude Code's
 # own "ask" confirmation prompt (a human, you at the terminal, is already
 # the approver in that path, so this isn't "no HITL". It's HITL via the
@@ -111,7 +118,7 @@ def _decision_output(permission_decision: str, reason: str) -> dict:
     }
 
 
-# ── Policy registration ─────────────────────────────────────────────────
+# -- Policy registration -------------------------------------------------
 # Adjust these to taste. Anything not registered here is BLOCKed by
 # ToolGuardLayer by default (fail-closed). That's deliberate: an
 # unrecognized tool_name (e.g. a new host or connector tool) should not
@@ -158,6 +165,26 @@ for _read_tool in ("Read", "Grep", "Glob"):
     ))
 
 
+def _apply_central_policy_overrides() -> None:
+    """Merge any policies defined in the admin console over the built-in
+    defaults (register() replaces by name, so a console policy overrides a
+    same-named default and adds new tools). Each hook process is fresh, so this
+    runs once per tool call  -  live edits take effect immediately. An individual
+    invalid override is skipped, never allowed to crash the hook."""
+    try:
+        from pramagent.policies import tool_policy_from_dict
+        for _policy in _central_policies() or []:
+            try:
+                _GUARD.register(tool_policy_from_dict(_policy))
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_apply_central_policy_overrides()
+
+
 def evaluate_event(event: dict) -> dict:
     """Pure decision logic: a parsed PreToolUse event in, the hook's JSON
     response out. No stdin/stdout/logging side effects, so tests can call
@@ -174,10 +201,45 @@ def evaluate_event(event: dict) -> dict:
     tool_input = event.get("tool_input", {}) or {}
     session_id = event.get("session_id", "local")
 
+    # Control-plane self-protection. A guarded tool call must never be able to
+    # write the hook's own config or admin audit DB: those files govern the
+    # guard itself, so a write to them could disable enforcement or silently
+    # rewrite the policy set for every later call. Checked BEFORE the master
+    # switch below, so a surface that a tampering write is trying to turn off
+    # cannot skip this. Fail-safe: the config can only be changed through the
+    # admin console, never by the constrained agent's own tool calls.
+    protected_hit = _targets_protected_path(tool_name, tool_input)
+    if protected_hit:
+        return _decision_output(
+            "deny",
+            f"Pramagent hook self-protection: tool '{tool_name}' may not modify "
+            f"the hook control plane ({protected_hit}). Change hook settings "
+            f"through the admin console instead.")
+
+    # Admin master switch: when this surface is disabled from the dashboard,
+    # the hook no-ops to allow for the next call onward. Fail-safe  -  a missing
+    # or corrupt state file leaves enforcement ON (see pramagent.hook_state).
+    if not _hook_enabled("claude"):
+        return {}
+
+    # Per-tool master switch from the admin console: a tool switched off is
+    # denied outright, regardless of its arguments.
+    if not _tool_enabled(tool_name):
+        return _decision_output(
+            "deny", f"Pramagent hook admin: tool '{tool_name}' is disabled")
+
+    # Per-tenant permission from the admin console: is this tenant allowed to
+    # use this tool at all? Unmanaged tenants are unrestricted.
+    if not _tenant_tool_allowed(_TENANT_ID, tool_name):
+        return _decision_output(
+            "deny",
+            f"Pramagent hook admin: tenant '{_TENANT_ID}' is not permitted "
+            f"to use tool '{tool_name}'")
+
     decision = _GUARD.evaluate(
         tool_name=tool_name,
         arguments=tool_input,
-        tenant_id="claude-code-local",
+        tenant_id=_TENANT_ID,
         session_id=session_id,
         action_label="claude_code_tool_call",
     )
@@ -192,24 +254,23 @@ def evaluate_event(event: dict) -> dict:
     # phrasing (IsolationLayer). This catches the case where Claude Code
     # read something (a file, a page, a repo) containing hidden injected
     # instructions and is about to act on that content via a tool call.
-    injection_hits = _scan_tool_input_for_injection(tool_input)
-    if injection_hits:
-        pattern_ids = ", ".join(h["pattern_id"] for h in injection_hits)
+    # phrasing over EVERY string argument (see pramagent.hook_scan: all
+    # leaves, decoded runs included), not just a hardcoded field list  -  a
+    # payload routed through any other field used to slip past this pass.
+    injection_ids = scan_injection(tool_input, _ISOLATION)
+    if injection_ids:
+        pattern_ids = ", ".join(injection_ids)
         reason = (
             f"Pramagent Isolation: possible prompt injection in "
             f"tool arguments ({pattern_ids}). Review before proceeding."
         )
         return _decision_output("ask", reason)
 
-    # PII/PHI scan (ComplianceLayer). Deterministic regex, no LLM call.
-    pii_labels: list[str] = []
-    for field in _SCANNABLE_FIELDS:
-        value = tool_input.get(field)
-        if isinstance(value, str) and value:
-            _, redactions = _COMPLIANCE.scrub(value)
-            pii_labels.extend(redactions)
+    # PII/PHI scan (ComplianceLayer). Deterministic regex, no LLM call, same
+    # all-leaves surface as the injection pass above.
+    pii_labels = scan_pii(tool_input, _COMPLIANCE)
     if pii_labels:
-        labels = ", ".join(sorted(set(pii_labels)))
+        labels = ", ".join(pii_labels)
         reason = (
             f"Pramagent Compliance: possible PII/PHI in tool arguments "
             f"({labels}). Review before proceeding."

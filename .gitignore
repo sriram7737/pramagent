@@ -26,6 +26,8 @@ env/
 *.pem
 HANDOFF.md
 pramagent_config.py
+pramagent_hook_config.json
+pramagent_hook_admin_audit.db
 examples/job_search_agent.py
 examples/pramagent_guard.py
 examples/test_agent_db_threats.py
@@ -59,7 +61,7 @@ pramagent.egg-info/
 *.whl
 *.tar.gz
 
-# Marketing / demo assets — not part of the package (root-scoped so the
+# Marketing / demo assets -- not part of the package (root-scoped so the
 # tracked images and design document under docs/ are unaffected)
 /assets/
 /*.png

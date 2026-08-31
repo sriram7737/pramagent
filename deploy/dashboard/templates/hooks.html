@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <div class="eyebrow">Administration</div>
+      <h1>Hook control console</h1>
+    </div>
+    {% if config.chain_valid %}
+      <span class="badge ok">Audit chain intact</span>
+    {% else %}
+      <span class="badge bad">Audit chain BROKEN</span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+    <div class="badge bad" style="margin:8px 0;display:block">{{ error }}</div>
+  {% endif %}
+
+  <p style="color:var(--muted);margin:4px 0 0">
+    Changes take effect on the next tool call. Enforcement fails <strong>safe</strong>:
+    a missing or corrupt config leaves every hook ON. Every change below is
+    appended to a SHA-256 hash-chained audit.
+    {% if config.updated_by %}<br>Last change by <strong>{{ config.updated_by }}</strong>.{% endif %}
+  </p>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><div><h2>Surfaces</h2></div></div>
+  <div class="table-wrap">
+    <table class="trace-table">
+      <thead><tr><th>Hook surface</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+      {% for surface, on in config.surfaces.items() %}
+        <tr>
+          <td class="mono">{{ surface }}</td>
+          <td>{% if on %}<span class="badge ok">Enforcing</span>{% else %}<span class="badge bad">Disabled</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/hooks/surface/{{ surface }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="enabled" value="{{ 'false' if on else 'true' }}">
+              <button class="button {{ 'deny' if on else 'primary' }}" type="submit">
+                {{ 'Disable' if on else 'Enable' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><div><h2>Tools</h2></div></div>
+  <p style="color:var(--muted);margin:0 0 8px">A tool switched off is denied by every enabled hook, regardless of arguments.</p>
+  <div class="table-wrap">
+    <table class="trace-table">
+      <thead><tr><th>Tool</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+      {% for t in config.known_tools %}
+        {% set on = config.tools.get(t, True) %}
+        <tr>
+          <td class="mono">{{ t }}</td>
+          <td>{% if on %}<span class="badge ok">Allowed</span>{% else %}<span class="badge bad">Blocked</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/hooks/tool">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="tool" value="{{ t }}">
+              <input type="hidden" name="enabled" value="{{ 'false' if on else 'true' }}">
+              <button class="button {{ 'deny' if on else 'primary' }}" type="submit">
+                {{ 'Block' if on else 'Allow' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><div><h2>Tool policies</h2></div></div>
+  <p style="color:var(--muted);margin:0 0 8px">
+    Override the built-in ToolGuard policy for any tool (JSON schema, side_effect,
+    action, escalate threshold). Validated before it is saved; an invalid policy
+    is rejected, never written.
+  </p>
+  {% if config.policies %}
+  <div class="table-wrap">
+    <table class="trace-table">
+      <thead><tr><th>Name</th><th>Side effect</th><th>Action</th><th>Schema</th><th></th></tr></thead>
+      <tbody>
+      {% for p in config.policies %}
+        <tr>
+          <td class="mono">{{ p.name }}</td>
+          <td>{{ p.side_effect | default("read") }}</td>
+          <td>{{ p.action | default("allow") }}</td>
+          <td>
+            <details>
+              <summary style="cursor:pointer;color:var(--muted)">view</summary>
+              <pre class="mono" style="white-space:pre-wrap;font-size:12px">{{ policies_json.get(p.name, "") }}</pre>
+            </details>
+          </td>
+          <td>
+            <form method="post" action="/hooks/policy/{{ p.name }}/delete">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="button deny" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">No policy overrides  -  every hook uses its built-in defaults.</div>
+  {% endif %}
+
+  <h3 style="margin-top:16px">Add or edit a policy</h3>
+  <form method="post" action="/hooks/policy">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <textarea name="policy_json" rows="12"
+      style="width:100%;font-family:var(--mono);font-size:12px;padding:10px;border:1px solid var(--line-strong);border-radius:8px"
+      placeholder='{
+  "name": "Bash",
+  "side_effect": "destructive",
+  "action": "allow",
+  "escalate_if_severity_gte": "write",
+  "schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}
+}'></textarea>
+    <div style="margin-top:8px">
+      <button class="button primary" type="submit">Save policy</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-header"><div><h2>Tenants</h2></div></div>
+  <p style="color:var(--muted);margin:0 0 8px">
+    Per-tenant permissions: which tools a tenant may use. A tenant with no entry
+    is unmanaged (unrestricted). Empty "allowed" means all tools; a list limits
+    the tenant to exactly those. A hook enforces this against its
+    <span class="mono">PRAMAGENT_TENANT_ID</span>.
+  </p>
+  {% if config.tenants %}
+  <div class="table-wrap">
+    <table class="trace-table">
+      <thead><tr><th>Tenant</th><th>Status</th><th>Allowed tools</th><th>Denied tools</th><th></th></tr></thead>
+      <tbody>
+      {% for tid, t in config.tenants.items() %}
+        <tr>
+          <td class="mono">{{ tid }}</td>
+          <td>{% if t.enabled %}<span class="badge ok">Enabled</span>{% else %}<span class="badge bad">Disabled</span>{% endif %}</td>
+          <td class="mono" style="font-size:12px">{{ (t.allowed_tools | join(", ")) if t.allowed_tools else "all" }}</td>
+          <td class="mono" style="font-size:12px">{{ (t.denied_tools | join(", ")) if t.denied_tools else " - " }}</td>
+          <td>
+            <form method="post" action="/hooks/tenant/{{ tid }}/delete">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="button deny" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">No managed tenants  -  every tenant is unrestricted.</div>
+  {% endif %}
+
+  <h3 style="margin-top:16px">Add or edit a tenant</h3>
+  <form method="post" action="/hooks/tenant" style="display:grid;gap:8px;max-width:640px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Tenant id
+      <input name="tenant_id" required style="width:100%;padding:8px;border:1px solid var(--line-strong);border-radius:8px">
+    </label>
+    <label>Allowed tools <span style="color:var(--muted)">(comma/space separated; empty = all)</span>
+      <input name="allowed_tools" placeholder="Read Grep Glob Write" style="width:100%;padding:8px;border:1px solid var(--line-strong);border-radius:8px;font-family:var(--mono)">
+    </label>
+    <label>Denied tools <span style="color:var(--muted)">(comma/space separated)</span>
+      <input name="denied_tools" placeholder="Bash PowerShell" style="width:100%;padding:8px;border:1px solid var(--line-strong);border-radius:8px;font-family:var(--mono)">
+    </label>
+    <label><input type="checkbox" name="enabled" value="true" checked> Enabled</label>
+    <div><button class="button primary" type="submit">Save tenant</button></div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <div><h2>Change audit</h2></div>
+    <span class="mono" style="color:var(--muted)">head {{ (config.audit_head or "genesis")[:16] }}</span>
+  </div>
+  {% if audit %}
+  <div class="table-wrap">
+    <table class="trace-table">
+      <thead><tr><th>When</th><th>Actor</th><th>Change</th><th>Detail</th><th>Chain hash</th></tr></thead>
+      <tbody>
+      {% for a in audit %}
+        <tr>
+          <td class="mono">{{ a.created_at | round(0) }}</td>
+          <td>{{ a.actor }}</td>
+          <td class="mono">{{ a.action }}</td>
+          <td class="mono" style="font-size:12px">{{ a.detail }}</td>
+          <td class="mono">{{ (a.this_hash or "")[:12] }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">No changes recorded yet.</div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -19,13 +19,25 @@ import re
 import sys
 from typing import Any
 
+# Import pramagent from the repo this hook lives in, not a stale build/
+# site-packages copy for whatever interpreter runs it. Mirrors gemini_cli_hook.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from pramagent.hook_scan import scan_injection, scan_pii
+from pramagent.hook_state import is_enabled as _hook_enabled
+from pramagent.hook_state import get_policies as _central_policies
+from pramagent.hook_state import tool_enabled as _tool_enabled
+from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
+from pramagent.hook_state import targets_protected_path as _targets_protected_path
 from pramagent.layers import ComplianceLayer
 from pramagent.layers.isolation import IsolationLayer
 from pramagent.layers.tool_guard import SideEffect, ToolGuardLayer, ToolPolicy
 from pramagent.types import Verdict
 
 
-_TENANT_ID = "codex-local"
+_TENANT_ID = os.environ.get("PRAMAGENT_TENANT_ID", "codex-local")
 _ACTION_LABEL = "codex_pre_tool_use"
 _LOG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "pramagent_codex_hook.log")
@@ -89,6 +101,23 @@ for _name in ("Read", "LS", "Grep", "Glob"):
     )
 
 
+def _apply_central_policy_overrides() -> None:
+    """Merge admin-console policies over the built-in defaults (see the same
+    helper in scripts/claude_code_hook.py). Invalid overrides are skipped."""
+    try:
+        from pramagent.policies import tool_policy_from_dict
+        for _policy in _central_policies() or []:
+            try:
+                _GUARD.register(tool_policy_from_dict(_policy))
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_apply_central_policy_overrides()
+
+
 _HIGH_RISK_SHELL: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"\brm\s+.*(?:-rf|-fr|--recursive|--force)", re.I),
@@ -119,22 +148,6 @@ _HIGH_RISK_SHELL: list[tuple[re.Pattern[str], str]] = [
         "destructive database command",
     ),
 ]
-
-
-def _iter_strings(value: Any, path: str = "$") -> list[tuple[str, str]]:
-    if isinstance(value, str):
-        return [(path, value)]
-    if isinstance(value, dict):
-        found: list[tuple[str, str]] = []
-        for key, child in value.items():
-            found.extend(_iter_strings(child, f"{path}.{key}"))
-        return found
-    if isinstance(value, list):
-        found = []
-        for index, child in enumerate(value):
-            found.extend(_iter_strings(child, f"{path}[{index}]"))
-        return found
-    return []
 
 
 def _canonical_tool_name(tool_name: str) -> str:
@@ -178,14 +191,10 @@ def _high_risk_shell_reason(tool_name: str, tool_input: dict[str, Any]) -> str |
 
 
 def _isolation_reason(tool_input: dict[str, Any]) -> str | None:
-    pattern_ids: list[str] = []
-    for _path, text in _iter_strings(tool_input):
-        if not text:
-            continue
-        for hit in _ISOLATION.scan_for_injection(text):
-            pid = str(hit.get("pattern_id", "prompt_injection"))
-            if pid not in pattern_ids:
-                pattern_ids.append(pid)
+    # Delegates to the shared all-leaves, decode-aware scanner
+    # (pramagent.hook_scan) so codex catches encoded payloads too, and so all
+    # hook surfaces share one implementation.
+    pattern_ids = scan_injection(tool_input, _ISOLATION)
     if not pattern_ids:
         return None
     return (
@@ -195,18 +204,12 @@ def _isolation_reason(tool_input: dict[str, Any]) -> str | None:
 
 
 def _compliance_reason(tool_input: dict[str, Any]) -> str | None:
-    labels: list[str] = []
-    for _path, text in _iter_strings(tool_input):
-        if not text:
-            continue
-        _scrubbed, redactions = _COMPLIANCE.scrub(text)
-        labels.extend(str(label) for label in redactions)
-    unique = sorted(set(labels))
-    if not unique:
+    labels = scan_pii(tool_input, _COMPLIANCE)
+    if not labels:
         return None
     return (
         "Pramagent Compliance: possible PII/PHI in tool arguments "
-        f"({', '.join(unique)})."
+        f"({', '.join(labels)})."
     )
 
 
@@ -224,6 +227,31 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
     tool_input = raw_input if isinstance(raw_input, dict) else {"value": raw_input}
     canonical_tool = _canonical_tool_name(tool_name)
     session_id = str(event.get("session_id") or event.get("sessionId") or "local")
+
+    # Control-plane self-protection (see scripts/claude_code_hook.py). Refuse any
+    # tool call that would write the hook's own config or admin audit DB, checked
+    # BEFORE the master switch so a tampering write cannot disable the surface
+    # and slip through.
+    protected_hit = _targets_protected_path(canonical_tool, tool_input)
+    if protected_hit:
+        return _deny(
+            f"Pramagent hook self-protection: tool '{canonical_tool}' may not "
+            f"modify the hook control plane ({protected_hit}). Change hook "
+            f"settings through the admin console instead.")
+
+    # Admin master switch (fail-safe; see pramagent.hook_state).
+    if not _hook_enabled("codex"):
+        return {}
+
+    # Per-tool master switch from the admin console: a disabled tool denies.
+    if not _tool_enabled(canonical_tool):
+        return _deny(f"Pramagent hook admin: tool '{canonical_tool}' is disabled")
+
+    # Per-tenant permission from the admin console.
+    if not _tenant_tool_allowed(_TENANT_ID, canonical_tool):
+        return _deny(
+            f"Pramagent hook admin: tenant '{_TENANT_ID}' is not permitted "
+            f"to use tool '{canonical_tool}'")
 
     decision = _GUARD.evaluate(
         tool_name=canonical_tool,
