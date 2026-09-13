@@ -46,8 +46,22 @@ def test_without_require_flag_unreachable_backend_degrades(monkeypatch):
     assert build_tool_guard_backend_from_env() is None
 
 
-def test_validate_http_url_allows_https_public_url():
+def test_validate_http_url_allows_https_public_url(monkeypatch):
+    monkeypatch.setattr(
+        "pramagent.security.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
     assert validate_http_url("https://api.example.com/hook") == "https://api.example.com/hook"
+
+
+def test_validate_http_url_rejects_hostname_resolving_private(monkeypatch):
+    monkeypatch.setattr(
+        "pramagent.security.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("169.254.169.254", 443))],
+    )
+
+    with pytest.raises(UnsafeURLError, match="private or local"):
+        validate_http_url("https://attacker.example/hook")
 
 
 def test_validate_http_url_rejects_non_http_schemes():
@@ -75,8 +89,7 @@ def test_validate_http_url_rejects_public_http_by_default():
         validate_http_url("http://api.example.com/hook")
 
 
-# ── assert_strong_secret (P0-2 / T1-1) ─────────────────────────────────────
-
+# assert_strong_secret
 @pytest.mark.parametrize("weak", sorted(WEAK_SECRET_DENYLIST))
 def test_assert_strong_secret_rejects_every_denylisted_spelling(weak):
     with pytest.raises(RuntimeError, match="MY_SECRET"):
@@ -99,8 +112,7 @@ def test_assert_strong_secret_accepts_strong_value():
     assert_strong_secret("MY_SECRET", "k3qLm9Zr2Xv8Wn4Pt6Ys1Bd5Fg7Hj0Ca")
 
 
-# ── startup guards in the API factory (P0-1 + P0-2) ───────────────────────
-
+# API startup guards
 @pytest.mark.parametrize("weak", sorted(WEAK_SECRET_DENYLIST))
 def test_create_app_refuses_denylisted_jwt_secret(monkeypatch, weak):
     fastapi = pytest.importorskip("fastapi")
@@ -148,10 +160,20 @@ def test_build_default_armor_memory_requires_explicit_opt_in(monkeypatch):
 
 
 def test_dashboard_guard_refuses_underscored_spelling(monkeypatch):
-    """The pre-fix dashboard equality check only caught the hyphenated
-    sentinel; the repo's published underscored value passed it (T1-1)."""
+    """The dashboard rejects the underscored placeholder spelling."""
     dashboard = pytest.importorskip("deploy.dashboard.app")
 
     monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", "change_me_in_production")
     with pytest.raises(RuntimeError, match="PRAMAGENT_JWT_SECRET"):
+        dashboard.validate_dashboard_config()
+
+
+def test_dashboard_guard_checks_effective_dashboard_secret(monkeypatch):
+    dashboard = pytest.importorskip("deploy.dashboard.app")
+    monkeypatch.setattr(
+        dashboard, "PRAMAGENT_JWT_SECRET", "strong-api-secret-value-123456"
+    )
+    monkeypatch.setattr(dashboard, "DASHBOARD_JWT_SECRET", "weak")
+
+    with pytest.raises(RuntimeError, match="PRAMAGENT_DASHBOARD_JWT_SECRET"):
         dashboard.validate_dashboard_config()

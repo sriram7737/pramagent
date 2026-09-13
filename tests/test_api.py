@@ -5,7 +5,8 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from pramagent.api.app import (DEFAULT_NVIDIA_DEMO_MODEL, DemoProductSignals,  # noqa: E402
-                               NVIDIA_DEMO_MODELS, create_app)
+                               NVIDIA_DEMO_MODELS, _forwarded_client_ip,
+                               create_app)
 from pramagent.api.app import build_default_armor  # noqa: E402
 from pramagent import Pramagent, Verdict  # noqa: E402
 from pramagent.auth import APIKeyRegistry  # noqa: E402
@@ -28,7 +29,7 @@ def auth_client():
     scopes explicitly because these tests exercise run/erase/decide — unscoped
     keys are read-only by default (A1)."""
     reg = APIKeyRegistry()
-    # approve is granted explicitly: admin no longer implies it (finding 1.3),
+    # approve is granted explicitly: admin no longer implies it ,
     # and these tests exercise /hitl/{id}/decide.
     all_scopes = "read|write|admin|audit|approve"
     key_a = reg.issue_key("tenant_a", scopes=all_scopes)
@@ -176,8 +177,8 @@ def test_build_default_armor_uses_encrypted_sqlite_when_key_present(monkeypatch,
 
 
 def test_build_default_armor_wires_encryption_key_into_postgres_store(monkeypatch):
-    """PRAMAGENT_ENCRYPTION_KEY used to be silently ignored when
-    PRAMAGENT_POSTGRES_DSN was set — build_default_armor() must forward it
+    """With Postgres configured, build_default_armor() forwards
+    PRAMAGENT_ENCRYPTION_KEY
     to PostgresStore.from_dsn() so Postgres gets the same application-level
     column encryption SQLite already had."""
     from pramagent import store_postgres
@@ -392,10 +393,7 @@ def test_demo_signal_admin_requires_key_and_hides_plaintext(monkeypatch):
         headers={"Authorization": "Bearer wrong"},
     ).status_code == 401
 
-    # The HTML admin shell must require the same key as the JSON data
-    # endpoint — it used to render for anyone once demo mode + an admin key
-    # were configured, checking only that a key was configured, never that
-    # the caller presented it (ISSUE-8).
+    # The HTML shell and JSON endpoint require the same admin key.
     assert local_client.get("/demo/admin/signals").status_code == 401
     assert local_client.get(
         "/demo/admin/signals",
@@ -950,7 +948,7 @@ def test_demo_hitl_wire_transfer_idles_before_provider(monkeypatch):
 
 
 def test_demo_emergency_override_blocked_before_nvidia_provider(monkeypatch):
-    """SEC-2026-06-15-01 (SE-2): a fake 'emergency override' that asks to
+    """a fake 'emergency override' that asks to
     disable content filters must be caught by the isolation heuristics before
     the model is ever called."""
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
@@ -980,7 +978,7 @@ def test_demo_emergency_override_blocked_before_nvidia_provider(monkeypatch):
 
 
 def test_demo_hex_encoded_injection_blocked_before_nvidia_provider(monkeypatch):
-    """SEC-2026-06-15-02 (GAP 1): a hex-encoded 'ignore all previous
+    """a hex-encoded 'ignore all previous
     instructions' is decoded and blocked at the isolation layer before the
     model runs."""
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
@@ -1008,7 +1006,7 @@ def test_demo_hex_encoded_injection_blocked_before_nvidia_provider(monkeypatch):
 
 
 def test_demo_multilingual_override_token_blocked_before_nvidia_provider(monkeypatch):
-    """SEC-2026-06-15-02 (GAP 3/4): a Spanish/German jailbreak that asks the
+    """a Spanish/German jailbreak that asks the
     model to emit OVERRIDE_ACCEPTED is caught at the input layer regardless of
     language — the literal token is the signal. (The output post-check remains
     the backstop if the input ever slips through.)"""
@@ -1037,7 +1035,7 @@ def test_demo_multilingual_override_token_blocked_before_nvidia_provider(monkeyp
 
 
 def test_demo_withholds_override_confirmation_output(monkeypatch):
-    """SEC-2026-06-15-01 (SE-2) defense-in-depth: even if an override prompt
+    """defense-in-depth: even if an override prompt
     slips past isolation, a model that declares its own filters disabled must
     have that output withheld by the post-safety rule."""
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
@@ -1070,7 +1068,7 @@ def test_demo_withholds_override_confirmation_output(monkeypatch):
 
 
 def test_demo_margin_call_idles_before_provider(monkeypatch):
-    """SEC-2026-06-15 (F-4): approving a margin call / ordering a liquidation
+    """approving a margin call / ordering a liquidation
     is a consequential financial action and must route through the HITL gate
     instead of returning the model's 'Approved, proceed' text."""
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
@@ -1107,7 +1105,7 @@ def test_demo_margin_call_idles_before_provider(monkeypatch):
 
 
 def test_demo_iban_transfer_idles_before_provider(monkeypatch):
-    """SEC-2026-06-15 (F-2): an IBAN/SWIFT international transfer must gate on
+    """an IBAN/SWIFT international transfer must gate on
     HITL the same way an ACH transfer does."""
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     seen = {"called": False}
@@ -1310,10 +1308,37 @@ def test_demo_rate_limit(monkeypatch):
     assert third.status_code == 200
 
 
+def test_demo_rate_limit_ignores_untrusted_forwarded_for(monkeypatch):
+    monkeypatch.delenv("PRAMAGENT_TRUSTED_PROXY_IPS", raising=False)
+    assert _forwarded_client_ip("203.0.113.10", "1.2.3.4") == "203.0.113.10"
+
+
+def test_demo_rate_limit_walks_trusted_proxy_chain(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_TRUSTED_PROXY_IPS", "10.0.0.0/8")
+    assert (
+        _forwarded_client_ip("10.0.0.2", "198.51.100.8, 10.0.0.1")
+        == "198.51.100.8"
+    )
+
+
+def test_demo_streaming_body_limit_ignores_false_small_content_length(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+    oversized = b'{"prompt":"' + (b"a" * 300_001) + b'"}'
+
+    response = local_client.post(
+        "/demo/run",
+        content=oversized,
+        headers={"Content-Type": "application/json", "Content-Length": "1"},
+    )
+
+    assert response.status_code == 413
+
+
 def test_ready_is_o1_and_discloses_nothing(client):
     """Readiness is O(1) dependency pings only — no chain verification, no
     trace counts, no auth/Slack details on the unauthenticated surface
-    (P1-3/T1-5/P2-18)."""
+    ."""
     # seed one trace so the probe runs against a non-empty store
     client.post("/v1/run", json={"prompt": "seed", "tenant_id": "t"})
     r = client.get("/health/ready")
@@ -1374,7 +1399,7 @@ def test_run_blocks_disallowed_input(client):
 
 def test_oversized_prompt_is_rejected_before_the_pipeline(client):
     """Bodies past max_length are refused with 422 at parse time — the
-    isolation cap alone runs too late to defend the parse (P2-4/T1-8)."""
+    isolation cap alone runs too late to defend the parse ."""
     r = client.post("/v1/run", json={"prompt": "x" * 300_000})
     assert r.status_code == 422
 
@@ -1441,6 +1466,7 @@ def test_audit_verify_accepts_audit_scoped_key_without_read_scope():
     r = local_client.get("/v1/audit/verify", headers={"Authorization": f"Bearer {audit_key}"})
     assert r.status_code == 200
     assert r.json()["chain_valid"] is True
+    assert "records" not in r.json()
 
     # Same key must NOT be able to read trace content (audit != read).
     r2 = local_client.get("/v1/trace/does-not-exist", headers={"Authorization": f"Bearer {audit_key}"})
@@ -1578,6 +1604,26 @@ def test_metrics_increment(client):
     assert "usage_quota_enabled" in m
 
 
+def test_global_metrics_require_admin_scope():
+    registry = APIKeyRegistry()
+    read_key = registry.issue_key("tenant_a", scopes="read")
+    admin_key = registry.issue_key("ops", scopes="admin")
+    local_client = TestClient(create_app(registry=registry))
+
+    assert local_client.get(
+        "/v1/metrics", headers={"Authorization": f"Bearer {read_key}"}
+    ).status_code == 403
+    assert local_client.get(
+        "/v1/metrics", headers={"Authorization": f"Bearer {admin_key}"}
+    ).status_code == 200
+
+
+def test_security_policy_is_enforced_by_default(client):
+    response = client.get("/health")
+    assert "content-security-policy" in response.headers
+    assert "content-security-policy-report-only" not in response.headers
+
+
 def test_run_quota_blocks_after_limit():
     usage = UsageTracker(UsageLimits(max_calls=1, window_s=60))
     local_client = TestClient(create_app(usage_tracker=usage))
@@ -1625,7 +1671,7 @@ def test_usage_ledger_endpoint_is_tenant_scoped():
 def test_unversioned_usage_ledger_scoped_when_unauthenticated():
     """/usage/ledger with no tenant_id and no auth must not dump the whole
     ledger across every tenant just because the resolved tenant was empty
-    (ISSUE-1/7)."""
+    ."""
     usage = UsageTracker(ledger=InMemoryUsageLedger())
     local_client = TestClient(create_app(usage_tracker=usage))
 
@@ -1696,7 +1742,7 @@ def test_tool_validate_endpoint_reaches_durable_audit_log(client):
     """/v1/tools/validate calls ToolGuardLayer directly, bypassing
     Pramagent.validate_tool() — this decision must still land in the
     durable, hash-chained audit backend, not just ToolGuardLayer's
-    in-memory bounded deque (ISSUE-4)."""
+    in-memory bounded deque ."""
     r = client.post("/v1/tools/validate", json={
         "tool_name": "shell",
         "arguments": {},
@@ -1796,7 +1842,7 @@ def test_unauthenticated_hitl_pending_scoped_to_tenant_id():
     """With no API keys configured, /hitl/pending must not return every
     tenant's approvals just because the caller supplied no tenant_id — the
     resolved (unauthenticated) tenant is "default", a concrete value, not
-    a skipped check (ISSUE-1/7)."""
+    a skipped check ."""
     registry = SlackApprovalRegistry()
     victim = registry.create("wire_transfer", {"tenant": "victim"})
     armor = Pramagent(hitl=HITLLayer(
@@ -1814,9 +1860,7 @@ def test_unauthenticated_hitl_pending_scoped_to_tenant_id():
 
 
 def test_unauthenticated_hitl_decide_scoped_to_tenant_id():
-    """An unauthenticated caller must not be able to decide another logical
-    tenant's pending approval just because the enforcement check used to be
-    skipped whenever the resolved tenant was empty (ISSUE-1/7)."""
+    """An unauthenticated caller cannot decide another tenant's approval."""
     registry = SlackApprovalRegistry()
     victim = registry.create("wire_transfer", {"tenant": "victim"})
     armor = Pramagent(hitl=HITLLayer(
@@ -1836,7 +1880,7 @@ def test_unauthenticated_hitl_decide_scoped_to_tenant_id():
     assert own.json()["decision"] == "approved"
 
 
-# ── Finding #1: unversioned routes must require auth ───────────────────
+# unversioned routes must require auth
 @pytest.mark.parametrize(
     ("method", "path"),
     [
@@ -1850,8 +1894,7 @@ def test_unauthenticated_hitl_decide_scoped_to_tenant_id():
     ],
 )
 def test_unversioned_routes_require_auth(auth_client, method, path):
-    """With API-key auth enabled, every unversioned route must return 401
-    without a valid key — these shipped unauthenticated (audit Finding #1)."""
+    """With API-key auth enabled, unversioned routes require a valid key."""
     client, _, _ = auth_client
     kwargs = {"json": {"approved": True}} if method == "POST" else {}
     r = client.request(method, path, **kwargs)
@@ -1896,10 +1939,10 @@ def test_unversioned_traces_list_scoped_to_caller_tenant(auth_client):
 
 
 def test_noauth_trace_reads_scoped_to_resolved_tenant():
-    """HIGH-1: with no API keys configured, the trace-read endpoints must not
+    """With no API keys configured, the trace-read endpoints must not
     return every tenant's prompts/outputs. They resolve to the "default"
     bucket (or the caller-supplied tenant_id), never an unscoped fetch — the
-    same empty-tenant bypass class as ISSUE-1/7, on more sensitive data."""
+    same empty-tenant bypass class as , on more sensitive data."""
     local_client = TestClient(create_app(armor=Pramagent()))
 
     a = local_client.post(
@@ -1909,8 +1952,7 @@ def test_noauth_trace_reads_scoped_to_resolved_tenant():
         "/v1/run", json={"prompt": "tenant_b secret", "tenant_id": "tenant_b"},
     ).json()
 
-    # GET /traces with no tenant_id resolves to "default" — neither tenant's
-    # records leak (pre-fix this returned both).
+    # An omitted tenant resolves to the isolated default bucket.
     unscoped = local_client.get("/traces").json()
     assert all(t["tenant_id"] == "default" for t in unscoped)
     assert not any(t["tenant_id"] in {"tenant_a", "tenant_b"} for t in unscoped)
@@ -1947,7 +1989,7 @@ def test_unversioned_hitl_decide_blocks_cross_tenant(auth_client):
                         headers={"Authorization": f"Bearer {key_b}"})
     assert cross.status_code == 404
     # the request must still be pending — asserted through the public API,
-    # not the registry's private state (P3-17)
+    # not the registry's private state
     still_pending = client.get(
         "/hitl/pending",
         headers={"Authorization": f"Bearer {key_a}"}).json()["items"]
@@ -2012,12 +2054,9 @@ def test_hitl_decide_records_approver_identity():
     assert r.json()["decided_by"] == "api:tenant_a"
     # persisted on the in-process approval record too
     assert registry._pending[pending.request_id].decided_by == "api:tenant_a"
-
-
-# ── Finding #5: erase/prune must refuse when no tenant is authenticated ─
+# Erase and prune require an authenticated tenant.
 def test_unauthenticated_erase_is_refused(client):
-    """With auth disabled the resolved tenant is "" — that must NOT grant
-    implicit ownership of every tenant's data (audit Finding #5)."""
+    """No-auth mode does not grant ownership of every tenant's data."""
     client.post("/v1/run", json={"prompt": "data", "tenant_id": "victim"})
     r = client.delete("/v1/tenant/victim/traces")
     assert r.status_code == 403
@@ -2040,7 +2079,7 @@ def test_cross_tenant_erase_returns_403(auth_client):
 
 
 def test_erase_endpoint_redacts_audit_chain(auth_client):
-    """Finding #4 end-to-end: erasing a tenant over HTTP must also tombstone
+    """end-to-end: erasing a tenant over HTTP must also tombstone
     its payloads in the (separate) audit chain backend."""
     import json as _json
     client, key_a, _ = auth_client

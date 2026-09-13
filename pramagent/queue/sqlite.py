@@ -53,7 +53,7 @@ class SQLiteHITLQueue:
         with self._lock:
             self._conn.close()
 
-    # ── HITLQueueStore protocol ────────────────────────────────────────
+    # HITLQueueStore protocol
     def enqueue(self, request: QueuedRequest) -> str:
         row = to_row(request)
         with self._lock:

@@ -1,5 +1,5 @@
 """
-SEC-2026-06-15-02: the semantic embedding classifier as the language-agnostic
+the semantic embedding classifier as the language-agnostic
 secondary injection layer.
 
 sentence-transformers (pramagent[ml]) is optional and not installed in CI, so
@@ -31,8 +31,7 @@ def _clean_cache():
     _reset_shared_classifiers()
 
 
-# ── caching: the reason the embedding model is usable from the demo ─────────
-
+# caching: the reason the embedding model is usable from the demo
 def test_shared_classifier_is_cached_singleton():
     a = get_shared_classifier(force_keyword_only=True)
     b = get_shared_classifier(force_keyword_only=True)
@@ -84,7 +83,7 @@ def test_warm_returns_false_when_builder_falls_back_to_keyword(monkeypatch):
                       KeywordFallbackClassifier)
 
 
-# ── embedding similarity MECHANISM (injected fake model) ────────────────────
+# embedding similarity MECHANISM (injected fake model)
 # Proves the embedding path flags a multilingual injection the English keyword
 # prefilter misses, without requiring the real model. The fake encoder returns a
 # controlled vector so cosine vs threshold is deterministic.
@@ -164,16 +163,14 @@ def test_embedding_layer_passes_benign_multilingual_text():
 
 
 def test_hindi_override_is_in_exemplar_corpus():
-    """The shipped exemplar corpus must include the languages red-team proved
-    bypass the keyword path, so the real embedding model has anchors for them."""
+    """The exemplar corpus includes Hindi instruction overrides."""
     joined = "\n".join(INJECTION_EXEMPLARS)
     assert "अनदेखा" in joined          # Hindi
     assert "Игнорируй" in joined        # Russian
     assert "تجاهل" in joined            # Arabic
 
 
-# ── real model (only when pramagent[ml] is installed) ───────────────────────
-
+# real model (only when pramagent[ml] is installed)
 @pytest.mark.skipif(
     os.environ.get("PRAMAGENT_RUN_REAL_EMBEDDING_TEST") != "1",
     reason="real embedding model check is optional; set PRAMAGENT_RUN_REAL_EMBEDDING_TEST=1",

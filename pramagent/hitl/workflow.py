@@ -41,8 +41,7 @@ from ..types import HITLStatus
 log = logging.getLogger(__name__)
 
 
-# ─────────────────────────── audit record ─────────────────────────────────
-
+# audit record
 @dataclass
 class ApprovalRecord:
     record_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -63,7 +62,7 @@ class ApprovalRecord:
         # once, matching the "tenant" / "tenant_id" convention core.py's
         # HITL contexts already use, means ApprovalAuditLog.all()/
         # for_action() can filter by tenant without every caller having to
-        # remember to set it (ISSUE-11).
+        # remember to set it.
         if not self.tenant_id:
             self.tenant_id = (
                 self.context.get("tenant_id") or self.context.get("tenant") or "")
@@ -95,7 +94,7 @@ class ApprovalAuditLog:
         ApproverChain/QuorumApprover/HITLWorkflowLayer instance unless a
         caller supplies its own `audit_log=`, so an unscoped `.all()` call
         returns every tenant's approval history. Pass tenant_id to scope it
-        (ISSUE-11)."""
+        ."""
         if not tenant_id:
             return list(self._records)
         return [r for r in self._records if r.tenant_id == tenant_id]
@@ -122,8 +121,7 @@ def get_audit_log() -> ApprovalAuditLog:
     return _GLOBAL_AUDIT_LOG
 
 
-# ─────────────────────────── approver chain ───────────────────────────────
-
+# approver chain
 ApproverCallable = Callable[[str, dict], "asyncio.Future[Optional[bool]]"]
 
 
@@ -187,8 +185,7 @@ class ApproverChain:
         return None
 
 
-# ─────────────────────────── quorum approver ──────────────────────────────
-
+# quorum approver
 class QuorumApprover:
     """Fan-out to N approvers; require ``required`` approvals within timeout_s.
 
@@ -279,8 +276,7 @@ class QuorumApprover:
         return None
 
 
-# ───────────────────────── HITLWorkflowLayer ──────────────────────────────
-
+# HITLWorkflowLayer
 class HITLWorkflowLayer:
     """Drop-in replacement for HITLLayer with full workflow support.
 

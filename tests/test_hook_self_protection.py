@@ -1,4 +1,4 @@
-"""Regression tests for hook control-plane self-protection (SEC-2026-08-30).
+"""Regression tests for hook control-plane self-protection.
 
 The hooks exist to constrain a possibly prompt-injected coding agent. Before
 this protection, the guard's own config file (``pramagent_hook_config.json``)

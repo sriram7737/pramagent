@@ -48,8 +48,7 @@ from typing import Any, Dict, Generator, Optional
 
 log = logging.getLogger(__name__)
 
-# ── optional OTel imports ────────────────────────────────────────────────
-
+# optional OTel imports
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
@@ -61,8 +60,7 @@ try:
 except ImportError:
     _OTEL_AVAILABLE = False
 
-# ── module state ─────────────────────────────────────────────────────────
-
+# module state
 _tracer: Optional[Any] = None   # opentelemetry.trace.Tracer or None
 _configured = False
 
@@ -132,8 +130,7 @@ def _add_console_exporter(provider: Any) -> None:
         log.debug("Could not add console span exporter: %s", exc)
 
 
-# ── public helpers ────────────────────────────────────────────────────────
-
+# public helpers
 @contextmanager
 def trace_layer(
     layer_name: str,
@@ -222,8 +219,7 @@ def current_trace_id() -> Optional[str]:
     return None
 
 
-# ── no-op span (when OTel is absent) ─────────────────────────────────────
-
+# no-op span (when OTel is absent)
 class _NoOpSpan:
     """Returned by trace_layer when OTel is not configured. All calls are no-ops."""
 

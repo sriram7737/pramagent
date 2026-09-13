@@ -3,7 +3,7 @@ image:
   repository: pramagent
   tag: "0.7.4"
   pullPolicy: IfNotPresent
-# Hardened pod defaults (P3-13/T2-9): non-root, read-only root FS, no
+# Hardened pod defaults : non-root, read-only root FS, no
 # privilege escalation, all capabilities dropped. A writable emptyDir is
 # mounted at /tmp for scratch space.
 podSecurityContext:

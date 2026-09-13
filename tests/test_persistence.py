@@ -82,7 +82,7 @@ def test_sqlite_chain_uses_hmac_signing_key_when_configured():
     """When PRAMAGENT_SIGNING_KEY is wired in, verify_chain() must fail if the
     wrong key (or no key) is used to recompute it — otherwise the setting is
     dead config that implies a security property the chain doesn't have
-    (ISSUE-3)."""
+    ."""
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     try:
@@ -246,7 +246,7 @@ def test_sqlite_multiple_tenants_isolated():
 
 
 def test_sqlite_verify_returns_broken_links_like_postgres():
-    """B4: SQLiteStore.verify() exists and returns the same broken-link list
+    """SQLiteStore.verify() returns the same broken-link list
     shape PostgresStore.verify() does, so `pramagent audit-verify-watch`
     works against the default SQLite backend instead of crashing with
     AttributeError."""

@@ -28,7 +28,7 @@ from pramagent import _pg
 from pramagent.queue.base import QueuedRequest, RequestStatus
 from pramagent.queue.postgres import PostgresHITLQueue
 
-# T2/T3/T4: set PRAMAGENT_REQUIRE_LIVE_PG=1 in CI so a missing Docker CLI fails
+# Set PRAMAGENT_REQUIRE_LIVE_PG=1 in CI so a missing Docker CLI fails
 # loudly rather than silently skipping this tenant-isolation proof.
 _DOCKER = shutil.which("docker") is not None
 if not _DOCKER and os.environ.get("PRAMAGENT_REQUIRE_LIVE_PG", "").strip().lower() in {

@@ -60,7 +60,7 @@ async def test_concurrent_returned_trace_prev_hash_matches_stored_link():
 
 
 def test_chain_survives_threaded_writers():
-    """Genuinely threaded writers against one shared store (P1-5/T2-4).
+    """Genuinely threaded writers against one shared store.
 
     The single-event-loop smoke above can never preempt the head-read→append
     sequence, so it stays green even when the chain forks under threads —

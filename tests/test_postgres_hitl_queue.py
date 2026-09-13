@@ -23,8 +23,7 @@ psycopg2 = pytest.importorskip("psycopg2")
 import psycopg2.sql  # noqa: E402  (F1: not auto-imported by `import psycopg2`)
 
 
-# ─────────────────── F1: driver.sql must exist on psycopg2 ──────────────────
-
+# psycopg2 requires driver.sql
 def test_import_driver_exposes_sql_submodule():
     """F1 regression: ``import psycopg2`` alone does NOT bind the ``sql``
     submodule, so ``driver.sql`` raised AttributeError and the queue could
@@ -32,13 +31,12 @@ def test_import_driver_exposes_sql_submodule():
     now guarantee the submodule is loaded."""
     flavor, driver = _import_driver()
     assert driver is not None
-    # The attribute access itself is what used to blow up.
+    # Both supported drivers expose the SQL composition helper.
     assert driver.sql is not None
     assert hasattr(driver.sql, "Identifier")
 
 
-# ────────────────────────── fake psycopg driver ────────────────────────────
-
+# fake psycopg driver
 _COLUMNS = ["request_id", "action", "context", "tenant_id", "created_at",
             "decided_at", "status", "decided_by", "notes"]
 
@@ -174,8 +172,7 @@ def _enqueue(q, tenant="acme", action="wire_transfer"):
     return req
 
 
-# ─────────────────────────── T1: CRUD coverage ─────────────────────────────
-
+# CRUD coverage
 def test_construct_and_enqueue_get_roundtrip(queue):
     q, _ = queue
     req = _enqueue(q)
@@ -204,8 +201,7 @@ def test_expire_marks_expired(queue):
     assert q.get(req.request_id).status == RequestStatus.EXPIRED.value
 
 
-# ─────────────────── D1: cross-tenant isolation ─────────────────────────────
-
+# Cross-tenant isolation
 def test_get_is_tenant_scoped(queue):
     q, _ = queue
     req = _enqueue(q, tenant="tenant-a")
@@ -229,8 +225,7 @@ def test_decide_rejects_cross_tenant(queue):
 
 
 def test_queued_request_requires_explicit_tenant():
-    """D3: QueuedRequest.new must not silently bucket a request as 'default' —
-    an explicit, non-empty tenant is required."""
+    """Queued requests require an explicit, non-empty tenant."""
     QueuedRequest.new("wire_transfer", {}, tenant_id="acme")   # ok
     for bad in ("", "   ", None):
         with pytest.raises(ValueError):

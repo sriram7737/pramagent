@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Security
+
+- Validate every `PRAMAGENT_JWT_SECRETS` rotation entry and the effective
+  `PRAMAGENT_DASHBOARD_JWT_SECRET` with the same weak-secret startup gate.
+- Canonicalize percent-encoded paths, non-standard IP literals, mapped IPv6,
+  NFKC Unicode, and zero-width characters before guard matching; resolve DNS
+  for configured outbound URLs and reject private or local results.
+- Detect dangerous tool chains as ordered subsequences within the configured
+  window, while attributing an alert only to the call that completes it.
+- Bind hook configuration to the latest HMAC-SHA-256 admin-audit entry. Hook
+  enforcement fails closed on mismatch, missing history, or missing signing
+  keys; the admin console provides an explicit legacy-state binding action.
+- Require admin scope for global metrics, remove global record counts from
+  audit verification, trust `X-Forwarded-For` only through configured proxies,
+  enforce the demo body limit while streaming, and enforce CSP by default.
+- Make unauthenticated API mode single-tenant by default and reject unsafe S3
+  tenant identifiers used in archive keys and deletion prefixes.
+
 ## v0.8.7 - 2026-08-12
 
 ### Added

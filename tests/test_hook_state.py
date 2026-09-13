@@ -3,6 +3,7 @@ honor it — with emphasis on the fail-safe property: a missing, corrupt, or
 partial config must never silently drop enforcement.
 """
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -90,8 +91,7 @@ def test_unknown_surface_toggle_rejected():
         hook_admin.set_surface_enabled("nonexistent", False, actor="t")
 
 
-# ── tenant permissions ──────────────────────────────────────────────────────
-
+# tenant permissions
 def test_unmanaged_tenant_is_unrestricted():
     assert hook_state.tenant_tool_allowed("never-configured", "Bash") is True
 
@@ -136,3 +136,60 @@ def test_tenant_change_is_audited():
     actions = [a["action"] for a in hook_admin.read_audit(20)]
     assert "upsert_tenant" in actions
     assert hook_admin.verify_chain() is True
+
+
+def test_out_of_band_config_edit_fails_closed():
+    hook_admin.set_surface_enabled("claude", True, actor="dashboard:admin")
+    path = Path(hook_state.state_path())
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["surfaces"]["claude"] = False
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    valid, reason = hook_state.integrity_status()
+    assert valid is False
+    assert "latest audited state" in reason
+    assert hook_state.is_enabled("claude") is True
+    with pytest.raises(RuntimeError, match="integrity check failed"):
+        hook_admin.set_tool_enabled("Bash", False, actor="dashboard:admin")
+
+
+def test_admin_change_records_matching_state_hash():
+    result = hook_admin.set_tool_enabled("Bash", False, actor="dashboard:admin")
+    latest = hook_admin.read_audit(1)[0]
+
+    assert latest["detail"]["state_hash"] == hook_state.state_digest(result["state"])
+    assert hook_state.integrity_status() == (True, "verified")
+
+
+def test_deleted_audit_history_makes_config_fail_closed():
+    hook_admin.set_surface_enabled("claude", False, actor="dashboard:admin")
+    Path(hook_state.audit_path()).unlink()
+
+    valid, reason = hook_state.integrity_status()
+    assert valid is False
+    assert "no audit history" in reason
+    assert hook_state.is_enabled("claude") is True
+
+
+def test_unsigned_hook_admin_mutation_is_refused(monkeypatch):
+    monkeypatch.delenv("PRAMAGENT_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("PRAMAGENT_SIGNING_KEYS", raising=False)
+
+    with pytest.raises(RuntimeError, match="PRAMAGENT_SIGNING_KEY"):
+        hook_admin.set_surface_enabled("claude", False, actor="dashboard:admin")
+    assert not Path(hook_state.state_path()).exists()
+
+
+def test_legacy_config_requires_deliberate_binding():
+    path = Path(hook_state.state_path())
+    path.write_text(json.dumps({"surfaces": {"claude": False}}), encoding="utf-8")
+
+    assert hook_state.is_enabled("claude") is True
+    hook_admin.bind_legacy_state(actor="dashboard:admin")
+    assert hook_state.integrity_status() == (True, "verified")
+    assert hook_state.is_enabled("claude") is False
+
+
+def test_empty_audit_actor_is_refused():
+    with pytest.raises(ValueError, match="authenticated actor"):
+        hook_admin.set_surface_enabled("claude", False, actor="")

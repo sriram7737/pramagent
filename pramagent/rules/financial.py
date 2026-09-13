@@ -25,7 +25,7 @@ from ..types import Verdict
 
 
 _PATTERNS: list[tuple[str, str, str, Verdict]] = [
-    # ── Card brand-specific PAN (with BIN ranges) ───────────────────────
+    # Card brand-specific PAN (with BIN ranges)
     # Visa: starts with 4, 13 or 16 digits
     ("fin_pan_visa",
      r"\b4\d{3}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,4}\b",
@@ -61,7 +61,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"\b(?:exp(?:iry|ires|iration)?|valid\s+thru)\s*[:#]?\s*(?:0[1-9]|1[0-2])\s*/\s*\d{2,4}\b",
      "PCI-DSS: card expiry in context", Verdict.REDACT),
 
-    # ── Bank wire details ──────────────────────────────────────────────
+    # Bank wire details
     # SWIFT / BIC: 8 or 11 chars (4 letter bank, 2 letter country, 2 alnum location, optional 3 alnum branch)
     ("fin_swift_bic",
      r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b",
@@ -72,7 +72,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"routing\s*(?:number|#)?\s*[:.]?\s*\d{9}[\s\S]{0,40}account\s*(?:number|#)?\s*[:.]?\s*\d{6,17}",
      "Banking: routing+account pair", Verdict.REDACT),
 
-    # ── Crypto wallets ─────────────────────────────────────────────────
+    # Crypto wallets
     ("fin_crypto_btc",
      r"\b(?:bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b",
      "Crypto: Bitcoin wallet", Verdict.REDACT),
@@ -86,7 +86,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"\br[a-km-zA-HJ-NP-Z1-9]{24,34}\b",
      "Crypto: XRP address", Verdict.REDACT),
 
-    # ── Tax / national ID numbers ──────────────────────────────────────
+    # Tax / national ID numbers
     # US EIN — XX-XXXXXXX
     ("fin_us_ein",
      r"\b\d{2}-\d{7}\b",
@@ -104,7 +104,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"\b\d{3}[\s-]\d{3}[\s-]\d{3}\b(?=.*\b(?:SIN|social\s+insurance)\b)",
      "Tax: Canada SIN (in context)", Verdict.REDACT),
 
-    # ── High-sensitivity (BLOCK) ───────────────────────────────────────
+    # High-sensitivity (BLOCK)
     # PCI track data — magnetic stripe / chip dumps
     ("fin_track_data",
      r"(?:%B\d{12,19}\^[A-Z\s/]{2,26}\^\d{4}|;\d{12,19}=\d{4})",

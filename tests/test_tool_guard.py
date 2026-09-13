@@ -30,7 +30,7 @@ def _guard():
     ])
 
 
-# ── Finding 6.1: the injection scanner is bounded (depth + size) ──
+# the injection scanner is bounded (depth + size)
 def test_scanner_rejects_deeply_nested_input_without_recursionerror():
     nested = "x"
     for _ in range(500):          # far deeper than the cap, but < Python's limit
@@ -48,7 +48,7 @@ def test_scanner_still_clean_on_normal_input():
     assert scan_arguments_for_injection({"to": "a@b.com", "body": "hello"}) == []
 
 
-# ── Finding 2.3: standalone ToolGuard decisions can reach the durable chain ──
+# standalone ToolGuard decisions can reach the durable chain
 def test_standalone_toolguard_writes_to_durable_audit_when_configured():
     from pramagent.audit import HashChainBackend
 
@@ -73,8 +73,7 @@ def test_standalone_toolguard_without_audit_backend_keeps_prior_behavior():
     assert len(guard.audit_log) == 1  # only the in-process deque
 
 
-# ── ISSUE-14: argument-injection false-positive tuning ─────────────────────
-
+# argument-injection false-positive tuning
 def _pids(text):
     return {f["pattern_id"] for f in scan_arguments_for_injection(text)}
 
@@ -104,8 +103,7 @@ def test_stacked_query_breakout_with_update_set_is_still_flagged():
 
 
 def test_stacked_create_index_view_trigger_breakout_is_flagged():
-    """LOW-1: index/view/trigger were missing from the stacked-query keyword
-    list, so a breakout running those DDL statements slipped past."""
+    """Stacked schema-level DDL is classified as SQL injection."""
     assert "sql_injection" in _pids("1'; CREATE INDEX evil ON users(x); --")
     assert "sql_injection" in _pids("1'; CREATE VIEW leak AS SELECT * FROM x; --")
     assert "sql_injection" in _pids("1'; CREATE TRIGGER t BEFORE INSERT ON x; --")
@@ -145,6 +143,26 @@ def test_cloud_metadata_ssrf_target_still_flagged_unconditionally():
     use, unlike a bare loopback address, so it stays unconditional."""
     assert "ssrf_attempt" in _pids("fetch http://169.254.169.254/latest/meta-data/")
     assert "ssrf_attempt" in _pids("read file://169.254.169.254/latest/meta-data/")
+
+
+@pytest.mark.parametrize("url", [
+    "http://2852039166/latest/meta-data/",
+    "http://0xA9FEA9FE/latest/meta-data/",
+    "http://0251.0376.0251.0376/latest/meta-data/",
+    "http://[::ffff:a9fe:a9fe]/latest/meta-data/",
+    "http://2130706433/admin",
+])
+def test_noncanonical_private_ip_urls_are_flagged(url):
+    assert "ssrf_attempt" in _pids(url)
+
+
+@pytest.mark.parametrize("path", [
+    "..%2f..%2fetc%2fshadow",
+    "%252e%252e%255cwindows%255cwin.ini",
+    "safe/%2e%2e/private.txt",
+])
+def test_encoded_path_traversal_is_canonicalized(path):
+    assert "path_traversal" in _pids(path)
 
 
 def test_unknown_tool_blocks_by_default():
@@ -315,10 +333,7 @@ def test_session_limit_fail_open_opt_in_uses_memory_fallback():
 
 
 def test_schema_violation_reason_omits_raw_value_b1():
-    """B1: a failing argument value must not appear verbatim in the durable
-    ToolDecision.reason. Schema-violation reasons are written to the audit
-    log and are not always PII-pattern-shaped, so the instance is omitted
-    entirely rather than pattern-scrubbed."""
+    """Schema errors omit raw values before reaching the audit trail."""
     guard = _guard()
     fake_ssn = "123-45-6789"
     decision = guard.evaluate(
@@ -428,8 +443,7 @@ async def test_core_pipeline_uses_async_tool_guard_judge():
     assert "tool blocked" in response.block_reason
 
 
-# ── Finding #8: ESCALATE must route through HITL in the pipeline ──────────
-
+# ESCALATE must route through HITL in the pipeline
 def _escalating_guard():
     return ToolGuardLayer(policies=[
         ToolPolicy(
@@ -510,8 +524,7 @@ async def test_escalated_tool_completes_after_hitl_approval():
     assert approvals, "approved HITL event must be recorded in the trace"
 
 
-# ── Finding #8: validate_output wired into the pipeline ───────────────────
-
+# validate_output wired into the pipeline
 @pytest.mark.asyncio
 async def test_pipeline_withholds_output_with_exfil_markers():
     """Provider output containing secrets (AWS key) must be withheld by the
@@ -539,8 +552,7 @@ async def test_pipeline_passes_clean_output_through_validation():
     assert ("ToolGuardLayer.validate_output", "ok") in events
 
 
-# ── Finding #10: concurrency safety ───────────────────────────────────────
-
+# concurrency safety
 def test_tool_guard_in_memory_state_is_thread_safe():
     """Concurrent evaluate() calls must not lose call-count or history
     updates (the in-memory path is now mutated under a lock)."""

@@ -30,7 +30,7 @@ from typing import Any, Optional, Protocol
 from ..security import validate_http_url
 
 
-# F2: Slack broadcast / mention tokens. Stripped from untrusted text before
+# Strip Slack broadcast and mention tokens from untrusted text before
 # escaping so an attacker-controlled action/tenant/preview cannot ping a whole
 # channel (@channel/@here) or a user via the approval card.
 _SLACK_BROADCAST_RE = re.compile(
@@ -105,7 +105,7 @@ class PendingApproval:
     context: dict[str, Any]
     created_at: float = field(default_factory=time.time)
     decision: Optional[bool] = None
-    # A4: who approved/denied. Empty until decide() records it.
+    # Empty until ``decide`` records who approved or denied the request.
     decided_by: str = ""
     # Only used by InProcessBackend path — RedisBackend uses its own wait()
     event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -181,13 +181,13 @@ class SlackApprovalRegistry:
         # "Found" means this process knows the request OR the shared backend
         # still holds it (created by another worker). An unknown/expired id
         # now genuinely reports not-found, so the Slack "expired" reply path
-        # is reachable (P3-10).
+        # is reachable.
         known_in_backend = False
         try:
             known_in_backend = self._backend.get(f"hitl:{request_id}") is not None
         except Exception:
             known_in_backend = False
-        # A4: persist WHO decided, cross-worker, alongside the decision signal
+        # Persist the actor with the decision for cross-worker attribution.
         # so the audit trail records the approver identity, not just the
         # boolean outcome. Best-effort — never let recording the actor block
         # the decision itself.
@@ -264,7 +264,7 @@ class HTTPSlackMessageClient:
         context: dict[str, Any],
         public_url: str,
     ) -> dict[str, Any]:
-        # F2: every value below is interpolated into Slack mrkdwn; escape the
+        # Every value below is interpolated into Slack mrkdwn; escape the
         # untrusted ones (action label, tenant, and especially the free-text
         # output preview) so they cannot inject formatting or channel pings.
         action = escape_slack_mrkdwn(str(action))
@@ -430,7 +430,7 @@ class SlackHITLApprover:
             approved = False
         else:
             raise SlackApprovalError(f"unknown Slack action: {action_id}")
-        # A4: record the Slack user who clicked, so the audit trail attributes
+        # Record the Slack user so the audit trail attributes
         # the approval to a person, not just "someone on Slack".
         user = payload.get("user") or {}
         actor = str(user.get("username") or user.get("name") or user.get("id") or "")

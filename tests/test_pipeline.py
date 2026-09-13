@@ -28,7 +28,7 @@ def test_pii_is_scrubbed():
 
 
 def test_raw_pii_never_persisted_in_trace_or_audit_chain():
-    """Finding #3: the scrub must protect the durable record, not just the
+    """the scrub must protect the durable record, not just the
     model copy — raw PII may not appear in input_text/output_text or in any
     audit-chain payload."""
     armor = Pramagent(provider=MockProvider(), compliance=ComplianceLayer())
@@ -46,7 +46,7 @@ def test_raw_pii_never_persisted_in_trace_or_audit_chain():
 
 
 def test_gdpr_erase_redacts_memory_chain_and_reanchors():
-    """Finding #4: after erasure the audit chain must hold no original PII
+    """after erasure the audit chain must hold no original PII
     and must still verify (re-anchored)."""
     # compliance disabled simulates PII that reached the record despite the
     # scrub (misconfiguration, custom pattern gap) — erasure must still work
@@ -178,7 +178,7 @@ def test_broken_rule_exception_does_not_leak_input_into_logs(caplog):
     """A rule (or classifier) exception must fail closed WITHOUT putting the
     offending input into logs via the exception message or traceback stack
     frame — the fail-closed BLOCK decision is correct, but exc_info=True (or
-    interpolating the exception itself) can echo PHI/PII into logs (ISSUE-5).
+    interpolating the exception itself) can echo PHI/PII into logs.
     """
     secret = "patient SSN 123-45-6789 needs urgent review"
 
@@ -244,7 +244,7 @@ def test_broken_rule_subclass_exception_does_not_leak_input_into_logs(caplog):
 
 
 def test_hitl_preview_is_scrubbed_before_queue(caplog):
-    """Finding 2.5: the HITL gate runs before _finalize's scrub, and the HITL
+    """the HITL gate runs before _finalize's scrub, and the HITL
     queue/notifications get no later redaction pass — so the output_preview
     handed to the approver must already be PII-scrubbed. Uses a provider that
     emits an SSN in the OUTPUT (independent of the scrubbed input)."""

@@ -53,8 +53,7 @@ class PostgresCircuitOpen(RuntimeError):
     """Raised when the Postgres circuit breaker has tripped."""
 
 
-# ─────────────────────────── retry helper ─────────────────────────────────
-
+# retry helper
 def _retry(fn, *, max_attempts: int = 3, base_delay_s: float = 0.1,
            max_delay_s: float = 2.0):
     """Run fn() with exponential backoff + full jitter. Re-raises on last attempt."""
@@ -78,8 +77,7 @@ def _transient(exc: Exception) -> bool:
     return bool(transient) and isinstance(exc, transient)
 
 
-# ─────────────────────────── circuit breaker ──────────────────────────────
-
+# circuit breaker
 class _CircuitBreaker:
     CLOSED = "closed"
     OPEN = "open"
@@ -122,8 +120,7 @@ class _CircuitBreaker:
             return self._effective_state()
 
 
-# ─────────────────────── connection pool (thread-local) ───────────────────
-
+# connection pool (thread-local)
 class _ThreadLocalPool:
     """Thread-local psycopg2 connections with a global cap on open connections.
 
@@ -194,8 +191,7 @@ class _ThreadLocalPool:
             return self._open_count
 
 
-# ─────────────────────────── base class ───────────────────────────────────
-
+# base class
 class _PostgresBase:
     """Shared pool + circuit-breaker + retry infrastructure."""
 
@@ -318,7 +314,7 @@ class _PostgresBase:
         # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
         # docstring for why an unkeyed chain alone isn't tamper-evident
         # against an actor with raw DB write access. signing_keys/active_kid
-        # enable kid-versioned rotation (G1).
+        # Enable kid-versioned rotation.
         from .audit import SigningKeyRing
         self._keyring = SigningKeyRing.from_config(
             signing_key=signing_key, signing_keys=signing_keys,
@@ -437,9 +433,9 @@ class _PostgresBase:
         dedicated non-superuser role (see deploy/postgres/init.sh) to close
         that gap for real.
 
-        D2: when PRAMAGENT_REQUIRE_RLS is truthy, an inert policy is a hard
-        startup failure (RuntimeError) instead of a warning — for deployments
-        that must not boot silently relying on app-layer filters alone.
+        When ``PRAMAGENT_REQUIRE_RLS`` is true, an inert policy is a startup
+        failure instead of a warning. This prevents a deployment from silently
+        relying on application-layer filters alone.
         """
         try:
             cur.execute(
@@ -526,8 +522,7 @@ def _clear_tenant_scope(cur) -> None:
     cur.execute("SELECT set_config('pramagent.tenant_rls_bypass', 'on', true)")
 
 
-# ──────────────────────────── Store impl ──────────────────────────────────
-
+# Store impl
 class PostgresStore(_PostgresBase):
     """PostgreSQL-backed Store + HashChainBackend.
 
@@ -536,11 +531,10 @@ class PostgresStore(_PostgresBase):
     ``TraceStore`` protocol as SQLiteStore (call_id keying, TraceEvent
     returns, KeyError/PermissionError semantics) and uses the same
     ``canonical_hash(payload, prev, signing_key)`` chained hashing, so the tamper-evidence
-    guarantee is identical on the production backend (T2-3 / P1-6).
+    guarantee is identical on the production backend.
     """
 
-    # ── Store interface ───────────────────────────────────────────────────
-
+    # Store interface
     def save(self, trace) -> None:
         payload = trace.to_dict() if hasattr(trace, "to_dict") else vars(trace)
         # Rows are keyed by call_id — the id the API fetches by — never by
@@ -654,7 +648,7 @@ class PostgresStore(_PostgresBase):
         return bool(self._run(_fn))
 
     def count(self, tenant_id: Optional[str] = None) -> int:
-        """Trace count via SQL COUNT — never a full-table load (P2-14)."""
+        """Trace count via SQL COUNT — never a full-table load ."""
         def _fn(conn, cur):
             if tenant_id:
                 _set_tenant_context(cur, tenant_id)
@@ -730,7 +724,7 @@ class PostgresStore(_PostgresBase):
                 redacted += 1
                 rehash = True
             if rehash:
-                # G1: re-sign each row with the key its own _kid names, so a
+                # Re-sign each row with the key named by its own ``_kid`` so a
                 # rotated chain stays verifiable per-row after redaction.
                 row_key = self._keyring.key_for(payload.get(CHAIN_KID_FIELD))
                 new_hash = canonical_hash(payload, prev, row_key or self._signing_key)
@@ -777,8 +771,7 @@ class PostgresStore(_PostgresBase):
             return cur.rowcount
         return self._run(_fn)
 
-    # ── HashChainBackend interface ────────────────────────────────────────
-
+    # HashChainBackend interface
     @property
     def head(self) -> str:
         with self._head_lock:
@@ -789,9 +782,9 @@ class PostgresStore(_PostgresBase):
 
         The hash material includes prev_hash — canonical_hash(payload, prev, signing_key) —
         exactly like SQLiteStore, so deleting or reordering rows breaks every
-        subsequent link (T2-3). `prev` is re-read from the DB inside the
+        subsequent link . `prev` is re-read from the DB inside the
         transaction with FOR UPDATE, serializing concurrent writers across
-        processes so the chain can never fork (P1-5 / T2-4)."""
+        processes so the chain can never fork ."""
         from .audit import CHAIN_KID_FIELD, canonical_hash
 
         if self._keyring.versioned:                  # G1: tag row's key version
@@ -848,16 +841,15 @@ class PostgresStore(_PostgresBase):
             prev = this_hash
         return broken
 
-    # ── compliance export ─────────────────────────────────────────────────
-
+    # compliance export
     def export_audit_jsonl(self, tenant_id: str, out_path: str,
                            limit: Optional[int] = None) -> int:
         """Export a tenant's stored TRACE rows (pramagent_traces) as JSONL.
         Returns the number of rows written.
 
-        MEDIUM-1: despite the historical "audit"/"chain" naming, this exports
-        the trace store, NOT the tamper-evident pramagent_chain. Use
-        `audit verify` / `audit-verify-watch` for chain integrity.
+        Despite the historical audit naming, this exports trace rows rather
+        than the tamper-evident ``pramagent_chain``. Use ``audit verify`` or
+        ``audit-verify-watch`` to check chain integrity.
 
         `limit` caps the number of most-recent rows exported; None (the
         default) exports every row. Truncation is never silent: when more rows

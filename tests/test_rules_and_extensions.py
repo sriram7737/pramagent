@@ -10,7 +10,7 @@ import time
 import pytest
 
 
-# ───────────────────────────── rules corpus ────────────────────────────────
+# rules corpus
 def test_rules_corpus_imports():
     from pramagent.rules import (
         JAILBREAK_PATTERNS, OWASP_LLM_TOP10, INJECTION_CORPUS,
@@ -72,7 +72,7 @@ def test_financial_pattern_redacts():
     assert verdict == Verdict.REDACT
 
 
-# ────────────────────── persistent HITL queue (SQLite) ─────────────────────
+# persistent HITL queue (SQLite)
 def test_sqlite_hitl_queue_roundtrip(tmp_path):
     from pramagent.queue import (
         SQLiteHITLQueue, QueuedRequest, RequestStatus)
@@ -164,7 +164,7 @@ def test_postgres_queue_clear_error_when_driver_absent():
         PostgresHITLQueue("postgresql://invalid")
 
 
-# ────────────────────────── framework adapters ─────────────────────────────
+# framework adapters
 def test_generic_protect_tool_blocks_unregistered():
     from pramagent import Pramagent
     from pramagent.adapters import protect_tool
@@ -244,7 +244,7 @@ def test_crewai_guard_wrap_tool_blocks():
         ship_to_mars({"cargo": "rover"})
 
 
-# ─────────────────────── ComplianceReporter.generate ───────────────────────
+# ComplianceReporter.generate
 def test_compliance_reporter_generate_text_only():
     from pramagent import Pramagent, ComplianceReporter
 

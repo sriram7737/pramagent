@@ -86,7 +86,7 @@ class AuthFailureGuard:
         self.window_s = window_s
         self.base_lockout_s = base_lockout_s
         self.max_lockout_s = max_lockout_s
-        # E1: fail closed by default. A backend (e.g. Redis) outage must not
+        # Fail closed by default. A backend outage must not
         # 500 every authenticated request as it did before. Mirrors
         # RedisBackend.tb_allow's fail_open toggle: closed = deny (a brief
         # retry hint) so a credential-guessing attacker cannot exploit the

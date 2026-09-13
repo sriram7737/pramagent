@@ -1,41 +1,14 @@
-"""
-pramagent.hook_state
-====================
-Read side of the central Pramagent hook configuration  -  the single source of
-truth an operator drives from the admin console. Every hook process (each hook
-invocation is a fresh process) reads this at the top of its evaluation, so a
-change from the console takes effect on the very next tool call with no daemon
-or cache to reload.
+"""Read and verify the shared hook configuration.
 
-The config carries three things:
-
-  * ``surfaces``  -  per-adapter master switch (claude / gemini / codex / plugin).
-  * ``tools``     -  per-tool master switch. A tool set to ``false`` is DENIED by
-                   every enabled hook, so an operator can hard-disable, say,
-                   ``Bash`` everywhere from one place.
-  * ``policies``  -  optional ToolGuard policy override (the editable JSON schema
-                   set). ``None`` / absent means each hook uses its built-in
-                   defaults; a list overrides them.
-  * ``tenants``   -  per-tenant permissions: which tools each tenant may use.
-                   ``{tenant_id: {enabled, allowed_tools, denied_tools}}``. A
-                   tenant with no entry is UNMANAGED (not restricted here), so
-                   existing single-tenant setups are unaffected. ``allowed_tools``
-                   ``None`` means "all tools"; a list means "only these".
-
-WRITES go through :mod:`pramagent.hook_admin`, which also appends every change
-to a SHA-256 hash-chained audit. This module is read-only and dependency-light
-so the hot path (one ``is_enabled`` call per tool call) stays cheap.
-
-Fail-safe, not fail-open
-------------------------
-This is a security control's configuration, so the safe default is enforcement
-ON. A missing/unreadable/corrupt config, or an absent key, always resolves to:
-surface ENABLED, tool ENABLED, no policy override. A garbled file can only
-leave the guard on, never silently drop it. A tool is disabled (denied) ONLY
-when the file exists, parses, and explicitly sets it ``false``.
+Hooks read this file for every invocation, so console changes take effect
+without a daemon or cache refresh. Each saved state is bound to the keyed audit
+chain. Missing, malformed, or unverified state falls back to enforcement-on
+defaults.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -45,14 +18,10 @@ from typing import Any, Optional
 
 from .hook_scan import iter_strings
 
-# The surfaces an operator can toggle independently  -  one per hook adapter.
+# Hook adapters that can be toggled independently.
 SURFACES: tuple[str, ...] = ("claude", "gemini", "codex", "plugin")
 
-# Tools that can create or modify a file, across every adapter surface, and the
-# shell tools. A call to one of these targeting the hook's own control plane is
-# refused before the master switch is even consulted (see
-# ``targets_protected_path``). Read-only tools are intentionally absent: reading
-# the config is harmless, only writes can turn the guard off.
+# Mutating tools cannot target the configuration or its audit database.
 _MUTATING_FILE_TOOLS: frozenset[str] = frozenset({
     "Write", "Edit", "MultiEdit", "apply_patch", "write_file", "replace",
 })
@@ -62,23 +31,26 @@ _SHELL_TOOLS: frozenset[str] = frozenset({
 
 
 def _repo_root() -> Path:
-    # pramagent/hook_state.py -> parents[1] is the repo root, matching the
-    # sys.path root each script hook inserts.
     return Path(__file__).resolve().parents[1]
 
 
 def state_path() -> Path:
-    """Path to the JSON config file. Override with PRAMAGENT_HOOK_STATE_PATH so
-    the hooks and the console can be pointed at a shared location."""
+    """Return the config path, honoring the shared-location override."""
     override = os.environ.get("PRAMAGENT_HOOK_STATE_PATH")
     if override:
         return Path(override)
     return _repo_root() / "pramagent_hook_config.json"
 
 
+def audit_path() -> Path:
+    override = os.environ.get("PRAMAGENT_HOOK_ADMIN_AUDIT_DB")
+    return Path(override) if override else state_path().with_name(
+        "pramagent_hook_admin_audit.db"
+    )
+
+
 def _normalize(raw: Any) -> dict[str, Any]:
-    """Coerce whatever is on disk into a full, valid config. Anything missing
-    or malformed defaults to the enforcement-ON state (fail-safe)."""
+    """Normalize partial input without weakening enforcement defaults."""
     disk = raw if isinstance(raw, dict) else {}
 
     disk_surfaces = disk.get("surfaces") if isinstance(disk.get("surfaces"), dict) else {}
@@ -87,8 +59,7 @@ def _normalize(raw: Any) -> dict[str, Any]:
         for name in SURFACES
     }
 
-    # Per-tool switches: only an explicit False disables. Unknown tool names are
-    # allowed (default enabled) so the console can pre-declare tools.
+    # Only an explicit false disables a tool.
     tools: dict[str, bool] = {}
     disk_tools = disk.get("tools") if isinstance(disk.get("tools"), dict) else {}
     for name, value in disk_tools.items():
@@ -98,9 +69,7 @@ def _normalize(raw: Any) -> dict[str, Any]:
     if not isinstance(policies, list):
         policies = None
 
-    # Per-tenant permissions. Each entry is normalized so a partial/garbled
-    # value can't accidentally over-grant: enabled defaults True, denied_tools
-    # to [], allowed_tools to None ("all") unless an explicit list is given.
+    # Preserve backward compatibility for unmanaged and partial tenant entries.
     tenants: dict[str, dict[str, Any]] = {}
     disk_tenants = disk.get("tenants") if isinstance(disk.get("tenants"), dict) else {}
     for tid, entry in disk_tenants.items():
@@ -125,26 +94,92 @@ def _normalize(raw: Any) -> dict[str, Any]:
     }
 
 
-def get_state() -> dict[str, Any]:
-    """Return the full normalized config. Never raises: an unreadable or corrupt
-    file yields the enforcement-ON default."""
+def _read_state() -> tuple[dict[str, Any], bool]:
     try:
         raw = json.loads(state_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raw = None
-    return _normalize(raw)
+        return _normalize(None), False
+    return _normalize(raw), True
+
+
+def state_digest(state: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        _normalize(state), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _audit_key_config() -> dict[str, Any]:
+    from .secrets import resolve_signing_key_ring
+    from .security import assert_strong_secret
+
+    config = resolve_signing_key_ring()
+    keys = config.get("signing_keys") or {}
+    if keys:
+        for kid, value in keys.items():
+            assert_strong_secret(f"PRAMAGENT_SIGNING_KEYS[{kid}]", value)
+    else:
+        assert_strong_secret("PRAMAGENT_SIGNING_KEY", config.get("signing_key", ""))
+    return config
+
+
+def integrity_status(state: Optional[dict[str, Any]] = None) -> tuple[bool, str]:
+    """Verify that the live config is the latest state committed to the HMAC chain."""
+    normalized, readable = _read_state() if state is None else (_normalize(state), True)
+    if not readable:
+        if audit_path().exists():
+            return False, "config missing or unreadable while an audit history exists"
+        return True, "unconfigured"
+    if not audit_path().exists():
+        return False, "config has no audit history"
+    try:
+        from .store import SQLiteStore
+
+        store = SQLiteStore(path=str(audit_path()), **_audit_key_config())
+        try:
+            if not store.verify_chain():
+                return False, "hook admin audit chain is invalid"
+            records = store.records()
+        finally:
+            store.close()
+    except Exception as exc:
+        return False, f"hook config integrity unavailable: {type(exc).__name__}"
+    if not records:
+        return False, "config has an empty audit history"
+    expected = records[-1]["payload"].get("detail", {}).get("state_hash", "")
+    actual = state_digest(normalized)
+    if not expected or not hmac.compare_digest(str(expected), actual):
+        return False, "live config does not match the latest audited state"
+    return True, "verified"
+
+
+def get_state() -> dict[str, Any]:
+    """Return verified state, or enforcement-on defaults on any integrity failure."""
+    state, readable = _read_state()
+    if not readable:
+        return state
+    valid, _reason = integrity_status(state)
+    return state if valid else _normalize(None)
+
+
+def _state_for_update() -> dict[str, Any]:
+    """Return mutable state for an admin operation, refusing unbound legacy state."""
+    state, readable = _read_state()
+    if not readable and not state_path().exists():
+        return state
+    valid, reason = integrity_status(state)
+    if not valid:
+        raise RuntimeError(f"hook config integrity check failed: {reason}")
+    return state
 
 
 def is_enabled(surface: str) -> bool:
-    """True if this surface should enforce. Unknown surface names default to
-    enabled  -  a hook asking about itself is never silently disabled by a typo."""
+    """Return whether a surface enforces; unknown names stay enabled."""
     return get_state()["surfaces"].get(surface, True)
 
 
 def tool_enabled(tool_name: str, state: Optional[dict[str, Any]] = None) -> bool:
-    """True unless the tool is explicitly switched off in the config. A tool
-    with no entry is enabled (fail-safe). Pass a pre-read ``state`` to avoid a
-    second file read when the caller already has one."""
+    """Return whether a tool is enabled; absent entries default to enabled."""
     st = state if state is not None else get_state()
     return st["tools"].get(tool_name, True)
 
@@ -163,14 +198,11 @@ def get_tenants() -> dict[str, Any]:
 def tenant_tool_allowed(
     tenant_id: str, tool_name: str, state: Optional[dict[str, Any]] = None
 ) -> bool:
-    """Whether ``tenant_id`` is permitted to use ``tool_name``.
+    """Check a managed tenant's allow and deny lists.
 
-    A tenant with NO entry is unmanaged and therefore allowed (this switch does
-    not restrict it)  -  so adding tenant permissions never silently breaks an
-    existing single-tenant deployment. For a managed tenant: it must be enabled,
-    the tool must not be in ``denied_tools``, and  -  when ``allowed_tools`` is a
-    list  -  the tool must be in it. ``allowed_tools`` of None means every tool
-    (minus the denied list)."""
+    Unmanaged tenants remain unrestricted. ``allowed_tools=None`` means all
+    tools except those explicitly denied.
+    """
     st = state if state is not None else get_state()
     entry = st["tenants"].get(tenant_id)
     if entry is None:
@@ -186,17 +218,9 @@ def tenant_tool_allowed(
 
 
 def protected_paths() -> tuple[Path, ...]:
-    """Resolved paths of the hook's own control plane: the JSON config and its
-    admin audit DB. A guarded tool call that writes either of these could
-    disable or silently reprogram the guard, so the hooks refuse such calls
-    (see ``targets_protected_path``). The audit DB location mirrors
-    ``hook_admin._audit_db_path``: next to the config unless overridden."""
+    """Return resolved paths for the config and its admin audit database."""
     cfg = state_path()
-    audit_override = os.environ.get("PRAMAGENT_HOOK_ADMIN_AUDIT_DB")
-    audit = (
-        Path(audit_override) if audit_override
-        else cfg.with_name("pramagent_hook_admin_audit.db")
-    )
+    audit = audit_path()
     resolved: list[Path] = []
     for candidate in (cfg, audit):
         try:
@@ -207,21 +231,12 @@ def protected_paths() -> tuple[Path, ...]:
 
 
 def targets_protected_path(tool_name: str, arguments: Any) -> Optional[str]:
-    """Return the offending path string if this tool call would write or modify
-    a hook control-plane file, else ``None``.
+    """Return the first control-plane path targeted by a mutating call.
 
-    This is the guard's self-protection: without it a constrained agent could
-    use an allowed ``Write`` to set ``surfaces.claude`` to ``false`` in the
-    config, and the very next tool call would run unguarded. It must be consulted
-    BEFORE the master switch so a would-be-disabled surface cannot skip it.
-
-    Only mutating and shell tools are considered. Every string leaf of the
-    arguments is examined (via :func:`iter_strings`, so a target routed through a
-    nested field or a patch body is still seen). A leaf matches when it contains
-    a protected file's distinctive name  -  which catches structured ``file_path``
-    values, shell redirections, ``tee``/patch bodies and one-liners alike  -  or
-    when it resolves to a protected absolute path (covering a custom,
-    non-distinctive config name set via ``PRAMAGENT_HOOK_STATE_PATH``)."""
+    Every string leaf is checked so nested arguments, patch bodies, and shell
+    redirections cannot bypass the path check. Call this before reading the
+    surface switch.
+    """
     if tool_name not in _MUTATING_FILE_TOOLS and tool_name not in _SHELL_TOOLS:
         return None
     if not isinstance(arguments, dict):
@@ -258,8 +273,7 @@ def _write_atomic(path: Path, data: dict[str, Any]) -> None:
 
 
 def _save_state(state: dict[str, Any], *, actor: str) -> dict[str, Any]:
-    """Persist a full normalized state atomically, stamping who/when. Used by
-    pramagent.hook_admin, which layers the hash-chained audit on top."""
+    """Persist normalized state atomically with actor and timestamp."""
     state = _normalize(state)
     state["updated_at"] = time.time()
     state["updated_by"] = actor

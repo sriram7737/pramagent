@@ -87,9 +87,7 @@ def test_wrong_key_fails_to_decrypt():
             attacker.get(r.trace.call_id)
         # chain verification with the wrong key must return False, not crash
         assert attacker.verify_chain() is False
-        # B4: verify() (broken-link list, used by audit-verify-watch) must
-        # also work on the encrypted backend — undecryptable ciphertext is a
-        # broken link, not a crash.
+        # Undecryptable ciphertext is a broken link, not a verifier crash.
         broken = attacker.verify()
         assert broken and broken[0]["reason"] == "hash mismatch"
         attacker.close()
@@ -136,7 +134,7 @@ def test_chain_integrity_under_encryption():
 
 
 def test_encrypted_erasure_redacts_chain_and_reanchors():
-    """Parity with test_sqlite_erasure_redacts_chain_and_reanchors (P1-2/T3-1):
+    """Parity with test_sqlite_erasure_redacts_chain_and_reanchors :
     erasure on the encrypted store must tombstone the tenant's chain payloads
     and re-anchor — encryption under one global key is retention, not erasure."""
     from pramagent.layers import ComplianceLayer
@@ -181,7 +179,7 @@ def test_encrypted_erasure_redacts_chain_and_reanchors():
 
 def test_encrypted_store_protocol_signatures():
     """list_all(limit) and prune_older_than(tenant_id) must match the
-    TraceStore protocol the API depends on (P1-2 drift)."""
+    TraceStore protocol used by the API."""
     path = _new_db()
     key = Fernet.generate_key()
     try:

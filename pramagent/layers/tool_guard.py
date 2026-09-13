@@ -64,6 +64,7 @@ except ImportError:  # pragma: no cover - dependency is declared, fallback is le
     SchemaError = Exception
 
 from ..types import Verdict
+from ..security import security_text_variants, unsafe_url_host
 
 log = logging.getLogger(__name__)
 
@@ -79,8 +80,7 @@ class _BackendUnavailable(RuntimeError):
     per-process memory (E2)."""
 
 
-# ── side-effect taxonomy ──────────────────────────────────────────────────────
-
+# side-effect taxonomy
 class SideEffect:
     """Ordered severity levels. Higher = more dangerous."""
     READ             = "read"
@@ -115,28 +115,11 @@ class SideEffect:
         return cls.severity(effect) >= cls.severity(threshold)
 
 
-# ── argument injection patterns ───────────────────────────────────────────────
+# argument injection patterns
 #
-# SEC-2026-07-10: sql_injection and shell_injection used to fire on bare
-# punctuation alone (a lone "--", ";", or "|" next to a letter), which is
-# indistinguishable from ordinary prose dashes, semicolons in sentences,
-# piped shell commands, and regex alternation. Split each into the same
-# two-tier design ComplianceLayer already uses for PII (pramagent/layers/
-# __init__.py): a HIGH-PRECISION set (distinctive shapes -- real SQL
-# keyword phrases, boolean-tautology SQLi, backtick/$() shell substitution,
-# sh -c/bash -c invocation) that fires unconditionally, and a CONTEXTUAL set
-# (ambiguous punctuation) that only fires when a genuine SQL/shell keyword
-# appears within a bounded window of the punctuation -- mirroring
-# ComplianceLayer.scrub()'s candidate-regex-plus-nearby-keyword check.
-#
-# ISSUE-14 follow-up: two entries in the unconditional set were themselves
-# ordinary, benign shapes rather than distinctive attack signatures -- a
-# schema-DDL statement Claude Code writes on request, and a loopback
-# address Claude Code binds/connects to on request, both being extremely
-# common in legitimate coding-assistant tool calls. Both were demoted to
-# the contextual set below, gated on a nearby signal that actually
-# indicates the attack shape (a stacked-query break-out marker, or an
-# outbound-fetch verb) instead of the bare keyword/address alone.
+# Distinctive attack shapes fire directly. Ambiguous punctuation, schema DDL,
+# and loopback addresses require a nearby SQL, shell, or outbound-request signal
+# to avoid classifying ordinary code and prose as injection.
 
 _ARG_INJECTION_WINDOW = 40  # chars scanned on each side of contextual punctuation
 
@@ -189,7 +172,7 @@ _ARG_INJECTION: list[tuple[str, re.Pattern, str]] = [
 # "*/" as one alternation with a symmetric window. That also matched an
 # ORDINARY complete statement's own keyword sitting right before its own
 # closing ";" (e.g. "UPDATE x SET y WHERE z;" -- not an attack, just a
-# normal terminated statement) (ISSUE-14). Split into two entries by how
+# normal terminated statement) . Split into two entries by how
 # strong a signal each punctuation shape actually is:
 #   - a SQL comment marker ("--", "/*", "*/") near a SQL keyword is a
 #     strong signal on its own, symmetric window -- "commenting out the
@@ -214,10 +197,7 @@ _ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str, str]] = [
      "any"),
     ("sql_injection",
      re.compile(r";"),
-     # LOW-1: index/view/trigger were missing here, so a stacked query
-     # breaking out to run "CREATE INDEX ..." / "CREATE VIEW ..." /
-     # "CREATE TRIGGER ..." after a separator slipped past, unlike the
-     # table/database DDL shapes that were kept.
+     # Include schema-level DDL that can follow a stacked statement.
      ["select", "insert", "update", "delete", "drop", "union",
       "where", "table", "database", "index", "view", "trigger", "exec"],
      "stacked SQL statement after a statement separator",
@@ -253,7 +233,7 @@ _ARG_INJECTION_CONTEXTUAL: list[tuple[str, re.Pattern, list[str], str, str]] = [
       "import", "eval", "exec", "system", "popen", "getattr"],
      "template syntax near a sandbox-escape keyword",
      "any"),
-    # Demoted from the unconditional ssrf_attempt list (ISSUE-14): a bare
+    # Demoted from the unconditional ssrf_attempt list : a bare
     # loopback address (bind syntax, a local dev-server URL, a test fixture
     # connecting to its own service) has no attack signal on its own. The
     # real SSRF-bypass shape is a tool call fetching a caller-controlled
@@ -356,8 +336,7 @@ def _contextual_arg_injection_hits(text: str) -> list[dict]:
     return findings
 
 
-# ── output exfiltration patterns ──────────────────────────────────────────────
-
+# output exfiltration patterns
 _OUTPUT_EXFIL: list[tuple[str, re.Pattern, str]] = [
     ("aws_key",
      re.compile(r"AKIA[0-9A-Z]{16}"),
@@ -385,8 +364,7 @@ _OUTPUT_EXFIL: list[tuple[str, re.Pattern, str]] = [
      "certificate material in output (may contain private info)"),
 ]
 
-# ── dangerous tool chain patterns ─────────────────────────────────────────────
-
+# dangerous tool chain patterns
 _DANGEROUS_CHAINS: list[tuple[str, list[str], str]] = [
     ("data_exfil",
      [SideEffect.READ, SideEffect.EXTERNAL_MESSAGE],
@@ -411,8 +389,7 @@ _DANGEROUS_CHAINS: list[tuple[str, list[str], str]] = [
      "three consecutive external messages — possible bulk data leak"),
 ]
 
-# ── provenance record ─────────────────────────────────────────────────────────
-
+# provenance record
 @dataclass
 class OutputProvenance:
     """Tracks where a tool output came from and what was found in it."""
@@ -438,8 +415,7 @@ class OutputProvenance:
         }
 
 
-# ── policy ────────────────────────────────────────────────────────────────────
-
+# policy
 @dataclass
 class ToolPolicy:
     """Configuration for one registered tool.
@@ -484,13 +460,12 @@ class ToolPolicy:
     escalate_if_severity_gte: Optional[str] = None
 
     # Compiled jsonschema validators, built once at registration so evaluate()
-    # never re-checks/rebuilds the schema per call (P2-3). Internal.
+    # never re-checks/rebuilds the schema per call . Internal.
     _validator: Any = field(default=None, init=False, repr=False, compare=False)
     _output_validator: Any = field(default=None, init=False, repr=False, compare=False)
 
 
-# ── decision ──────────────────────────────────────────────────────────────────
-
+# decision
 @dataclass
 class ToolDecision:
     decision_id: str
@@ -529,8 +504,7 @@ class OutputValidationResult:
     provenance: Optional[OutputProvenance] = None
 
 
-# ── full JSON Schema validator ────────────────────────────────────────────────
-
+# full JSON Schema validator
 # format validators
 _FORMAT_VALIDATORS: dict[str, re.Pattern] = {
     "date-time": re.compile(
@@ -560,7 +534,7 @@ _TYPE_MAP: dict[str, type | tuple] = {
 
 
 def compile_schema_validator(schema: dict[str, Any]):
-    """Compile a Draft 2020-12 validator once for reuse across calls (P2-3).
+    """Compile a Draft 2020-12 validator once for reuse across calls.
 
     Returns None when jsonschema is unavailable. Raises SchemaError for an
     invalid schema (callers that compile eagerly catch it and fall back to
@@ -805,8 +779,7 @@ def validate_schema(
     return True, ""
 
 
-# ── ToolGuardLayer ────────────────────────────────────────────────────────────
-
+# ToolGuardLayer
 class ToolGuardLayer:
     """
     Deterministic, multi-layer tool-call safety guard.
@@ -842,7 +815,7 @@ class ToolGuardLayer:
         if not out.ok:
             raise ValueError(out.reason)
 
-    Auditing standalone use (finding 2.3): decisions always land in the
+    Auditing standalone use : decisions always land in the
     in-process ``audit_log`` deque (bounded, lost on restart). For a durable,
     tamper-evident trail when using this layer OUTSIDE ``Pramagent.run()``,
     pass ``audit=<AuditBackend>`` (e.g. ``SQLiteStore``/``PostgresStore``);
@@ -862,7 +835,7 @@ class ToolGuardLayer:
         fail_open: bool = False,
         audit: Optional[Any] = None,
     ) -> None:
-        # Finding 2.3: an AuditBackend (append/verify_chain). When provided,
+        # an AuditBackend (append/verify_chain). When provided,
         # EVERY decision is also written to the durable, hash-chained log — so
         # a caller using this layer STANDALONE (guard.evaluate(...), outside
         # Pramagent.run()) still gets a tamper-evident trail. When None (the
@@ -874,14 +847,11 @@ class ToolGuardLayer:
         self.chain_window = chain_window
         self.chain_ttl_s = chain_ttl_s
         self._backend = backend
-        # E2: when a shared backend (Redis) IS configured but a call to it
-        # fails, session-call-limit and chain-history counters used to fall
-        # back silently to per-process in-memory state. Under multiple workers
-        # that multiplies a session cap by the worker count (each worker counts
-        # only the calls it saw), letting an attacker exceed the intended
-        # limit during a backend blip. Default fail closed: a backend failure
-        # BLOCKs the call instead. Set fail_open=True to prefer availability
-        # (the old silent per-process fallback) where that trade is acceptable.
+        # A shared-backend failure must not fall back silently to per-process
+        # counters. Under multiple workers that would multiply a session cap by
+        # the worker count and let callers exceed the intended
+        # limit during a backend outage. The default blocks on failure;
+        # ``fail_open=True`` opts into the local fallback for availability.
         self.fail_open = fail_open
         # Guards the in-memory chain history and call counters: evaluate()
         # may be called from multiple threads (sync API, thread-pool hosts).
@@ -892,11 +862,11 @@ class ToolGuardLayer:
         # (tenant_id, session_id) -> list of side_effects (bounded to chain_window)
         self._side_effect_history: dict[tuple[str, str], list[str]] = defaultdict(list)
         # per-(tenant, session, tool) -> (count, window_started); the window
-        # resets after chain_ttl_s so keys cannot grow without bound (P2-2)
+        # resets after chain_ttl_s so keys cannot grow without bound
         self._call_counts: dict[tuple[str, str, str], tuple[int, float]] = {}
         # Bounded: appended on every run() since validate_output was wired
         # into the pipeline — unbounded lists leak linearly with traffic
-        # (P2-2). Durable audit lives in the trace store, not here.
+        # . Durable audit lives in the trace store, not here.
         self._provenance_log: deque[OutputProvenance] = deque(maxlen=10_000)
         self.audit_log: deque[ToolDecision] = deque(maxlen=10_000)
         # Optional LLMJudge: a semantic safety net consulted for
@@ -909,7 +879,7 @@ class ToolGuardLayer:
     def register(self, policy: ToolPolicy) -> None:
         """Register a new tool policy at runtime.
 
-        Validators are compiled once here, not per evaluate() call (P2-3).
+        Validators are compiled once here, not per evaluate() call.
         An invalid schema leaves the compiled validator unset; the per-call
         path then reports the schema error in the decision reason, exactly
         as before."""
@@ -942,7 +912,7 @@ class ToolGuardLayer:
                 ))
             except Exception as exc:
                 if not self.fail_open:
-                    # E2: don't silently under-count via per-process memory;
+                    # Do not silently under-count through per-process memory;
                     # let evaluate() fail the call closed.
                     raise _BackendUnavailable(
                         f"session call-count backend unavailable: {exc}") from exc
@@ -951,7 +921,7 @@ class ToolGuardLayer:
         with self._lock:
             count, window_started = self._call_counts.get(key, (0, now))
             if now - window_started >= self.chain_ttl_s:
-                # window elapsed: reset, mirroring the backend key TTL (P2-2)
+                # window elapsed: reset, mirroring the backend key TTL
                 count, window_started = 0, now
             count += 1
             self._call_counts[key] = (count, window_started)
@@ -988,7 +958,7 @@ class ToolGuardLayer:
                 raise
             except Exception as exc:
                 if not self.fail_open:
-                    # E2: fail closed rather than losing cross-worker chain
+                    # Fail closed rather than losing cross-worker chain
                     # history to a per-process fallback.
                     raise _BackendUnavailable(
                         f"chain-history backend unavailable: {exc}") from exc
@@ -1001,11 +971,11 @@ class ToolGuardLayer:
 
     def _record(self, decision: ToolDecision) -> ToolDecision:
         self.audit_log.append(decision)
-        # Finding 2.3: when a durable audit backend is configured, mirror the
+        # when a durable audit backend is configured, mirror the
         # decision into the tamper-evident chain so standalone use is audited
         # too. Best-effort: a store failure must not change the security
         # verdict, but it is logged (never silently dropped). `reason` is
-        # already value-redacted for schema violations (B1), so no raw
+        # already value-redacted for schema violations, so no raw
         # argument/output content is persisted here.
         if self._audit is not None:
             try:
@@ -1076,10 +1046,8 @@ class ToolGuardLayer:
                                f"action '{action_label}' is not allowed for '{tool_name}'",
                                side_effect=policy.side_effect)
 
-        # 4. Argument schema validation (full JSON Schema, compiled once
-        #    at registration — P2-3)
-        # redact_values=True: this reason is written to the durable audit
-        # log, so it must not carry the raw failing argument value (B1).
+        # 4. Validate arguments with the schema compiled at registration.
+        # The reason is audited, so omit the raw failing value.
         ok, schema_reason = validate_schema(arguments, policy.schema,
                                             validator=policy._validator,
                                             redact_values=True)
@@ -1184,8 +1152,8 @@ class ToolGuardLayer:
             tenant_id=tenant_id, session_id=session_id,
             action_label=action_label,
         )
-        # Only consult the judge when the deterministic layer did not already
-        # BLOCK, and the tool is registered (we know its side_effect).
+        # Consult the judge only after deterministic checks pass and a policy
+        # supplies the tool's side-effect classification.
         if self.judge is None or decision.verdict == Verdict.BLOCK:
             return decision
         policy = self.policies.get(tool_name)
@@ -1272,7 +1240,7 @@ class ToolGuardLayer:
         schema_ok = False
         if policy.output_schema is not None:
             # redact_values: an output schema violation would otherwise echo
-            # the raw (possibly PHI-bearing) output value into the reason (B1).
+            # the raw, potentially sensitive output value into the reason.
             ok, reason = validate_schema(output, policy.output_schema,
                                          validator=policy._output_validator,
                                          redact_values=True)
@@ -1306,9 +1274,8 @@ def _scan_output_exfil(text: str) -> list[dict]:
             for pid, rx, detail in _OUTPUT_EXFIL if rx.search(text)]
 
 
-# ── module-level helpers ──────────────────────────────────────────────────────
-
-# Finding 6.1: bound the recursive scan so a hostile argument tree cannot
+# module-level helpers
+# bound the recursive scan so a hostile argument tree cannot
 # exhaust resources. A depth cap stops deeply-nested JSON from raising
 # RecursionError (a 500/crash); a total-string-bytes budget stops a giant
 # payload from consuming unbounded scan time. Over-limit input is BLOCKed
@@ -1323,7 +1290,7 @@ def scan_arguments_for_injection(arguments: Any, path: str = "$", *,
     """Recursively scan all string values in arguments for injection patterns.
     Returns a list of findings; empty means clean (not necessarily safe).
 
-    The scan is bounded (finding 6.1): nesting deeper than _MAX_SCAN_DEPTH or a
+    The scan is bounded : nesting deeper than _MAX_SCAN_DEPTH or a
     cumulative string size over _MAX_SCAN_STRING_BYTES yields a blocking finding
     instead of recursing into a RecursionError or scanning an unbounded input.
     """
@@ -1340,13 +1307,46 @@ def scan_arguments_for_injection(arguments: Any, path: str = "$", *,
             return [{"path": path, "pattern_id": "arg_payload_too_large",
                      "detail": ("total scanned argument size exceeds "
                                 f"{_MAX_SCAN_STRING_BYTES} bytes — rejected")}]
-        for pid, rx, detail in _ARG_INJECTION:
-            if rx.search(arguments):
-                findings.append({"path": path, "pattern_id": pid, "detail": detail})
-        for hit in _contextual_arg_injection_hits(arguments):
-            findings.append({"path": path, **hit})
-        for hit in _backtick_hits(arguments, _field_name(path)):
-            findings.append({"path": path, **hit})
+        seen: set[tuple[str, str]] = set()
+        for variant in security_text_variants(arguments):
+            for pid, rx, detail in _ARG_INJECTION:
+                if rx.search(variant) and (pid, detail) not in seen:
+                    findings.append({"path": path, "pattern_id": pid, "detail": detail})
+                    seen.add((pid, detail))
+            normalized_path = variant.replace("\\", "/")
+            if re.search(r"(?:^|/)\.\.(?:/|$)", normalized_path):
+                key = ("path_traversal", "path traversal pattern in argument")
+                if key not in seen:
+                    findings.append({
+                        "path": path,
+                        "pattern_id": key[0],
+                        "detail": key[1],
+                    })
+                    seen.add(key)
+            for match in re.finditer(r"https?://[^\s'\"<>]+", variant, re.IGNORECASE):
+                try:
+                    unsafe_host = unsafe_url_host(match.group())
+                except ValueError:
+                    unsafe_host = None
+                if unsafe_host:
+                    key = ("ssrf_attempt", "SSRF target in argument")
+                    if key not in seen:
+                        findings.append({
+                            "path": path,
+                            "pattern_id": key[0],
+                            "detail": key[1],
+                        })
+                        seen.add(key)
+            for hit in _contextual_arg_injection_hits(variant):
+                key = (hit["pattern_id"], hit["detail"])
+                if key not in seen:
+                    findings.append({"path": path, **hit})
+                    seen.add(key)
+            for hit in _backtick_hits(variant, _field_name(path)):
+                key = (hit["pattern_id"], hit["detail"])
+                if key not in seen:
+                    findings.append({"path": path, **hit})
+                    seen.add(key)
     elif isinstance(arguments, dict):
         for key, val in arguments.items():
             findings.extend(scan_arguments_for_injection(
@@ -1366,7 +1366,17 @@ def detect_dangerous_chain(
     Returns (verdict, reason, matching_history_slice)."""
     scope = history[-window:] if window > 0 else history
     for _name, pattern, reason in _DANGEROUS_CHAINS:
-        n = len(pattern)
-        if len(scope) >= n and scope[-n:] == pattern:
-            return Verdict.ESCALATE, reason, list(scope[-n:])
+        # A chain alert belongs to the call that completes the pattern. Without
+        # this guard, an old match would repeatedly escalate unrelated calls
+        # until it aged out of the history window.
+        if not scope or scope[-1] != pattern[-1]:
+            continue
+        matched: list[str] = []
+        next_index = 0
+        for side_effect in scope:
+            if side_effect == pattern[next_index]:
+                matched.append(side_effect)
+                next_index += 1
+                if next_index == len(pattern):
+                    return Verdict.ESCALATE, reason, matched
     return Verdict.ALLOW, "", []

@@ -293,6 +293,10 @@ async def test_gemini_provider_parses_generate_content(monkeypatch):
         })
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "pramagent.security.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
     provider = GeminiProvider(
         model="gemini-test",
         api_key="gemini-key",
@@ -301,7 +305,7 @@ async def test_gemini_provider_parses_generate_content(monkeypatch):
 
     result = await provider.complete("hi gemini")
 
-    # the key travels as a header, never in the URL (T2-7/P2-6)
+    # the key travels as a header, never in the URL
     assert seen["url"] == "https://gemini.example/v1beta/models/gemini-test:generateContent"
     assert "key=" not in seen["url"]
     header_keys = {k.lower(): v for k, v in seen["headers"].items()}

@@ -19,8 +19,7 @@ import re
 import sys
 from typing import Any
 
-# Import pramagent from the repo this hook lives in, not a stale build/
-# site-packages copy for whatever interpreter runs it. Mirrors gemini_cli_hook.
+# Prefer the checkout beside this hook over an older installed package.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -62,15 +61,11 @@ def _object_schema() -> dict[str, Any]:
     return {"type": "object", "additionalProperties": True}
 
 
-# Codex naturally makes many small edits in one turn. Keep ToolGuard's
-# per-call validation and argument-injection scan, but disable multi-call
-# chain escalation in this local adapter so the third normal apply_patch
-# does not fail closed during ordinary coding.
+# Local coding sessions make many writes, so this adapter disables cumulative
+# chain escalation while retaining per-call validation.
 _GUARD = ToolGuardLayer(chain_window=1)
 
-# Codex tool names documented for hook matchers. Edit/Write are aliases for
-# apply_patch in Codex matchers, but registering them keeps the adapter
-# tolerant of older/newer payload shapes.
+# Register current names plus older Edit/Write aliases.
 for _name in ("Bash", "PowerShell"):
     _GUARD.register(
         ToolPolicy(
@@ -191,9 +186,7 @@ def _high_risk_shell_reason(tool_name: str, tool_input: dict[str, Any]) -> str |
 
 
 def _isolation_reason(tool_input: dict[str, Any]) -> str | None:
-    # Delegates to the shared all-leaves, decode-aware scanner
-    # (pramagent.hook_scan) so codex catches encoded payloads too, and so all
-    # hook surfaces share one implementation.
+    # Use the shared decode-aware traversal for all string leaves.
     pattern_ids = scan_injection(tool_input, _ISOLATION)
     if not pattern_ids:
         return None
@@ -228,10 +221,7 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
     canonical_tool = _canonical_tool_name(tool_name)
     session_id = str(event.get("session_id") or event.get("sessionId") or "local")
 
-    # Control-plane self-protection (see scripts/claude_code_hook.py). Refuse any
-    # tool call that would write the hook's own config or admin audit DB, checked
-    # BEFORE the master switch so a tampering write cannot disable the surface
-    # and slip through.
+    # Protect control-plane files before consulting the switch they contain.
     protected_hit = _targets_protected_path(canonical_tool, tool_input)
     if protected_hit:
         return _deny(
@@ -239,15 +229,15 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
             f"modify the hook control plane ({protected_hit}). Change hook "
             f"settings through the admin console instead.")
 
-    # Admin master switch (fail-safe; see pramagent.hook_state).
+    # Missing or invalid state keeps enforcement enabled.
     if not _hook_enabled("codex"):
         return {}
 
-    # Per-tool master switch from the admin console: a disabled tool denies.
+    # A global tool disable takes precedence over its policy.
     if not _tool_enabled(canonical_tool):
         return _deny(f"Pramagent hook admin: tool '{canonical_tool}' is disabled")
 
-    # Per-tenant permission from the admin console.
+    # Managed tenants are constrained by their allow and deny lists.
     if not _tenant_tool_allowed(_TENANT_ID, canonical_tool):
         return _deny(
             f"Pramagent hook admin: tenant '{_TENANT_ID}' is not permitted "

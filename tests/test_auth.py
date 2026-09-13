@@ -26,7 +26,7 @@ from pramagent.auth import (  # noqa: E402
 )
 
 
-# ── Finding 1.x: Postgres API-key schema default scope is read-only ──
+# Postgres API-key schema default scope is read-only
 def test_postgres_api_key_schema_defaults_to_read_only_scope():
     """A row inserted by direct SQL / a migration without a scopes value must
     default to read-only, not admin — matching DEFAULT_SCOPES."""
@@ -37,7 +37,7 @@ def test_postgres_api_key_schema_defaults_to_read_only_scope():
     assert "admin,read,write" not in ddl
 
 
-# ── Finding 1.4: issued API JWTs are revocable by jti ──
+# issued API JWTs are revocable by jti
 def test_jwt_can_be_revoked_by_jti():
     mgr = JWTManager("a-strong-jwt-secret-value-123456")
     token = mgr.issue("tenant_a", ttl_s=900, scopes=["read"])
@@ -71,7 +71,7 @@ def test_jwt_revocation_check_hook_consulted():
     assert mgr2.verify(tok2)["tenant_id"] == "tenant_b"
 
 
-# ── Finding 1.3: admin does not implicitly grant the approve scope ──
+# admin does not implicitly grant the approve scope
 def test_admin_scope_does_not_imply_approve():
     from pramagent.auth import (ADMIN_SCOPE, APPROVE_SCOPE, AuthRecord,
                                 READ_SCOPE, WRITE_SCOPE)
@@ -87,7 +87,7 @@ def test_admin_scope_does_not_imply_approve():
     assert both.has_scope(APPROVE_SCOPE) is True
 
 
-# ── unauthenticated mode (empty registry) ──────────────────────────────
+# unauthenticated mode (empty registry)
 def test_unauthenticated_mode_works_when_no_keys_configured():
     """With no keys registered, the API runs open (single-tenant / dev mode)."""
     client = TestClient(create_app(registry=APIKeyRegistry()))
@@ -98,9 +98,19 @@ def test_unauthenticated_mode_works_when_no_keys_configured():
     assert ready["status"] == "ready"
 
 
-# ── authenticated mode ─────────────────────────────────────────────────
+def test_noauth_defaults_to_single_tenant(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
+    monkeypatch.delenv("PRAMAGENT_STRICT_SINGLE_TENANT", raising=False)
+    client = TestClient(create_app(registry=APIKeyRegistry()))
+
+    response = client.post("/v1/run", json={"prompt": "hi", "tenant_id": "victim"})
+
+    assert response.status_code == 403
+
+
+# authenticated mode
 # A strong shared JWT secret mirrors production: token issuance refuses to
-# mint per-process tokens when no shared secret is configured (P2-12).
+# mint per-process tokens when no shared secret is configured.
 _TEST_JWT_SECRET = "unit-test-jwt-secret-0123456789abcdef"
 
 
@@ -109,7 +119,7 @@ def auth_client(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_JWT_SECRET", _TEST_JWT_SECRET)
     reg = APIKeyRegistry()
     # These keys exercise run/erase/rca, so grant the scopes explicitly.
-    # Unscoped keys default to read-only (A1); see
+    # Unscoped keys default to read-only; see
     # test_unscoped_key_defaults_to_read_only for that guarantee.
     all_scopes = "read|write|admin|audit"
     key_a = reg.issue_key("tenant_a", scopes=all_scopes)
@@ -120,7 +130,7 @@ def auth_client(monkeypatch):
 
 def test_token_endpoint_refuses_without_shared_secret(monkeypatch):
     """Auth on + no PRAMAGENT_JWT_SECRET(S) → 503, never a per-process random
-    secret whose tokens other workers cannot verify (P2-12/T2-6)."""
+    secret whose tokens other workers cannot verify ."""
     monkeypatch.delenv("PRAMAGENT_JWT_SECRET", raising=False)
     monkeypatch.delenv("PRAMAGENT_JWT_SECRETS", raising=False)
     reg = APIKeyRegistry()
@@ -133,7 +143,7 @@ def test_token_endpoint_refuses_without_shared_secret(monkeypatch):
 
 def test_token_endpoint_is_rate_limited(monkeypatch):
     """The bootstrap endpoint carries an IP-keyed bucket: exhausting it
-    returns 429 with Retry-After (T1-2)."""
+    returns 429 with Retry-After ."""
     monkeypatch.setenv("PRAMAGENT_JWT_SECRET", _TEST_JWT_SECRET)
     monkeypatch.setenv("PRAMAGENT_RATE_BURST", "3")
     monkeypatch.setenv("PRAMAGENT_RATE_PER_SEC", "0.001")
@@ -256,7 +266,7 @@ def test_env_var_registry_picks_up_revocation_file_without_restart(monkeypatch, 
     long-lived one held by a running API server) must start rejecting a key
     as soon as its hash appears in PRAMAGENT_API_KEY_REVOCATION_FILE — no
     process restart required. This is what makes `pramagent auth-revoke`
-    actually useful in env-var-only mode (ISSUE-6)."""
+    actually useful in env-var-only mode ."""
     revocation_file = str(tmp_path / "revoked.txt")
     monkeypatch.delenv("PRAMAGENT_API_KEY_DSN", raising=False)
     monkeypatch.setenv("PRAMAGENT_API_KEY_REVOCATION_FILE", revocation_file)
@@ -318,16 +328,14 @@ def test_read_only_key_cannot_write_or_erase(monkeypatch):
 
 
 def test_revocation_file_never_existing_allows_keys(tmp_path):
-    """MEDIUM-2: a configured revocation file that has never been created is
-    the normal 'no revocations issued yet' state — keys must still work."""
+    """A revocation file that never existed means no revocations yet."""
     reg = APIKeyRegistry(revocation_file=str(tmp_path / "revocations.txt"))
     key = reg.issue_key("tenant_a", scopes="read")
     assert reg.record_for_key(key) is not None
 
 
 def test_revocation_file_unreadable_fails_closed(tmp_path):
-    """MEDIUM-2: a configured revocation file that exists but cannot be read
-    means we cannot confirm a key isn't revoked → fail closed (deny)."""
+    """An unreadable revocation file fails closed."""
     # A directory stats fine but cannot be open()'d as a file — a portable
     # stand-in for an unreadable revocation file.
     unreadable = tmp_path / "revdir"
@@ -338,9 +346,7 @@ def test_revocation_file_unreadable_fails_closed(tmp_path):
 
 
 def test_revocation_file_vanishing_after_load_fails_closed(tmp_path):
-    """MEDIUM-2: once loaded, a revocation file that disappears is treated as
-    an operational failure/tampering (fail closed), not as 'revocations
-    cleared' (which would silently re-enable revoked keys)."""
+    """A loaded revocation file that disappears fails closed."""
     revfile = tmp_path / "revocations.txt"
     revfile.write_text("", encoding="utf-8")
     reg = APIKeyRegistry(revocation_file=str(revfile))
@@ -427,7 +433,7 @@ def test_unauthenticated_opt_in_malformed_expiry_fails_closed(monkeypatch):
         create_app(registry=APIKeyRegistry())
 
 
-# ── Finding 1.2: auth required by default, enforced in the REQUEST PATH ──
+# auth required by default, enforced in the REQUEST PATH
 def test_empty_registry_denies_data_endpoint_without_optin(monkeypatch):
     """1.2: with no API key registry and no explicit PRAMAGENT_ALLOW_
     UNAUTHENTICATED_API opt-in, a data endpoint must fail closed (401) in the
@@ -457,7 +463,7 @@ def test_empty_registry_allows_data_endpoint_with_explicit_optin(monkeypatch):
     assert client.get("/v1/metrics").status_code != 401
 
 
-# ── Finding 4.1: no-auth mode is single-tenant under strict flag ──
+# no-auth mode is single-tenant under strict flag
 def test_noauth_strict_flag_refuses_non_default_tenant(monkeypatch):
     """4.1: in no-auth mode a client-supplied tenant_id is unauthenticated and
     thus untrustworthy. With PRAMAGENT_STRICT_SINGLE_TENANT set, any tenant
@@ -473,10 +479,10 @@ def test_noauth_strict_flag_refuses_non_default_tenant(monkeypatch):
     assert allowed.status_code != 403
 
 
-def test_noauth_without_strict_flag_still_allows_tenant_selection(monkeypatch):
-    """4.1: default (flag unset) preserves no-auth multi-tenant for dev/test."""
+def test_noauth_explicit_non_strict_mode_allows_tenant_selection(monkeypatch):
+    """Local tests can explicitly opt out of the secure single-tenant default."""
     monkeypatch.setenv("PRAMAGENT_ALLOW_UNAUTHENTICATED_API", "1")
-    monkeypatch.delenv("PRAMAGENT_STRICT_SINGLE_TENANT", raising=False)
+    monkeypatch.setenv("PRAMAGENT_STRICT_SINGLE_TENANT", "false")
     client = TestClient(create_app(registry=APIKeyRegistry()))
     assert client.post(
         "/v1/run", json={"prompt": "hi", "tenant_id": "acme"}
@@ -541,7 +547,7 @@ def test_token_endpoint_rejects_invalid_api_key(auth_client):
 
 
 def test_jwt_audience_is_issued_and_verified():
-    """aud pins tokens to this API (P3-4/T1-3): issued tokens carry it and
+    """aud pins tokens to this API : issued tokens carry it and
     tokens without (or with a foreign) audience are rejected."""
     mgr = JWTManager("a-strong-unit-test-secret-123456")
     token = mgr.issue("tenant_a", ttl_s=60)
@@ -652,7 +658,7 @@ def test_gdpr_erasure_only_for_own_tenant(auth_client):
     assert r.json()["deleted"] >= 1
 
 
-# ── auth module unit tests ────────────────────────────────────────────
+# auth module unit tests
 def test_keys_are_never_stored_plaintext():
     reg = APIKeyRegistry()
     key = reg.issue_key("tenant_x")
@@ -686,7 +692,10 @@ def test_jwt_manager_supports_kid_rotation_and_retirement():
 
 
 def test_jwt_manager_loads_key_registry_from_env(monkeypatch):
-    monkeypatch.setenv("PRAMAGENT_JWT_SECRETS", "old:old-secret,new:new-secret")
+    monkeypatch.setenv(
+        "PRAMAGENT_JWT_SECRETS",
+        "old:old-secret-value-123456,new:new-secret-value-123456",
+    )
     monkeypatch.setenv("PRAMAGENT_JWT_ACTIVE_KID", "new")
 
     mgr = JWTManager.from_env(fallback_secret="fallback-secret")
@@ -695,6 +704,13 @@ def test_jwt_manager_loads_key_registry_from_env(monkeypatch):
 
     assert header["kid"] == "new"
     assert mgr.tenant_for_token(token) == "tenant_env"
+
+
+def test_jwt_manager_rejects_weak_rotation_secret(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_JWT_SECRETS", "current:changeme")
+
+    with pytest.raises(RuntimeError, match=r"PRAMAGENT_JWT_SECRETS\[current\]"):
+        JWTManager.from_env(fallback_secret="strong-fallback-secret-value")
 
 
 class _FakePostgresCursor:

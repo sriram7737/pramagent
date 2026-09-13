@@ -92,8 +92,7 @@ def _fence(tag: str, content: str) -> str:
     return f"{open_tag}\n{safe_content}\n{close_tag}"
 
 
-# ── judge decision ────────────────────────────────────────────────────────────
-
+# judge decision
 @dataclass
 class JudgeDecision:
     decision_id:   str
@@ -121,8 +120,7 @@ class JudgeDecision:
         }
 
 
-# ── judge policy ──────────────────────────────────────────────────────────────
-
+# judge policy
 @dataclass
 class JudgePolicy:
     """Controls when and how the LLM judge is invoked."""
@@ -144,8 +142,7 @@ class JudgePolicy:
     block_on_ambiguous: bool = False
 
 
-# ── default prompt ────────────────────────────────────────────────────────────
-
+# default prompt
 _DEFAULT_PROMPT = """\
 You are a safety judge for an AI agent system. Your job is to evaluate whether
 a proposed tool call is safe to execute.
@@ -188,8 +185,7 @@ Respond ONLY with a JSON object — no markdown, no explanation outside JSON:
 """
 
 
-# ── LLMJudge ─────────────────────────────────────────────────────────────────
-
+# LLMJudge
 class LLMJudge:
     """
     Async LLM-as-judge safety layer for high-severity tool calls.
@@ -214,19 +210,17 @@ class LLMJudge:
     ) -> None:
         self._provider = provider
         self._policies = policies or [JudgePolicy()]
-        # B2: the tool arguments are sent to an external LLM provider, so they
-        # must go through the same PII/PHI redaction as the main prompt path.
-        # A caller can pass its own ComplianceLayer; otherwise the default one
+        # Tool arguments leave the process, so apply the same PII/PHI
+        # redaction as the main prompt path. A caller can provide its own
+        # ComplianceLayer; otherwise the default one
         # is built lazily (avoids a circular import at module load).
         self._compliance = compliance
         # Bounded: long-lived processes must not leak one entry per judged
-        # call forever (P2-2). Durable audit lives in the trace store.
+        # call forever . Durable audit lives in the trace store.
         self.audit_log: deque[JudgeDecision] = deque(maxlen=10_000)
 
     def _scrubber(self):
-        """The ComplianceLayer used to redact arguments before the judge sees
-        them (B2). Built lazily to avoid a circular import with the layers
-        package at module load."""
+        """Return the argument scrubber, importing lazily to avoid a cycle."""
         if self._compliance is None:
             from pramagent.layers import ComplianceLayer
             self._compliance = ComplianceLayer()
@@ -257,8 +251,7 @@ class LLMJudge:
             return self._fast_allow(tool_name)
 
         template = policy.prompt_template or _DEFAULT_PROMPT
-        # B2: scrub PII/PHI out of the JSON-stringified arguments before they
-        # reach the (external) judge provider, mirroring the main prompt path.
+        # Scrub serialized arguments before sending them to the judge.
         arguments_json = json.dumps(arguments, indent=2)
         arguments_json, _ = self._scrubber().scrub(arguments_json)
         fenced_arguments = _fence("untrusted_tool_arguments", arguments_json)
@@ -278,7 +271,7 @@ class LLMJudge:
             return self._parse_response(tool_name, raw, latency_ms, policy)
         # On Python 3.10 asyncio.TimeoutError is NOT builtins.TimeoutError
         # (they were unified in 3.11) — catch both so a timeout never falls
-        # into the generic path (P2-13).
+        # into the generic path.
         except (TimeoutError, asyncio.TimeoutError):
             latency_ms = (time.perf_counter() - t0) * 1000
             log.warning("LLM judge timed out for %s (%.0fms); escalating", tool_name, latency_ms)
@@ -295,7 +288,7 @@ class LLMJudge:
             latency_ms = (time.perf_counter() - t0) * 1000
             log.error("LLM judge error for %s: %r; escalating", tool_name, exc)
             # reason flows to API callers via ToolDecision — keep it generic;
-            # the exception detail stays in the audit log only (P2-13).
+            # the exception detail stays in the audit log only.
             return self._record(JudgeDecision(
                 decision_id=str(uuid.uuid4()),
                 tool_name=tool_name,
@@ -346,9 +339,9 @@ class LLMJudge:
                 raise ValueError(f"unknown verdict {raw_verdict!r}")
 
         except Exception as exc:
-            # Finding 2.5: never log the raw judged content — it can carry
+            # never log the raw judged content — it can carry
             # PII/PHI/secrets from the model output or tool arguments. Log the
-            # exception type and a length only, mirroring the ISSUE-5 pattern.
+            # exception type and a length only, mirroring the pattern.
             log.warning(
                 "LLM judge parse error for %s: %s (raw %d chars, not logged)",
                 tool_name, type(exc).__name__, len(raw))
@@ -388,8 +381,7 @@ class LLMJudge:
         return d
 
 
-# ── output judge ────────────────────────────────────────────────────────────
-
+# output judge
 @dataclass
 class OutputJudgeDecision:
     decision_id:  str

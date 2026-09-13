@@ -97,11 +97,7 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
     tool_name = _tool_name(event)
     tool_input = _tool_input(event)
 
-    # Control-plane self-protection (see scripts/claude_code_hook.py). Refuse any
-    # tool call that would write the hook's own config or admin audit DB, checked
-    # BEFORE the master switch so a tampering write cannot disable this surface
-    # and slip through. Fail-safe: if the check cannot be loaded, fall through to
-    # the rest of enforcement rather than allowing.
+    # Protect control-plane files before consulting the switch they contain.
     try:
         from pramagent.hook_state import targets_protected_path
         protected_hit = targets_protected_path(tool_name, tool_input)
@@ -114,8 +110,7 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
-    # Admin master switch (fail-safe; see pramagent.hook_state). If the switch
-    # cannot be read we enforce rather than assume disabled.
+    # Missing or invalid state keeps enforcement enabled.
     try:
         from pramagent.hook_state import is_enabled as _hook_enabled
         if not _hook_enabled("plugin"):
@@ -142,7 +137,7 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
             f"environment (`pip install pramagent`). Import error: {exc}"
         )
 
-    # Per-tool master switch + per-tenant permission from the admin console.
+    # Apply global tool and tenant permissions before policy evaluation.
     try:
         if not tool_enabled(tool_name):
             return _decision(
@@ -173,18 +168,12 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         return _fail_decision(f"Pramagent Guard failed closed: {exc}")
 
-    # Structural verdict first: a hard BLOCK short-circuits before the
-    # heuristic content passes.
+    # Structural policy failures are final.
     if decision.verdict == Verdict.BLOCK:
         return _decision("deny", f"Pramagent ToolGuard: {decision.reason}")
 
-    # Content passes the standalone scripts run but this plugin historically
-    # omitted entirely (it ran only the structural ToolGuard evaluate  -  1 of
-    # the 3 defenses): prompt-injection heuristics + PII/PHI scan over EVERY
-    # string argument (see pramagent.hook_scan for why every leaf, decoded).
-    # A finding maps to the host's escalate decision  -  "ask" on Claude Code,
-    # "deny" where there is no ask  -  never a silent allow. Fails closed if the
-    # scan itself raises.
+    # Scan every decoded string leaf for injection and sensitive data. Hosts
+    # without an interactive "ask" result deny escalations.
     try:
         isolation = IsolationLayer(block_on_injection=False)
         compliance = ComplianceLayer()

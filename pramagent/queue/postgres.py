@@ -125,13 +125,13 @@ class PostgresHITLQueue:
         self._tenant_idx_ident = self._sql.Identifier(f"idx_{table}_tenant")
         self._created_idx_ident = self._sql.Identifier(f"idx_{table}_created")
         self._policy_ident = self._sql.Identifier(f"{table}_tenant_isolation")
-        # Thread-local connection cache (P3-8): the HITL waiter polls get()
+        # The HITL waiter polls ``get``, so keep connections thread-local.
         # every poll_interval_s — opening a fresh connection per poll would
         # hammer Postgres for nothing. One connection per thread, reused.
         self._local = threading.local()
         self._run(lambda cur: cur.execute(self._schema_sql()))
 
-    # ── connection helpers ─────────────────────────────────────────────
+    # connection helpers
     def _connection(self):
         """Return this thread's cached connection, reopening if stale."""
         conn = getattr(self._local, "conn", None)
@@ -197,7 +197,7 @@ class PostgresHITLQueue:
                 "SELECT set_config('pramagent.hitl_tenant_id', %s, true)",
                 (tenant_id,))
 
-    # ── HITLQueueStore protocol ────────────────────────────────────────
+    # HITLQueueStore protocol
     def enqueue(self, request: QueuedRequest) -> str:
         row = to_row(request)
         sql = self._query(

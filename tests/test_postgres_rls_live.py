@@ -27,7 +27,7 @@ import pytest
 from pramagent import _pg
 from pramagent.store_postgres import PostgresStore
 
-# T2/T3/T4: this test silently skips when Docker is absent, which is right for
+# This test skips when Docker is absent, which is appropriate for
 # a laptop but dangerous in CI — the isolation guarantee it exists to prove can
 # quietly vanish from a run. Set PRAMAGENT_REQUIRE_LIVE_PG=1 in the CI
 # environment that is SUPPOSED to have Docker so a missing Docker CLI fails

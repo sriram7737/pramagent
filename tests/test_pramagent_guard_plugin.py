@@ -1,14 +1,8 @@
-"""Regression tests for the marketplace plugin hook
-(plugins/pramagent-guard/hooks/scripts/pramagent_guard.py), which previously
-had no test coverage.
+"""Tests for the marketplace plugin hook.
 
-The central assertions here pin the fix for this plugin's biggest gap: it used
-to run ONLY the structural ToolGuard evaluate (1 of the 3 defenses), silently
-allowing prompt-injection and PII that the standalone scripts caught. It now
-runs the prompt-injection + PII passes too.
-
-Escalate/finding decisions are host-dependent (ask vs deny); the tests pin the
-mapping by setting PRAMAGENT_HOOK_ESCALATE_DECISION explicitly.
+The plugin applies structural, prompt-injection, and sensitive-data checks.
+Tests set ``PRAMAGENT_HOOK_ESCALATE_DECISION`` to make host-specific escalation
+behavior explicit.
 """
 from __future__ import annotations
 

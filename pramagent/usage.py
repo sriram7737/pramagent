@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Callable, Optional
 
-from .security import validate_http_url
+from .security import validate_http_url, validate_urllib_request
 
 
 log = logging.getLogger(__name__)
@@ -187,7 +187,7 @@ class InMemoryUsageLedger(UsageEventSink):
     tamper-evident local ledger that can be mirrored to Stripe/Chargebee or a
     warehouse by another sink.
 
-    GROWTH CAP (P2-2): the ledger is deliberately NOT silently truncated — a
+    GROWTH CAP : the ledger is deliberately NOT silently truncated — a
     hash-chained ledger that drops its oldest links can no longer verify from
     genesis, which would defeat its purpose as billing evidence. Instead a
     warning is logged once when entries exceed WARN_ENTRIES (~tens of MB of
@@ -320,7 +320,13 @@ class WebhookUsageSink(UsageEventSink):
             method="POST",
         )
         try:
-            # Billing webhook URL is validated in __init__.
+            # Re-resolve immediately before sending so a hostname that changed
+            # from public to private after startup is refused.
+            validate_urllib_request(
+                req,
+                allow_http_localhost=True,
+                context="billing webhook URL",
+            )
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:  # nosec B310
                 if resp.status >= 400:
@@ -349,7 +355,7 @@ class UsageTracker:
     every tenant) over strict spend enforcement is a deliberate choice, not
     an oversight; set PRAMAGENT_QUOTA_FAIL_OPEN=0 if a deployment's cost
     controls need to be strict even at the expense of availability during a
-    quota-backend outage (ISSUE-9).
+    quota-backend outage.
     """
 
     def __init__(

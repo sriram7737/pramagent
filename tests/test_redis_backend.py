@@ -73,8 +73,7 @@ def test_from_url_threads_fail_open_through(monkeypatch):
     assert allowed is True
 
 
-# ── C3: rediss:// TLS defaults ─────────────────────────────────────────────
-
+# rediss:// TLS defaults
 def test_tls_kwargs_verifies_cert_for_rediss():
     """C3: a rediss:// URL defaults to verifying the server certificate."""
     out = RedisBackend._tls_kwargs("rediss://cache.example:6380/0", {})

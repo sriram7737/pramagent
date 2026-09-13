@@ -36,7 +36,7 @@ _SIMULATOR_PREFIXES = ("default.", "lightning.", "null.")
 # device name forces a hardware classification even when the name also carries
 # a simulator-looking prefix (e.g. a plugin device short-named
 # "default.ionq_forte"). Fail-safe: a metering/approval boundary must not be
-# defeated by a substring prefix (F3).
+# defeated by a simulator-looking prefix.
 _HARDWARE_TOKENS = (
     "braket", "ibm", "rigetti", "cepheus", "ionq", "forte",
     "quera", "aquila", "aqt", "ibex", "iqm", "garnet", "emerald",
@@ -71,7 +71,7 @@ def _device_name(qnode) -> str:
 
 def _device_kind(device_name: str) -> str:
     name = device_name.lower()
-    # Hardware tokens win over any simulator-looking prefix (F3): a device
+    # Hardware tokens take precedence over a simulator-looking prefix: a device
     # named "default.ionq_forte" is an IonQ QPU, not a free simulator.
     if any(tok in name for tok in _HARDWARE_TOKENS):
         return "hardware"
@@ -177,7 +177,7 @@ def pennylane_tracker_meter(qnode, *args, **kwargs) -> tuple[Any, dict[str, int]
     }
 
 
-# ── input / circuit / result guard policies ───────────────────────────────────
+# input / circuit / result guard policies
 #
 # These take the adapter from "metered execution" to "policy-enforced
 # execution": what a circuit is allowed to look like and what data is allowed
@@ -735,7 +735,7 @@ class GuardedQNode:
         wires = int(_lookup(resources, "num_wires", "wires", "num_allocs", default=0) or 0)
         spent_shots, spent_cost = self._session_spent()
 
-        # F4: fail closed when the shot count is unknowable rather than
+        # Fail closed when the shot count is unknowable rather than
         # metering it as zero and running an unbounded-cost call for free.
         if shots is None:
             reason = (
@@ -887,7 +887,7 @@ class GuardedQNode:
             result, actual = self._qnode(*args, **kwargs), None
         # Session spend is derived from this executed event on the next call
         # (see _session_spent), so there is no volatile per-instance counter
-        # to reset by re-wrapping the QNode (F2). The executed event is written
+        # to reset by re-wrapping the QNode. The executed event is written
         # BEFORE the result guard so spend stays accurate even when the result
         # is rejected — the shots were already consumed on hardware.
         self._audit_quantum_event(decision, call_args, "quantum_call_executed", meta)

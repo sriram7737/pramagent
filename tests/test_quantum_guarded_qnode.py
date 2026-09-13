@@ -203,7 +203,7 @@ def test_hardware_escalates_when_priced_and_approval_required():
 
 
 def test_call_time_shots_override_is_metered_before_execution():
-    # F1: a call-time shots= override must be metered (and blocked) against the
+    # A call-time shots override is metered against the
     # per-call budget, not silently executed while the device default is priced.
     armor = _armor(max_shots_per_call=100, max_shots_per_session=10_000)
     qnode = _QNode(shots=100)
@@ -221,7 +221,7 @@ def test_call_time_shots_override_is_metered_before_execution():
 
 
 def test_call_time_shots_override_within_budget_is_metered_correctly():
-    # F1 (allow path): an in-budget override is metered at the override value.
+    # An in-budget override is metered at the override value.
     armor = _armor(max_shots_per_call=500, max_shots_per_session=10_000)
     qnode = _QNode(shots=100)
     guarded = GuardedQNode(qnode, armor, session_id="s", specs_func=_specs)
@@ -236,7 +236,7 @@ def test_call_time_shots_override_within_budget_is_metered_correctly():
 
 
 def test_session_budget_shared_across_adapter_instances():
-    # F2: session shot budget survives re-wrapping the same (tenant, session)
+    # Session shot budget survives re-wrapping the same tenant and session.
     # with a fresh adapter instance — it is derived from the audit trail, not
     # from volatile per-instance memory.
     armor = _armor(max_shots_per_session=150)
@@ -258,7 +258,7 @@ def test_session_budget_shared_across_adapter_instances():
 
 
 def test_hardware_name_with_simulator_prefix_is_not_free():
-    # F3: a hardware provider token forces a hardware classification even under
+    # A hardware provider token forces hardware classification even under
     # a simulator-looking prefix, so the call is priced and escalated.
     armor = _armor(max_cost=10_000.0)
     qnode = _QNode(name="default.ionq_forte", shots=500)
@@ -276,7 +276,7 @@ def test_hardware_name_with_simulator_prefix_is_not_free():
 
 
 def test_unparseable_shot_count_fails_closed():
-    # F4: an uninterpretable shot count is refused, not metered as zero.
+    # An uninterpretable shot count is refused, not metered as zero.
     armor = _armor(max_cost=10_000.0)
     qnode = _QNode(name="braket:ionq:forte", shots=500)
     qnode.device.shots = object()           # opaque: no total_shots, not int()-able

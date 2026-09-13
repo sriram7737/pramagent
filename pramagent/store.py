@@ -30,7 +30,7 @@ from .types import TraceEvent
 GENESIS = "0" * 64
 
 
-# ──────────────────────────── protocol (duck-typing) ───────────────────────
+# protocol (duck-typing)
 @runtime_checkable
 class TraceStore(Protocol):
     def save(self, trace: TraceEvent) -> None: ...
@@ -40,7 +40,7 @@ class TraceStore(Protocol):
     def delete_for_tenant(self, tenant_id: str) -> int: ...
 
 
-# ──────────────────────────── in-memory (default) ──────────────────────────
+# in-memory (default)
 class MemoryStore:
     """Zero-dependency in-process store. Traces lost on restart."""
 
@@ -109,7 +109,7 @@ class MemoryStore:
         return len(self._traces)
 
 
-# ──────────────────────────── SQLite (persistent) ──────────────────────────
+# SQLite (persistent)
 class SQLiteStore:
     """
     Persists traces AND the audit hash chain to a single SQLite file. Implements
@@ -127,7 +127,7 @@ class SQLiteStore:
         # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
         # docstring for why an unkeyed chain alone isn't tamper-evident
         # against an actor with raw DB write access. signing_keys/active_kid
-        # enable kid-versioned rotation (G1); a lone signing_key is the
+        # Enable kid-versioned rotation; a lone signing key is the
         # classic single-key mode.
         from .audit import SigningKeyRing
         self._keyring = SigningKeyRing.from_config(
@@ -139,7 +139,7 @@ class SQLiteStore:
         # One shared connection used from multiple threads (core offloads
         # persistence via asyncio.to_thread): every method that touches it is
         # serialized through this re-entrant lock so interleaved execute/commit
-        # pairs can never commit another writer's half-done work (P1-5/T2-4).
+        # pairs can never commit another writer's half-done work.
         self._lock = threading.RLock()
         self._create_tables()
         self._head = self._load_head()
@@ -171,7 +171,7 @@ class SQLiteStore:
     def close(self) -> None:
         self._conn.close()
 
-    # ── TraceStore interface ──────────────────────────────────────────────
+    # TraceStore interface
     def save(self, trace: TraceEvent) -> None:
         with self._lock:
             self._conn.execute(
@@ -313,7 +313,7 @@ class SQLiteStore:
                 self._conn.commit()
             return redacted
 
-    # ── AuditBackend interface ────────────────────────────────────────────
+    # AuditBackend interface
     @property
     def head(self) -> str:
         return self._head
@@ -325,7 +325,7 @@ class SQLiteStore:
         lock — never taken from the caller or the cached head — so concurrent
         writers (threads in this process, or other processes sharing the
         file) can never both link from the same stale head and fork the
-        chain (P1-5/T2-4). The prev_hash parameter is retained for interface
+        chain . The prev_hash parameter is retained for interface
         compatibility and ignored."""
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")   # cross-process write lock
@@ -333,7 +333,7 @@ class SQLiteStore:
                 "SELECT this_hash FROM audit_chain ORDER BY seq DESC LIMIT 1"
             ).fetchone()
             prev = row[0] if row else GENESIS       # re-read under the lock
-            # G1: tag the row with the active key version when rotation is
+            # Tag the row with the active key version when rotation is
             # configured, so verification can select the right key later.
             if self._keyring.versioned:
                 from .audit import CHAIN_KID_FIELD
@@ -365,11 +365,11 @@ class SQLiteStore:
         return True
 
     def verify(self) -> list[dict]:
-        """Verify hash-chain integrity, returning a list of broken links
-        (empty = intact) — the same shape PostgresStore.verify() returns, so
-        `pramagent audit-verify-watch` works against SQLite too (B4). This
-        was previously Postgres-only, so the watch command crashed with
-        AttributeError on the documented default SQLite backend."""
+        """Return broken chain links, or an empty list for an intact chain.
+
+        The return shape matches ``PostgresStore.verify()`` so the audit watch
+        command works with either persistent backend.
+        """
         with self._lock:
             rows = self._conn.execute(
                 "SELECT payload, prev_hash, this_hash FROM audit_chain ORDER BY seq"
@@ -403,7 +403,7 @@ class SQLiteStore:
         return True
 
     def count(self, tenant_id: str | None = None) -> int:
-        """Trace count via SQL COUNT — never a full-table load (P2-14)."""
+        """Trace count via SQL COUNT — never a full-table load ."""
         with self._lock:
             if tenant_id:
                 row = self._conn.execute(

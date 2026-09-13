@@ -1,5 +1,4 @@
-"""Dedicated tests for HITLWorkflowLayer, ApproverChain, and QuorumApprover
-(audit Finding #7: these workflow primitives had no test coverage)."""
+"""Tests for HITLWorkflowLayer, ApproverChain, and QuorumApprover."""
 import asyncio
 
 import pytest
@@ -30,8 +29,7 @@ async def _abstain(action, context):
     return None
 
 
-# ───────────────────────── tenant-scoped audit log ────────────────────────
-
+# tenant-scoped audit log
 @pytest.mark.asyncio
 async def test_approval_record_derives_tenant_id_from_context():
     log = ApprovalAuditLog()
@@ -53,7 +51,7 @@ async def test_audit_log_all_scopes_by_tenant():
     """`_GLOBAL_AUDIT_LOG` is a process-wide singleton shared across every
     workflow instance that doesn't supply its own audit_log= — an unscoped
     `.all()` therefore mixes every tenant's approval history. Passing
-    tenant_id must return only that tenant's records (ISSUE-11)."""
+    tenant_id must return only that tenant's records ."""
     log = ApprovalAuditLog()
     chain = ApproverChain([_slot("oncall", _approve)], audit_log=log)
     await chain("wire", {"tenant": "acme"})
@@ -79,8 +77,7 @@ async def test_audit_log_for_action_scopes_by_tenant():
     assert scoped[0].tenant_id == "beta"
 
 
-# ───────────────────────────── ApproverChain ──────────────────────────────
-
+# ApproverChain
 @pytest.mark.asyncio
 async def test_chain_first_approver_decides():
     log = ApprovalAuditLog()
@@ -127,8 +124,7 @@ def test_chain_requires_at_least_one_slot():
         ApproverChain([])
 
 
-# ───────────────────────────── QuorumApprover ─────────────────────────────
-
+# QuorumApprover
 @pytest.mark.asyncio
 async def test_quorum_two_of_three_approves():
     quorum = QuorumApprover(
@@ -185,8 +181,7 @@ async def test_quorum_records_every_decision_in_audit_log():
     assert all(r.decision is True for r in log.all())
 
 
-# ──────────────────────────── HITLWorkflowLayer ───────────────────────────
-
+# HITLWorkflowLayer
 @pytest.mark.asyncio
 async def test_workflow_layer_auto_for_non_consequential():
     layer = HITLWorkflowLayer(require_approval_for=["wire"],

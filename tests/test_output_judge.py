@@ -23,7 +23,7 @@ from pramagent.layers.llm_judge import JudgePolicy
 
 
 def test_judge_parse_error_does_not_log_raw_content(caplog):
-    """Finding 2.5: on an unparseable judge response the log must carry only
+    """on an unparseable judge response the log must carry only
     the exception type and a length — never the raw content, which can hold
     PII/PHI/secrets from the model output or tool arguments."""
     secret = "patient SSN 123-45-6789"
@@ -41,8 +41,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# ── layer contract ──────────────────────────────────────────────────────────
-
+# layer contract
 async def test_safe_verdict_allows():
     j = OutputJudgeLayer(provider=lambda p: "SAFE")
     d = await j.evaluate("a perfectly normal answer", original_prompt="hi")
@@ -181,8 +180,7 @@ async def test_injected_closing_tag_in_output_is_escaped():
     assert "&lt;/untrusted_model_output&gt;" in prompt
 
 
-# ── pipeline integration ────────────────────────────────────────────────────
-
+# pipeline integration
 def test_pipeline_withholds_unsafe_output():
     """A keylogger that evades the file-exfil regex is still withheld because
     the judge evaluates meaning, not patterns."""

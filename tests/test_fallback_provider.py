@@ -1,6 +1,6 @@
-"""Tests for FallbackProvider failover (audit Finding #7).
+"""Tests for FallbackProvider failover.
 
-The Layer-1 headline guarantee: when the primary provider fails, the next
+When the primary provider fails, the next
 provider in the chain serves the call, and the failover is recorded as a
 STRUCTURED field (ProviderResult.used_fallback / TraceEvent.used_fallback),
 never inferred from a substring of the model name.

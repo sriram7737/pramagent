@@ -110,7 +110,7 @@ class ComplianceReporter:
 
     FRAMEWORKS = ("EU_AI_ACT", "GDPR", "HIPAA", "SOC2", "NIST_AI_RMF", "PCI_DSS")
 
-    # ── Control mapping ────────────────────────────────────────────────
+    # Control mapping
     # Maps each framework's relevant control IDs to the Pramagent feature
     # that provides evidence for the control. Used by ``generate()`` to
     # render the control-mapping table in the evidence PDF.
@@ -137,8 +137,8 @@ class ComplianceReporter:
              "Hash-chained audit trail; ComplianceReporter evidence packages"),
             ("164.308(a)(4)", "Information access management",
              "Tenant isolation in IsolationLayer; per-tenant keys"),
-            # Finding 2.x: honest scope — the REST auth model identifies the
-            # tenant/API key, not an individual end user, and session_id is
+            # The REST auth model identifies the tenant or API key, not an
+            # individual end user, and session_id is
             # client-supplied (not derived from the credential). This is
             # tenant/session attribution, not per-user identification.
             ("164.312(a)(1)", "Access control — tenant/session attribution "
@@ -219,7 +219,7 @@ class ComplianceReporter:
         if self.store is None:
             return {"total": 0, "tenant": 0}
         # SQL COUNT when the store supports it — never a full-table load
-        # just to count rows (P2-14).
+        # just to count rows.
         counter = getattr(self.store, "count", None)
         if counter is not None:
             total = counter()
@@ -267,7 +267,7 @@ class ComplianceReporter:
               framework: str = "EU_AI_ACT") -> dict:
         """Return a structured compliance report as a dict (JSON-serialisable)."""
         # A store outage must never yield a report silently asserting zero
-        # traces as signed evidence (P3-12) — the failure is stamped into
+        # traces as signed evidence  — the failure is stamped into
         # the report so an auditor sees it.
         store_error = ""
         try:
@@ -290,7 +290,7 @@ class ComplianceReporter:
             "audit": {
                 # hash_chain_verified means the chain is internally consistent.
                 # tamper_evident_against_writer means that consistency is
-                # HMAC-protected (finding 2.1): False here => an actor with DB
+                # HMAC-protected : False here => an actor with DB
                 # write access could have reforged history undetectably, so an
                 # auditor must not read "verified: true" as tamper-evidence.
                 "hash_chain_verified": self._chain_valid(),
@@ -321,7 +321,7 @@ class ComplianceReporter:
             return False
 
     def _control_in_place(self, evidence: str) -> bool:
-        """Probe the live system for a control instead of attesting it (P2-14).
+        """Probe the live system for a control instead of attesting it.
 
         Controls whose evidence names a probeable object (the audit chain,
         the consent registry, the retention policy, the store) are measured
@@ -342,13 +342,13 @@ class ComplianceReporter:
     def _controls(self, framework: str) -> list[dict]:
         """Map implemented Pramagent controls to a framework's expectations.
 
-        Live-system rows are probed at report time (P2-14): the audit row
+        Live-system rows are probed at report time : the audit row
         reflects an actual verify_chain() run, the retention row an actual
         policy comparison. Structural rows (scrubbing, HITL gating) are
         properties of the pipeline code itself."""
         base = [
             # "Tamper-evident" requires BOTH a valid chain AND a signing key
-            # (finding 2.1): an unkeyed chain is not tamper-evident against a
+            # : an unkeyed chain is not tamper-evident against a
             # writer, so this control must not read in_place merely because the
             # hashes are self-consistent.
             ("audit_trail", "Tamper-evident hash-chained audit log",
@@ -425,17 +425,14 @@ class ComplianceReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
         return path
-
-    # ────────────────────────────────────────────────────────────────────
-    #  Evidence package generator
-    # ────────────────────────────────────────────────────────────────────
+    # Evidence package generator
     def _traces_in_window(self, period_start: Optional[float],
                           period_end: Optional[float],
                           tenant_id: Optional[str]) -> list:
         """Return traces in the requested period (and tenant scope).
 
         Store failures propagate — collect_evidence stamps them into the
-        evidence package instead of silently reporting zero traces (P3-12)."""
+        evidence package instead of silently reporting zero traces ."""
         if self.store is None:
             return []
         traces = self.store.list_all()
@@ -515,7 +512,7 @@ class ComplianceReporter:
         controls = self.CONTROL_MAP.get(framework, [])
         # in_place is measured, not attested: probeable controls (chain,
         # consent, retention, store) are checked against the live objects at
-        # evidence-generation time (P2-14).
+        # evidence-generation time.
         controls_rows = [
             {"control_id": cid, "description": desc, "evidence": ev,
              "in_place": self._control_in_place(ev)}
@@ -584,7 +581,7 @@ class ComplianceReporter:
         # Default: write PDF (reportlab) with text fallback.
         return self._render_pdf(ev, output)
 
-    # ── Renderers ──────────────────────────────────────────────────────
+    # Renderers
     @staticmethod
     def _render_text(ev: dict) -> str:
         lines = [

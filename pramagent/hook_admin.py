@@ -1,34 +1,14 @@
-"""
-pramagent.hook_admin
-====================
-Write / admin side of the central hook configuration (:mod:`pramagent.hook_state`
-is the read side). Every mutation an operator makes from the console  - 
-enable/disable a surface, enable/disable a tool, add/edit/delete a tool policy  - 
-goes through here so that:
-
-  1. the change is validated before it is persisted (a bad policy schema is
-     rejected, not written and then crashed on by every hook), and
-  2. the change is appended to a **SHA-256 hash-chained** audit
-     (``SQLiteStore``, the same tamper-evident chain the rest of Pramagent
-     uses), so *who changed what, when* is recoverable and any later edit to
-     the log breaks ``verify_chain()``.
-
-This module is imported by the dashboard, not by the hooks on their hot path.
-"""
+"""Validate, persist, and audit hook configuration changes."""
 from __future__ import annotations
 
-import os
 import time
-from pathlib import Path
 from typing import Any, Optional
 
 from . import hook_state
 from .hook_state import SURFACES
 from .policies import PolicyLoadError, tool_policy_from_dict
 
-# The full tool surface an operator can switch on/off, grouped by adapter, so
-# the console can render a complete toggle list rather than only tools that
-# already have an entry in the config. Mirrors each hook's own registration.
+# Keep this inventory aligned with each adapter's built-in registration.
 KNOWN_TOOLS: dict[str, tuple[str, ...]] = {
     "claude": ("Bash", "Write", "Edit", "Read", "Grep", "Glob"),
     "gemini": ("run_shell_command", "write_file", "replace",
@@ -50,21 +30,16 @@ def all_known_tools() -> list[str]:
 
 
 def _audit_db_path() -> str:
-    return os.environ.get(
-        "PRAMAGENT_HOOK_ADMIN_AUDIT_DB",
-        str(Path(hook_state.state_path()).with_name("pramagent_hook_admin_audit.db")),
-    )
+    return str(hook_state.audit_path())
 
 
 def _audit(action: str, *, actor: str, detail: dict[str, Any]) -> dict[str, Any]:
-    """Append one config-change record to the SHA-256 hash chain. Returns the
-    chain position {seq, this_hash, prev_hash}. A signing key (PRAMAGENT_SIGNING_KEY)
-    upgrades the plain SHA-256 chain to HMAC-SHA256; without one it is still a
-    SHA-256 chain, just not keyed."""
+    """Append a keyed config-change record and return its chain position."""
     from .store import SQLiteStore
 
-    signing_key = os.environ.get("PRAMAGENT_SIGNING_KEY", "")
-    store = SQLiteStore(path=_audit_db_path(), signing_key=signing_key)
+    if not actor or not actor.strip():
+        raise ValueError("authenticated actor is required")
+    store = SQLiteStore(path=_audit_db_path(), **hook_state._audit_key_config())
     try:
         payload = {
             "source": "hook_admin",
@@ -83,9 +58,38 @@ def _audit(action: str, *, actor: str, detail: dict[str, Any]) -> dict[str, Any]
         store.close()
 
 
+def _commit(
+    state: dict[str, Any], *, action: str, actor: str, detail: dict[str, Any]
+) -> dict[str, Any]:
+    # Resolve and validate the key before touching the live config.
+    hook_state._audit_key_config()
+    saved = hook_state._save_state(state, actor=actor)
+    audited_detail = dict(detail)
+    audited_detail["state_hash"] = hook_state.state_digest(saved)
+    chain = _audit(action, actor=actor, detail=audited_detail)
+    return {"state": saved, "chain": chain}
+
+
+def bind_legacy_state(*, actor: str) -> dict[str, Any]:
+    """Bind a legacy config to the keyed chain after operator approval."""
+    state, readable = hook_state._read_state()
+    if not readable:
+        raise RuntimeError("no readable hook config is available to bind")
+    valid, _reason = hook_state.integrity_status(state)
+    if valid:
+        return {"state": state, "chain": None}
+    return _commit(
+        state,
+        action="bind_legacy_state",
+        actor=actor,
+        detail={"migration": "operator-approved legacy config binding"},
+    )
+
+
 def get_config() -> dict[str, Any]:
     """Full current config plus audit-chain status, for the console to render."""
     state = hook_state.get_state()
+    integrity_valid, integrity_reason = hook_state.integrity_status()
     return {
         "surfaces": state["surfaces"],
         "tools": state["tools"],
@@ -97,29 +101,31 @@ def get_config() -> dict[str, Any]:
         "surface_tools": {k: list(v) for k, v in KNOWN_TOOLS.items()},
         "audit_head": audit_head(),
         "chain_valid": verify_chain(),
+        "config_integrity_valid": integrity_valid,
+        "config_integrity_reason": integrity_reason,
     }
 
 
 def set_surface_enabled(surface: str, enabled: bool, *, actor: str) -> dict[str, Any]:
     if surface not in SURFACES:
         raise ValueError(f"unknown surface {surface!r}; expected one of {SURFACES}")
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     state["surfaces"][surface] = bool(enabled)
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("set_surface_enabled", actor=actor,
-                   detail={"surface": surface, "enabled": bool(enabled)})
-    return {"state": saved, "chain": chain}
+    return _commit(
+        state, action="set_surface_enabled", actor=actor,
+        detail={"surface": surface, "enabled": bool(enabled)},
+    )
 
 
 def set_tool_enabled(tool_name: str, enabled: bool, *, actor: str) -> dict[str, Any]:
     if not tool_name:
         raise ValueError("tool_name is required")
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     state["tools"][tool_name] = bool(enabled)
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("set_tool_enabled", actor=actor,
-                   detail={"tool": tool_name, "enabled": bool(enabled)})
-    return {"state": saved, "chain": chain}
+    return _commit(
+        state, action="set_tool_enabled", actor=actor,
+        detail={"tool": tool_name, "enabled": bool(enabled)},
+    )
 
 
 def upsert_policy(policy: dict[str, Any], *, actor: str) -> dict[str, Any]:
@@ -131,27 +137,25 @@ def upsert_policy(policy: dict[str, Any], *, actor: str) -> dict[str, Any]:
     except PolicyLoadError as exc:
         raise ValueError(f"invalid policy: {exc}") from exc
 
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     policies = list(state["policies"] or [])
     policies = [p for p in policies if p.get("name") != parsed.name]
     policies.append(dict(policy))
     state["policies"] = policies
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("upsert_policy", actor=actor,
-                   detail={"name": parsed.name, "side_effect": parsed.side_effect})
-    return {"state": saved, "chain": chain}
+    return _commit(
+        state, action="upsert_policy", actor=actor,
+        detail={"name": parsed.name, "side_effect": parsed.side_effect},
+    )
 
 
 def delete_policy(name: str, *, actor: str) -> dict[str, Any]:
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     policies = [p for p in (state["policies"] or []) if p.get("name") != name]
     state["policies"] = policies or None
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("delete_policy", actor=actor, detail={"name": name})
-    return {"state": saved, "chain": chain}
+    return _commit(state, action="delete_policy", actor=actor, detail={"name": name})
 
 
-# -- tenant permissions -----------------------------------------------------
+# Tenant permissions
 
 def upsert_tenant(
     tenant_id: str,
@@ -161,12 +165,7 @@ def upsert_tenant(
     denied_tools: Optional[list[str]] = None,
     actor: str,
 ) -> dict[str, Any]:
-    """Create or update one tenant's permissions.
-
-    ``allowed_tools=None`` means "every tool" (an allow-all tenant, still
-    subject to ``denied_tools``); a list restricts the tenant to exactly those
-    tools. Names are validated against the known tool surface so a typo can't
-    silently grant/deny a tool that does not exist."""
+    """Create or update validated permissions for one tenant."""
     if not tenant_id:
         raise ValueError("tenant_id is required")
     known = set(all_known_tools())
@@ -175,47 +174,41 @@ def upsert_tenant(
             raise ValueError(
                 f"unknown tool {name!r}; expected one of {sorted(known)}")
 
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     state["tenants"][tenant_id] = {
         "enabled": bool(enabled),
         "allowed_tools": list(allowed_tools) if allowed_tools is not None else None,
         "denied_tools": list(denied_tools or []),
     }
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("upsert_tenant", actor=actor, detail={
-        "tenant": tenant_id,
-        "enabled": bool(enabled),
-        "allowed_tools": allowed_tools,
-        "denied_tools": denied_tools or [],
+    return _commit(state, action="upsert_tenant", actor=actor, detail={
+        "tenant": tenant_id, "enabled": bool(enabled),
+        "allowed_tools": allowed_tools, "denied_tools": denied_tools or [],
     })
-    return {"state": saved, "chain": chain}
 
 
 def set_tenant_enabled(tenant_id: str, enabled: bool, *, actor: str) -> dict[str, Any]:
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     entry = state["tenants"].get(tenant_id, {"allowed_tools": None, "denied_tools": []})
     entry["enabled"] = bool(enabled)
     state["tenants"][tenant_id] = entry
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("set_tenant_enabled", actor=actor,
-                   detail={"tenant": tenant_id, "enabled": bool(enabled)})
-    return {"state": saved, "chain": chain}
+    return _commit(
+        state, action="set_tenant_enabled", actor=actor,
+        detail={"tenant": tenant_id, "enabled": bool(enabled)},
+    )
 
 
 def delete_tenant(tenant_id: str, *, actor: str) -> dict[str, Any]:
-    state = hook_state.get_state()
+    state = hook_state._state_for_update()
     state["tenants"].pop(tenant_id, None)
-    saved = hook_state._save_state(state, actor=actor)
-    chain = _audit("delete_tenant", actor=actor, detail={"tenant": tenant_id})
-    return {"state": saved, "chain": chain}
+    return _commit(state, action="delete_tenant", actor=actor,
+                   detail={"tenant": tenant_id})
 
 
 def audit_head() -> Optional[str]:
     from .store import SQLiteStore
 
     try:
-        store = SQLiteStore(path=_audit_db_path(),
-                            signing_key=os.environ.get("PRAMAGENT_SIGNING_KEY", ""))
+        store = SQLiteStore(path=_audit_db_path(), **hook_state._audit_key_config())
     except Exception:
         return None
     try:
@@ -230,8 +223,7 @@ def verify_chain() -> bool:
     from .store import SQLiteStore
 
     try:
-        store = SQLiteStore(path=_audit_db_path(),
-                            signing_key=os.environ.get("PRAMAGENT_SIGNING_KEY", ""))
+        store = SQLiteStore(path=_audit_db_path(), **hook_state._audit_key_config())
     except Exception:
         return False
     try:
@@ -246,8 +238,7 @@ def read_audit(limit: int = 100) -> list[dict[str, Any]]:
     from .store import SQLiteStore
 
     try:
-        store = SQLiteStore(path=_audit_db_path(),
-                            signing_key=os.environ.get("PRAMAGENT_SIGNING_KEY", ""))
+        store = SQLiteStore(path=_audit_db_path(), **hook_state._audit_key_config())
     except Exception:
         return []
     try:

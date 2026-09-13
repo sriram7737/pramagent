@@ -71,7 +71,7 @@ class EthereumAnchor:
             raise EthereumAnchorError("private_key is required for Ethereum anchoring")
         self._account = self._w3.eth.account.from_key(private_key)
         # get_transaction_count → sign → send must be one critical section or
-        # concurrent anchors race the nonce and overwrite each other (P1-1).
+        # concurrent anchors race the nonce and overwrite each other.
         self._nonce_lock = threading.Lock()
 
     @staticmethod
@@ -91,7 +91,7 @@ class EthereumAnchor:
 
         Default is submit-and-return: the receipt comes back with status=-1
         (submitted, unconfirmed) and block_number=0 immediately — mining can
-        take minutes and must never stall the request path (P1-1/T1-7).
+        take minutes and must never stall the request path.
         Confirmation is reconciled out-of-band via verify_on_chain() (or pass
         wait_for_receipt=True from a background job).
         """

@@ -104,7 +104,7 @@ class Settings:
     """
 
     def __init__(self) -> None:
-        # ── networking / backends ──────────────────────────────────────────────
+        # networking / backends
         self.redis_url: str = _env(
             "PRAMAGENT_REDIS_URL", "redis://localhost:6379/0")
         # No phantom default DSN: an unset PRAMAGENT_POSTGRES_DSN means "not
@@ -114,13 +114,13 @@ class Settings:
         self.db_path: str = _env("PRAMAGENT_DB", "")
         self.allow_memory_store: bool = _env_bool("PRAMAGENT_ALLOW_MEMORY_STORE", False)
 
-        # ── isolation / safety ────────────────────────────────────────────────
+        # isolation / safety
         self.max_input_bytes: int  = _env_int("PRAMAGENT_MAX_INPUT_BYTES",  64 * 1024)
         self.max_output_bytes: int = _env_int("PRAMAGENT_MAX_OUTPUT_BYTES", 64 * 1024)
         self.injection_threshold: float = _env_float("PRAMAGENT_INJECTION_THRESHOLD", 0.65)
         self.block_on_injection: bool   = _env_bool("PRAMAGENT_BLOCK_ON_INJECTION", True)
 
-        # ── rate limiting ─────────────────────────────────────────────────────
+        # rate limiting
         self.rate_limit_capacity: float = _env_float("PRAMAGENT_RATE_LIMIT_CAPACITY", 100.0)
         self.rate_limit_refill:   float = _env_float("PRAMAGENT_RATE_LIMIT_REFILL",   10.0)
 
@@ -139,29 +139,29 @@ class Settings:
         )
         self.quota_window_s: int = _env_int("PRAMAGENT_QUOTA_WINDOW_S", 86_400)
 
-        # ── circuit breaker ───────────────────────────────────────────────────
+        # circuit breaker
         self.breaker_threshold:  int   = _env_int("PRAMAGENT_BREAKER_THRESHOLD", 5)
         self.breaker_cooldown_s: float = _env_float("PRAMAGENT_BREAKER_COOLDOWN_S", 30.0)
 
-        # ── connection pool ───────────────────────────────────────────────────
+        # connection pool
         self.pool_max_connections: int = _env_int("PRAMAGENT_POOL_MAX_CONNECTIONS", 10)
 
-        # ── tool guard ────────────────────────────────────────────────────────
+        # tool guard
         self.chain_window: int = _env_int("PRAMAGENT_CHAIN_WINDOW", 10)
 
-        # ── HITL ──────────────────────────────────────────────────────────────
+        # HITL
         self.hitl_timeout_s:      float = _env_float("PRAMAGENT_HITL_TIMEOUT_S", 300.0)
         self.hitl_slack_token:    str   = _env("PRAMAGENT_HITL_SLACK_TOKEN")
         self.hitl_slack_channel:  str   = _env("PRAMAGENT_HITL_SLACK_CHANNEL")
 
-        # ── auth / security ───────────────────────────────────────────────────
+        # auth / security
         self.api_key:      str = _env("PRAMAGENT_API_KEY")
         self.signing_key:  str = _env("PRAMAGENT_SIGNING_KEY")
         # Sentinel default is detected and warned by validate().
         self.jwt_secret:   str = _env("PRAMAGENT_JWT_SECRET", "change-me-in-production")
         self.session_ttl:  int = _env_int("PRAMAGENT_SESSION_TTL_S", 3600)
 
-        # ── observability ─────────────────────────────────────────────────────
+        # observability
         self.log_level:          str = _env("PRAMAGENT_LOG_LEVEL", "info")
         self.otel_endpoint:      str = _env("PRAMAGENT_OTEL_ENDPOINT")
         self.otel_service_name:  str = _env("PRAMAGENT_OTEL_SERVICE_NAME", "pramagent")
@@ -169,7 +169,7 @@ class Settings:
     def is_production(self) -> bool:
         """True when critical secrets are set (not defaults).
 
-        Includes the audit signing key (finding 2.1): without it the audit
+        Includes the audit signing key : without it the audit
         chain is unkeyed SHA-256 and not tamper-evident against a writer, so a
         deployment missing it is not a production-grade posture."""
         return (
@@ -200,7 +200,7 @@ class Settings:
             warnings.append(
                 "no persistent store configured — set PRAMAGENT_POSTGRES_DSN or "
                 "PRAMAGENT_DB (or PRAMAGENT_ALLOW_MEMORY_STORE=1 for dev only)")
-        # Finding 3.2: encryption at rest is opt-in; a persistent store without
+        # encryption at rest is opt-in; a persistent store without
         # a key (and without a provider-managed at-rest attestation) writes
         # trace/audit content — which can include prompt/tool content — in
         # plaintext. Surface it so a PHI deployment does not do so unknowingly.
@@ -233,7 +233,7 @@ class Settings:
                 breaker_cooldown_s=self.breaker_cooldown_s,
             )
         except Exception as exc:
-            # Finding 3.x: a URL IS configured but construction failed — this is
+            # a URL IS configured but construction failed — this is
             # a silent downgrade of a control, so log it loudly (distinct from
             # the "not configured" early return above) instead of swallowing.
             log.warning("PRAMAGENT_REDIS_URL is set but the Redis backend "
@@ -244,18 +244,16 @@ class Settings:
     def postgres_store(self):
         """Construct a PostgresStore from current settings. Returns None if DSN empty.
 
-        C2/HIGH-2: the signing and encryption keys are resolved through the
-        same secret-manager indirection layer build_default_armor() uses
-        (resolve_secret), and wired into the store. Previously this path
-        built the store with neither, so following the documented `init`
-        template silently yielded an unencrypted store whose audit chain the
-        API-signed entries could not be verified against."""
+        Signing and encryption keys use the same secret-manager resolution as
+        ``build_default_armor()`` and are passed directly to the store. This
+        keeps CLI-created and API-created stores cryptographically compatible.
+        """
         if not self.postgres_dsn:
             return None
         try:
             from .secrets import resolve_secret, resolve_signing_key_ring
             from .store_postgres import PostgresStore
-            # Finding 7.1/7.2: honor the PRAMAGENT_SIGNING_KEYS rotation ring
+            # honor the PRAMAGENT_SIGNING_KEYS rotation ring
             # (falls back to the single PRAMAGENT_SIGNING_KEY) so this path
             # matches build_default_armor()/_store_from_env().
             key_cfg = resolve_signing_key_ring()
@@ -269,7 +267,7 @@ class Settings:
                 **key_cfg,
             )
         except Exception as exc:
-            # Finding 3.x: a DSN IS configured but construction failed (e.g. a
+            # a DSN IS configured but construction failed (e.g. a
             # malformed encryption key) — log loudly rather than silently
             # downgrading to no persistent store.
             log.warning("PRAMAGENT_POSTGRES_DSN is set but the Postgres store "
@@ -287,5 +285,5 @@ class Settings:
         )
 
 
-# ── module-level singleton ────────────────────────────────────────────────────
+# module-level singleton
 settings = Settings()

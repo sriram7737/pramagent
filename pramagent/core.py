@@ -10,7 +10,7 @@ Pipeline order (request path):
     ToolGuard(action) -> Reliability.guard( Provider.complete ) ->
     Safety.post -> HITL.gate -> Trace.write(anchor)
 
-The size cap runs FIRST (SEC-2026-06-11-01): every later stage runs regex
+The size cap runs FIRST (): every later stage runs regex
 over the prompt, so an oversized input must be rejected before any pattern
 matching can burn CPU on it.
 
@@ -148,7 +148,7 @@ class Pramagent:
         # Standalone validation (not part of a full run() pipeline) must
         # still reach the durable, hash-chained audit backend — otherwise
         # this decision only lives in ToolGuardLayer's in-memory bounded
-        # deque and is lost on restart or deque overflow (ISSUE-4).
+        # deque and is lost on restart or deque overflow.
         self.audit.append(decision.to_dict())
         return decision
 
@@ -237,7 +237,7 @@ class Pramagent:
                         block_reason=reason)
                     return response
 
-            # 0b) Isolation size cap — FIRST gate (SEC-2026-06-11-01). The raw
+            # 0b) Apply the isolation size cap before any content processing.
             # prompt byte cap must be enforced before ComplianceLayer.scrub()
             # or any other regex pass: scrubbing an unbounded input lets an
             # attacker burn CPU on pattern matching before the cap ever runs.
@@ -302,7 +302,7 @@ class Pramagent:
                     return response
 
             # 3) Safety pre — rule + classifier screening may run embedding
-            # inference; keep it off the event loop (P1-8).
+            # inference; keep it off the event loop.
             t0 = time.perf_counter()
             with trace_layer("SafetyLayer.pre") as span:
                 pre_verdict, pre_rules = await asyncio.to_thread(self.safety.pre, clean)
@@ -561,7 +561,7 @@ class Pramagent:
             # so they can act before the model runs and per stage.
             t0 = time.perf_counter()
             with trace_layer("HITLLayer", attributes={"action": action}) as span:
-                # Finding 2.5: scrub the preview before it enters the HITL
+                # scrub the preview before it enters the HITL
                 # queue/notifications. The queue is not the audit chain and gets
                 # no later redaction pass, so an unscrubbed output_preview would
                 # persist raw PHI here (the HITL gate runs before _finalize's
@@ -611,7 +611,7 @@ class Pramagent:
         # an unregistered synthetic action). Silence (IDLE) is never consent.
         with trace_layer("HITLLayer",
                          attributes={"action": f"escalated_{stage}"}) as span:
-            # Finding 2.5: scrub before the preview enters the HITL queue.
+            # scrub before the preview enters the HITL queue.
             escalate_preview, _ = self.compliance.scrub(output or tr.input_text or "")
             status = await self.hitl.propose(
                 f"escalated_{stage}",
@@ -652,9 +652,9 @@ class Pramagent:
         # The audit backend owns chain linkage: it derives prev inside its own
         # critical section (lock / BEGIN IMMEDIATE / FOR UPDATE), so two
         # concurrent writers can never both link from the same stale pre-read
-        # head and fork the chain (P1-5/T2-4). Persistence is blocking I/O
+        # head and fork the chain . Persistence is blocking I/O
         # (SQLite fsync, Postgres round-trip, anchoring) — keep it off the
-        # event loop (P1-1/P1-8/T1-7).
+        # event loop.
         prev_guess = getattr(self.audit, "head", "")
         append_result = await asyncio.to_thread(self.audit.append, payload)
         tr.this_hash, tr.anchor_tx_id = append_result

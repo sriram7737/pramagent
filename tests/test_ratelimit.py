@@ -43,7 +43,7 @@ def test_auth_failure_guard_fail_open_opt_in():
     assert guard.locked_out("auth:1.2.3.4") == 0.0
 
 
-# ── bucket unit tests ──────────────────────────────────────────────────
+# bucket unit tests
 def test_token_bucket_allows_within_capacity():
     b = TokenBucket(capacity=3, refill_per_sec=0.1)
     for _ in range(3):
@@ -62,7 +62,7 @@ def test_token_bucket_isolates_keys():
     assert b.allow("b")[0] is True    # b has its own bucket
 
 
-# ── API integration ────────────────────────────────────────────────────
+# API integration
 def test_api_rate_limits_after_burst(monkeypatch):
     """Set burst=3, hit the endpoint 4 times, expect a 429 on the 4th."""
     monkeypatch.setenv("PRAMAGENT_RATE_BURST", "3")
@@ -81,7 +81,7 @@ def test_rate_limit_is_per_tenant_when_authenticated(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_RATE_BURST", "2")
     monkeypatch.setenv("PRAMAGENT_RATE_PER_SEC", "0.01")
     reg = APIKeyRegistry()
-    # write scope needed for /v1/run; unscoped keys are read-only (A1).
+    # /v1/run requires write scope; unscoped keys are read-only.
     key_a = reg.issue_key("tenant_a", scopes="read|write")
     key_b = reg.issue_key("tenant_b", scopes="read|write")
     client = TestClient(create_app(registry=reg))

@@ -70,6 +70,7 @@ def test_toggle_surface_persists_and_audits(monkeypatch):
     # audit chain recorded the change and still verifies
     audit = hook_admin.read_audit(5)
     assert any(a["action"] == "set_surface_enabled" for a in audit)
+    assert audit[0]["actor"] == "dashboard:alice"
     assert hook_admin.verify_chain() is True
 
 

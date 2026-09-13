@@ -46,13 +46,11 @@ class BackendCircuitOpen(RuntimeError):
     """Raised when the backend circuit breaker has tripped."""
 
 
-# ─────────────────────────────── interface ────────────────────────────────
-
+# interface
 class AbstractBackend(ABC):
     """Minimal distributed-state contract."""
 
-    # ── KV store ──────────────────────────────────────────────────────────
-
+    # KV store
     @abstractmethod
     def set(self, key: str, value: Any, *, ttl_s: Optional[int] = None) -> None:
         """Set a JSON-serialisable value, optionally with a TTL in seconds."""
@@ -69,8 +67,7 @@ class AbstractBackend(ABC):
     def increment(self, key: str, *, ttl_s: Optional[int] = None) -> int:
         """Atomically increment an integer counter and return the new value."""
 
-    # ── token-bucket helpers ──────────────────────────────────────────────
-
+    # token-bucket helpers
     @abstractmethod
     def tb_allow(self, key: str, *, capacity: float,
                  refill_per_sec: float, cost: float = 1.0) -> tuple[bool, float]:
@@ -80,8 +77,7 @@ class AbstractBackend(ABC):
         The bucket is created on first access with `capacity` tokens.
         """
 
-    # ── event / signalling ────────────────────────────────────────────────
-
+    # event / signalling
     @abstractmethod
     def signal(self, key: str, value: Any) -> None:
         """Publish a signal on `key`. Waiters blocked in `wait()` are woken."""
@@ -93,8 +89,7 @@ class AbstractBackend(ABC):
         Returns the signalled value, or None on timeout.
         """
 
-    # ── tenant memory (list) ──────────────────────────────────────────────
-
+    # tenant memory (list)
     @abstractmethod
     def memory_append(self, scope: str, item: str) -> None:
         """Append `item` to the memory list for `scope`."""
@@ -108,8 +103,7 @@ class AbstractBackend(ABC):
         """Delete the memory list for `scope`."""
 
 
-# ──────────────────────────── in-process ──────────────────────────────────
-
+# in-process
 class InProcessBackend(AbstractBackend):
     """Thread-safe in-process implementation. Zero external dependencies."""
 
@@ -119,8 +113,7 @@ class InProcessBackend(AbstractBackend):
         self._events: dict[str, asyncio.Event] = {}
         self._event_values: dict[str, Any] = {}
 
-    # ── internal ──────────────────────────────────────────────────────────
-
+    # internal
     def _expired(self, expires_at: Optional[float]) -> bool:
         return expires_at is not None and time.monotonic() > expires_at
 
@@ -134,8 +127,7 @@ class InProcessBackend(AbstractBackend):
             return None
         return val
 
-    # ── KV ────────────────────────────────────────────────────────────────
-
+    # KV
     def set(self, key: str, value: Any, *, ttl_s: Optional[int] = None) -> None:
         exp = time.monotonic() + ttl_s if ttl_s else None
         with self._lock:
@@ -168,8 +160,7 @@ class InProcessBackend(AbstractBackend):
             self._store[key] = (lst, exp)
             return list(lst)
 
-    # ── token bucket ──────────────────────────────────────────────────────
-
+    # token bucket
     def tb_allow(self, key: str, *, capacity: float,
                  refill_per_sec: float, cost: float = 1.0) -> tuple[bool, float]:
         now = time.monotonic()
@@ -189,8 +180,7 @@ class InProcessBackend(AbstractBackend):
             self._store[tb_key] = ((tokens, now), None)
             return False, retry
 
-    # ── event ─────────────────────────────────────────────────────────────
-
+    # event
     def signal(self, key: str, value: Any) -> None:
         with self._lock:
             self._event_values[key] = value
@@ -215,8 +205,7 @@ class InProcessBackend(AbstractBackend):
             self._events.pop(key, None)
         return val
 
-    # ── memory ────────────────────────────────────────────────────────────
-
+    # memory
     def memory_append(self, scope: str, item: str) -> None:
         mkey = f"__mem:{scope}"
         with self._lock:
@@ -235,8 +224,7 @@ class InProcessBackend(AbstractBackend):
             self._store.pop(mkey, None)
 
 
-# ──────────────────────────── retry helper ────────────────────────────────
-
+# retry helper
 def _retry_sync(fn, *, max_attempts: int = 3, base_delay_s: float = 0.1,
                 max_delay_s: float = 2.0, exceptions=(Exception,)):
     """Run fn() with exponential backoff + jitter.  Returns fn() result."""
@@ -252,8 +240,7 @@ def _retry_sync(fn, *, max_attempts: int = 3, base_delay_s: float = 0.1,
             time.sleep(delay)
 
 
-# ─────────────────────────── circuit breaker ──────────────────────────────
-
+# circuit breaker
 class _CircuitBreaker:
     """Simple half-open circuit breaker for backend calls.
 
@@ -317,8 +304,7 @@ class _CircuitBreaker:
         return wrapper
 
 
-# ──────────────────────────── Redis-backed ────────────────────────────────
-
+# Redis-backed
 class RedisBackend(AbstractBackend):
     """Redis-backed backend for multi-worker deployments.
 
@@ -354,9 +340,8 @@ class RedisBackend(AbstractBackend):
         self._base_delay_s = base_delay_s
         # fail_open: see tb_allow() -- defaults to False (fail closed) since
         # a rate limiter that silently stops limiting during a Redis outage
-        # is not actually a rate limiter at that moment. Pass True only if
-        # an unmetered request burst during an outage is an acceptable
-        # trade-off for your deployment.
+        # is ineffective during the outage. Enable this only when availability
+        # is more important than limiting an outage-time burst.
         self._fail_open = fail_open
         self._breaker = _CircuitBreaker(
             threshold=breaker_threshold,
@@ -410,7 +395,7 @@ class RedisBackend(AbstractBackend):
         )
         client = redis.Redis(connection_pool=pool)
         # Compose URLs embed the password (redis://:pw@host) — redact before
-        # the URL reaches a log line or exception message (P2-7/T2-9).
+        # the URL reaches a log line or exception message.
         safe_url = url.split("@")[-1] if "@" in url else url
         try:
             client.ping()
@@ -442,8 +427,7 @@ class RedisBackend(AbstractBackend):
             self._breaker.record_failure()
             raise
 
-    # ── KV ────────────────────────────────────────────────────────────────
-
+    # KV
     def set(self, key: str, value: Any, *, ttl_s: Optional[int] = None) -> None:
         serialised = json.dumps(value)
         if ttl_s:
@@ -467,7 +451,7 @@ class RedisBackend(AbstractBackend):
             return int(val)
         return self._call(_incr)
 
-    # ── bounded list append (Lua script for atomicity) ────────────────────
+    # bounded list append (Lua script for atomicity)
     # RPUSH + LTRIM + EXPIRE in one atomic unit so concurrent same-session
     # appends from different workers never lose updates (ToolGuard chain
     # detection relies on this).
@@ -494,8 +478,7 @@ return redis.call('LRANGE', key, 0, -1)
             return script(keys=[key], args=[value, int(max_len), int(ttl_s or 0)])
         return [str(item) for item in self._call(_run)]
 
-    # ── token bucket (Lua script for atomicity) ───────────────────────────
-
+    # token bucket (Lua script for atomicity)
     _TB_SCRIPT = """
 local key      = KEYS[1]
 local capacity = tonumber(ARGV[1])
@@ -545,8 +528,7 @@ end
             # Fail closed by default -- see __init__.
             return False, 1.0
 
-    # ── event (key-poll approach) ─────────────────────────────────────────
-
+    # event (key-poll approach)
     def signal(self, key: str, value: Any) -> None:
         ev_key = f"__ev:{key}"
         self._call(lambda: self._r.setex(ev_key, 600, json.dumps(value)))
@@ -565,8 +547,7 @@ end
             await asyncio.sleep(min(self._POLL_INTERVAL_S, max(0, remaining)))
         return None
 
-    # ── memory ────────────────────────────────────────────────────────────
-
+    # memory
     def memory_append(self, scope: str, item: str) -> None:
         self._call(lambda: self._r.rpush(f"__mem:{scope}", item))
 
@@ -576,8 +557,7 @@ end
     def memory_clear(self, scope: str) -> None:
         self._call(lambda: self._r.delete(f"__mem:{scope}"))
 
-    # ── health ────────────────────────────────────────────────────────────
-
+    # health
     def ping(self) -> bool:
         """Returns True if Redis is reachable, False otherwise."""
         try:

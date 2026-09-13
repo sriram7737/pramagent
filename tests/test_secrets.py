@@ -144,10 +144,9 @@ def test_vault_backend_http_error_falls_back_to_default(monkeypatch):
     assert resolve_secret("PRAMAGENT_JWT_SECRET", default="fallback") == "fallback"
 
 
-# ── HIGH-2: CLI and API must resolve the signing key identically ──────────
-
+# CLI and API signing-key resolution
 def test_cli_store_resolves_signing_key_via_indirection(tmp_path, monkeypatch):
-    """HIGH-2: when PRAMAGENT_SIGNING_KEY is supplied only through
+    """When PRAMAGENT_SIGNING_KEY is supplied only through
     secret-manager indirection (a *_VAULT_PATH, not the direct env var), the
     CLI's _store_from_env() must resolve the SAME key the API writes with —
     via resolve_secret, not a bare os.environ.get. Otherwise the CLI opens
@@ -178,12 +177,11 @@ def test_cli_store_resolves_signing_key_via_indirection(tmp_path, monkeypatch):
     cli_store = cli._store_from_env()
     assert cli_store.verify_chain() is True
 
-    # Contrast: opening with the wrong (empty) key — the pre-fix behaviour,
-    # since only the *_VAULT_PATH var was set — flags the chain as tampered.
+    # Opening with an empty key must fail verification.
     assert SQLiteStore(db, signing_key="").verify_chain() is False
 
 
-# ── Finding 7.1 / 7.2: audit-chain signing-key ROTATION via env ──
+# Audit-chain signing-key rotation via environment variables
 def test_resolve_signing_key_ring_parses_multi_key(monkeypatch):
     from pramagent.secrets import resolve_signing_key_ring
 

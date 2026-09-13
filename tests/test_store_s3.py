@@ -87,7 +87,7 @@ def test_s3_archive_prune_encrypts_and_deletes_hot_trace():
 def test_s3_erasure_destroys_and_never_archives():
     """GDPR erasure must NOT copy the data to cold storage first — archive-
     then-delete preserves the personal data indefinitely, the opposite of
-    Art. 17 (P1-7/T3-2). prune_older_than keeps archiving (retention)."""
+    Art. 17 . prune_older_than keeps archiving (retention)."""
     hot = MemoryStore()
     hot.save(_trace("a1", "tenant_a", time.time()))
     hot.save(_trace("b1", "tenant_b", time.time()))
@@ -140,3 +140,18 @@ def test_s3_erasure_deletes_previously_archived_objects():
 def test_s3_archive_requires_encryption_key():
     with pytest.raises(ValueError):
         S3ColdArchiveStore(MemoryStore(), bucket="audit-bucket", s3_client=FakeS3())
+
+
+@pytest.mark.parametrize("tenant_id", ["../victim", "victim/child", "", "tenant space"])
+def test_s3_archive_rejects_unsafe_tenant_id(tenant_id):
+    hot = MemoryStore()
+    hot.save(_trace("unsafe", tenant_id, time.time() - 1000))
+    store = S3ColdArchiveStore(
+        hot,
+        bucket="audit-bucket",
+        s3_client=FakeS3(),
+        encryption_key=Fernet.generate_key(),
+    )
+
+    with pytest.raises(ValueError, match="tenant_id"):
+        store.prune_older_than(time.time())

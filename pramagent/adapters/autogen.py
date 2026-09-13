@@ -59,7 +59,7 @@ class PramagentHook:
         self.tenant_id = tenant_id
         self.session_id = session_id
 
-    # ── Public API ─────────────────────────────────────────────────────
+    # Public API
     def attach(self, agent: Any) -> None:
         """Wire the hook into an AutoGen agent using whichever API is available."""
         if hasattr(agent, "register_hook"):
@@ -85,7 +85,7 @@ class PramagentHook:
             "PramagentHook could not find a registration API on the agent. "
             "Pass an AutoGen ConversableAgent (or set up the wrapper manually).")
 
-    # ── Hook callbacks ─────────────────────────────────────────────────
+    # Hook callbacks
     def _run(self, prompt: str) -> AgentResponse:
         try:
             loop = asyncio.get_event_loop()

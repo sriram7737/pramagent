@@ -1,8 +1,8 @@
 """
-SEC-2026-06-15: configurable escalate_policy.
+configurable escalate_policy.
 
-Verdict.ESCALATE used to be recorded in the trace and otherwise ignored. It is
-now routed by escalate_policy, per stage ("pre" = input, "post" = output), with
+Verdict.ESCALATE is routed by escalate_policy per stage ("pre" = input,
+"post" = output), with
 one of "log" | "hitl" | "block". Default is "log" (record and continue) so
 adding an ESCALATE rule never silently starts gating traffic.
 """
@@ -49,8 +49,7 @@ async def _deny(action, ctx):
     return False
 
 
-# ── normalization / validation ─────────────────────────────────────────────
-
+# normalization / validation
 def test_from_config_normalizes_all_forms():
     assert EscalatePolicy.from_config(None) == EscalatePolicy()
     assert EscalatePolicy.from_config("hitl") == EscalatePolicy(pre="hitl", post="hitl")
@@ -78,8 +77,7 @@ def test_unknown_dict_key_raises():
         Pramagent(provider=MockProvider(), escalate_policy={"during": "hitl"})
 
 
-# ── "log" (default): record + continue ─────────────────────────────────────
-
+# "log" (default): record + continue
 def test_log_default_records_escalate_and_continues():
     p = CountingProvider()
     armor = Pramagent(provider=p, safety=SafetyLayer(rules=ESC_PRE))  # default policy
@@ -94,8 +92,7 @@ def test_log_default_records_escalate_and_continues():
     assert fired and fired[0].rule_id == "esc_in"
 
 
-# ── "block" ─────────────────────────────────────────────────────────────────
-
+# "block"
 def test_block_pre_blocks_before_model_call():
     p = CountingProvider()
     armor = Pramagent(provider=p, safety=SafetyLayer(rules=ESC_PRE),
@@ -119,8 +116,7 @@ def test_block_post_withholds_after_model_call():
     assert r.output == ""
 
 
-# ── "hitl" ──────────────────────────────────────────────────────────────────
-
+# "hitl"
 def test_hitl_pre_idle_gates_before_model():
     p = CountingProvider()
     armor = Pramagent(provider=p, safety=SafetyLayer(rules=ESC_PRE),
@@ -167,8 +163,7 @@ def test_hitl_post_idle_gates_after_model():
     assert r.output == "[action not executed - awaiting/declined human approval]"
 
 
-# ── per-stage dict form ─────────────────────────────────────────────────────
-
+# per-stage dict form
 def test_dict_form_pre_hitl_post_log():
     """{"pre": "hitl", "post": "log"} — input escalations gate, output
     escalations are merely recorded."""

@@ -11,7 +11,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# ── WebhookApprover ────────────────────────────────────────────────────────
+# WebhookApprover
 def test_webhook_notify_only_returns_none(monkeypatch):
     wa = WebhookApprover("https://example.test/notify")
     monkeypatch.setattr(wa, "_post", lambda url, payload: {})
@@ -43,7 +43,7 @@ def test_webhook_delivery_failure_fails_closed(monkeypatch):
     assert "network down" in wa.last_error
 
 
-# ── EmailNotifier ──────────────────────────────────────────────────────────
+# EmailNotifier
 def test_email_notifier_is_notify_only(monkeypatch):
     sent = {}
     en = EmailNotifier(SMTPConfig(host="smtp.test"), ["sec@co.test"])
@@ -54,7 +54,7 @@ def test_email_notifier_is_notify_only(monkeypatch):
     assert "bank" in sent["body"]
 
 
-# ── PagerDutyNotifier ──────────────────────────────────────────────────────
+# PagerDutyNotifier
 def test_pagerduty_notifier_triggers_and_returns_none(monkeypatch):
     calls = []
     pd = PagerDutyNotifier("routing-key-123")
@@ -64,7 +64,7 @@ def test_pagerduty_notifier_triggers_and_returns_none(monkeypatch):
     assert calls and calls[0][0] == "wire_transfer"
 
 
-# ── CompositeApprover ──────────────────────────────────────────────────────
+# CompositeApprover
 def test_servicenow_notifier_builds_auth_headers():
     bearer = ServiceNowNotifier("https://acme.service-now.com", bearer_token="tok")
     basic = ServiceNowNotifier(

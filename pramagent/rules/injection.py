@@ -16,7 +16,7 @@ from ..types import Verdict
 
 
 _PATTERNS: list[tuple[str, str, str, Verdict]] = [
-    # ── SQL injection ───────────────────────────────────────────────────
+    # SQL injection
     ("inj_sql_or_1eq1",
      r"(?:'|\")\s*(?:OR|AND)\s+(?:1\s*=\s*1|'1'\s*=\s*'1'|true)\s*(?:--|#|/\*)?",
      "SQLi: tautology", Verdict.BLOCK),
@@ -42,12 +42,12 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"\bxp_cmdshell\b|\bsp_OACreate\b",
      "SQLi: MSSQL RCE primitive", Verdict.BLOCK),
 
-    # ── NoSQL injection ─────────────────────────────────────────────────
+    # NoSQL injection
     ("inj_nosql_operator",
      r"\$\s*(?:where|ne|gt|lt|gte|lte|regex|in|or|and)\s*:",
      "NoSQL: operator injection", Verdict.BLOCK),
 
-    # ── Shell / command injection ───────────────────────────────────────
+    # Shell / command injection
     ("inj_shell_backticks",
      r"`[^`]{0,200}\b(?:curl|wget|nc|bash|sh|python|perl|ruby|powershell)\b[^`]{0,200}`",
      "Shell: backtick command", Verdict.BLOCK),
@@ -67,7 +67,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"(?:Invoke-Expression|IEX)\s+\(?\s*(?:New-Object\s+Net\.WebClient|System\.Net\.WebClient)",
      "Shell: PowerShell IEX downloader", Verdict.BLOCK),
 
-    # ── SSRF (Server-Side Request Forgery) ──────────────────────────────
+    # SSRF (Server-Side Request Forgery)
     ("inj_ssrf_169_254",
      r"\b169\.254\.169\.254\b",
      "SSRF: cloud metadata IP (AWS/GCP/Azure)", Verdict.BLOCK),
@@ -87,7 +87,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"\b(?:gopher|dict|ftp|ldap|jar)://",
      "SSRF: non-http scheme", Verdict.BLOCK),
 
-    # ── Path traversal ──────────────────────────────────────────────────
+    # Path traversal
     ("inj_path_dotdot",
      r"(?:\.\./){2,}|(?:\.\.\\){2,}",
      "Path: directory traversal", Verdict.BLOCK),
@@ -101,7 +101,7 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"(?:%2e%2e(?:%2f|%5c)){2,}",
      "Path: url-encoded ../", Verdict.BLOCK),
 
-    # ── Server-Side Template Injection ──────────────────────────────────
+    # Server-Side Template Injection
     ("inj_ssti_jinja",
      r"\{\{\s*[\w.]*(?:__class__|__mro__|__subclasses__|__import__|config|self|request)\b",
      "SSTI: jinja/python sandbox escape", Verdict.BLOCK),
@@ -118,17 +118,17 @@ _PATTERNS: list[tuple[str, str, str, Verdict]] = [
      r"\{\{\s*['\"][^'\"]*['\"]\s*\|\s*(?:filter|map)\s*\(\s*['\"](?:system|exec|passthru)",
      "SSTI: twig filter abuse", Verdict.BLOCK),
 
-    # ── XXE / XML ───────────────────────────────────────────────────────
+    # XXE / XML
     ("inj_xxe_doctype",
      r"<!DOCTYPE\s+\w+\s*\[\s*<!ENTITY\s+\w+\s+SYSTEM",
      "XXE: external entity declaration", Verdict.BLOCK),
 
-    # ── LDAP injection ──────────────────────────────────────────────────
+    # LDAP injection
     ("inj_ldap_wildcard",
      r"\)\(\|\(\w+=\*\)\)|\)\(\&\(\w+=\*\)\)",
      "LDAP: filter injection", Verdict.BLOCK),
 
-    # ── Log4Shell ───────────────────────────────────────────────────────
+    # Log4Shell
     ("inj_log4shell_jndi",
      r"\$\{jndi:(?:ldap|ldaps|rmi|dns)://",
      "Log4Shell: JNDI lookup", Verdict.BLOCK),

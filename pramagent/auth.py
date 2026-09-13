@@ -46,7 +46,7 @@ ADMIN_SCOPE = "admin"
 # either scope — READ_SCOPE keeps working so this is additive, not a breaking
 # cutover for anyone already polling that endpoint with a read-scoped key.
 AUDIT_SCOPE = "audit"
-# A2: approving a HITL request is a distinct authority from requesting one.
+# Approval is a separate authority from requesting an action.
 # /v1/run requires WRITE_SCOPE; the approve/deny endpoints require this, so a
 # single write-scoped credential cannot both propose and approve its own
 # consequential action (separation of duties).
@@ -54,7 +54,7 @@ APPROVE_SCOPE = "approve"
 # Every scope the system recognises — used to validate scope input.
 ALL_SCOPES = frozenset(
     {READ_SCOPE, WRITE_SCOPE, ADMIN_SCOPE, AUDIT_SCOPE, APPROVE_SCOPE})
-# A1: a key issued with NO scopes specified defaults to read-only, never the
+# A key issued without scopes defaults to read-only, never the
 # full admin set. write/admin/audit must be opted into explicitly, so a key
 # that leaks (or the 2-field PRAMAGENT_API_KEYS="tenant:key" form, or
 # `auth-issue` with no --scopes) cannot silently mint/approve/erase.
@@ -110,7 +110,7 @@ class AuthRecord:
     def has_scope(self, scope: str) -> bool:
         if scope in self.scopes:
             return True
-        # Finding 1.3: admin implies every scope EXCEPT approve. Approving a
+        # admin implies every scope EXCEPT approve. Approving a
         # HITL request must be held explicitly so a single admin credential
         # cannot both propose a consequential action and approve its own
         # (HITL separation of duties, SOC2 CC6.3).
@@ -135,17 +135,13 @@ class APIKeyRegistry:
         # revoke_key() to write to. Each line is a hashed key (never plain
         # text, matching the module's key-handling invariant); reloaded on
         # mtime change so a running server picks up `pramagent auth-revoke`
-        # without a restart (ISSUE-6).
+        # without a restart.
         self._revocation_file = revocation_file
         self._revoked_hashes: frozenset[str] = frozenset()
         self._revocation_mtime: float = -1.0
-        # MEDIUM-2: track whether the configured revocation file can currently
-        # be read. When it can't (present but unreadable, or vanished after
-        # having been loaded), we cannot confirm which keys are revoked, so
-        # record_for_key() fails CLOSED (denies every key) rather than open
-        # (silently treating nothing as revoked). A file that has simply never
-        # existed is the normal "no revocations issued yet" state, not a
-        # failure.
+        # Once a revocation file has been loaded, losing access to it is an
+        # enforcement failure. Deny keys until the file is readable again.
+        # A file that has never existed means no revocations have been issued.
         self._revocations_readable: bool = True
         self._revocation_loaded_once: bool = False
 
@@ -232,8 +228,7 @@ class APIKeyRegistry:
         if not presented:
             return None
         self._reload_revocations_if_changed()
-        # MEDIUM-2: if a revocation file is configured but currently
-        # unreadable, we cannot confirm this key isn't revoked — fail closed.
+        # An unreadable revocation list cannot prove that this key is active.
         if self._revocation_file and not self._revocations_readable:
             return None
         target = _hash_key(presented)
@@ -258,7 +253,7 @@ def revoke_env_key(key: str, revocation_file: str) -> bool:
     every process start. This instead appends the key's hash to a shared
     file that `load_registry_from_env()`-built registries consult on every
     lookup (reloading on mtime change), so a running server picks up the
-    revocation without a restart (ISSUE-6).
+    revocation without a restart.
 
     Idempotent and unconditional: this mode has no record of which keys
     were ever valid, so it cannot report "key was not active" the way the
@@ -502,11 +497,8 @@ class JWTManager:
         revocation_check: Optional[Callable[[str], bool]] = None,
     ) -> None:
         self.issuer = issuer
-        # Finding 1.4: per-token revocation. Every issued JWT carries a `jti`;
-        # verify() rejects one whose jti is revoked. revoke() records into an
-        # in-process set (enough for a single worker/tests). For multi-worker
-        # deployments pass revocation_check — a callable that consults a shared
-        # store (e.g. Redis), mirroring the dashboard's jti revocation.
+        # Local revocation is sufficient for one worker. Multi-worker
+        # deployments should provide a shared revocation_check backend.
         self._revocation_check = revocation_check
         self._revoked_jtis: set[str] = set()
         if isinstance(secret, dict):
@@ -549,6 +541,8 @@ class JWTManager:
         """
         raw = os.environ.get(env_var, "").strip()
         if raw:
+            from .security import assert_strong_secret
+
             secrets_by_kid: dict[str, str] = {}
             for pair in raw.split(","):
                 if ":" not in pair:
@@ -557,6 +551,7 @@ class JWTManager:
                 kid = kid.strip()
                 value = value.strip()
                 if kid and value:
+                    assert_strong_secret(f"{env_var}[{kid}]", value)
                     secrets_by_kid[kid] = value
             if secrets_by_kid:
                 return cls(
@@ -567,10 +562,11 @@ class JWTManager:
         return cls(fallback_secret, issuer=issuer)
 
     def revoke(self, jti: str) -> None:
-        """Revoke a single issued token by its `jti` (finding 1.4). Recorded in
-        the in-process set; for multi-worker deployments a revocation_check
-        against a shared store should also be configured so the revocation is
-        seen by every worker."""
+        """Revoke one token by JTI in this process.
+
+        Configure ``revocation_check`` against shared storage when tokens are
+        verified by more than one worker.
+        """
         if jti:
             self._revoked_jtis.add(jti)
 
@@ -629,7 +625,7 @@ class JWTManager:
             "scopes": normalized_scopes,
             "iat": now,
             "exp": now + int(ttl_s),
-            "jti": secrets.token_hex(16),   # finding 1.4: revocable token id
+            "jti": secrets.token_hex(16),
         }
         signing_input = ".".join([
             _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8")),
@@ -668,10 +664,8 @@ class JWTManager:
             header = json.loads(_b64url_decode(parts[0]))
         except Exception as exc:
             raise JWTError("malformed header") from exc
-        # Explicit HS256 allow-list: this is the none-algorithm defense (and
-        # the RS256→HS256 key-confusion defense) — any alg value other than
-        # the one we sign with, including "none", is rejected before any
-        # signature work happens (P3-4/T1-3).
+        # Accept only the algorithm this issuer uses. This rejects unsigned
+        # tokens and asymmetric-to-HMAC key-confusion attempts before hashing.
         if header.get("alg") != "HS256" or header.get("typ") != "JWT":
             raise JWTError("unsupported token header")
         kid = header.get("kid")
@@ -699,8 +693,8 @@ class JWTManager:
             raise JWTError("malformed payload") from exc
         if payload.get("iss") != self.issuer:
             raise JWTError("invalid issuer")
-        # aud pins the token to this API so a token minted for another
-        # service signed with a shared secret cannot be replayed here (T1-3).
+        # Audience binding prevents replay of a token minted for another
+        # service that happens to share the signing key.
         if payload.get("aud") != self.AUDIENCE:
             raise JWTError("invalid audience")
         exp = payload.get("exp")
@@ -708,8 +702,7 @@ class JWTManager:
             raise JWTError("missing expiration")
         if (int(time.time()) if now is None else now) >= exp:
             raise JWTError("token expired")
-        # Finding 1.4: reject a revoked token even if its signature and
-        # expiry are still valid.
+        # Revocation takes precedence over an otherwise valid token.
         jti = payload.get("jti")
         if jti and self.is_revoked(jti):
             raise JWTError("token revoked")

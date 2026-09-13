@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 
 
-# ───────────────────────────── ComplianceLayer ─────────────────────────────
+# ComplianceLayer
 class ComplianceLayer:
     """
     Detects and redacts PII before it reaches any LLM.
@@ -61,7 +61,7 @@ class ComplianceLayer:
 
     Both sets are fully overridable via the constructor.
 
-    Auditing (finding 2.3): scrub() itself writes no audit record. Redaction
+    Auditing : scrub() itself writes no audit record. Redaction
     labels are durably recorded only when this layer runs inside
     ``Pramagent.run()`` (persisted on the TraceEvent via ``_finalize()``).
     Standalone scrub() calls are not audited — drive the pipeline for a
@@ -79,7 +79,7 @@ class ComplianceLayer:
         "phone": r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
         "account": r"\bacct[-_ ]?\d{6,}\b",
         "iban": r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b",   # distinctive enough to keep
-        # HIPAA identifiers (SEC-2026-06-15 H-1). The literal "MRN" prefix makes
+        # The literal "MRN" prefix makes
         # a medical record number distinctive enough to redact wherever it
         # appears, like SSN/IBAN.
         "mrn": r"\bMRN[-:\s]*\d{4,}\b",
@@ -89,7 +89,7 @@ class ComplianceLayer:
     DEFAULT_CONTEXTUAL = {
         "routing_number": (r"\b\d{9}\b", ["routing", "aba", "rtn"]),
         "dob": (r"\b\d{4}-\d{2}-\d{2}\b", ["dob", "d.o.b", "birth", "born"]),
-        # Insurance member / payer IDs (SEC-2026-06-15 H-1). The dash-separated
+        # Insurance member and payer IDs use a dash-separated
         # alpha-numeric shape ("BCB-992341") is the precision lever — without
         # requiring a nearby insurance keyword, a bare LETTERS-DIGITS token
         # would eat SKUs and order codes. Redact only when both are present.
@@ -102,7 +102,7 @@ class ComplianceLayer:
 
     CONTEXT_WINDOW = 32  # chars on each side of a candidate to scan for a keyword
 
-    # Bounded candidate window around each "@" (SEC-2026-06-11-01): up to 64
+    # Use a bounded candidate window around each "@": up to 64
     # chars of local part before it, up to 255 chars of domain after it (the
     # RFC 5321 limits). The email pattern itself only ever runs inside these
     # windows, so its cost is independent of total input length.
@@ -135,7 +135,7 @@ class ComplianceLayer:
                 return f"[REDACTED:{_label.upper()}]"
             if label == "email":
                 # The email pattern has superlinear no-match behaviour on long
-                # alphabetic input (SEC-2026-06-11-01) — route it through the
+                # Route long alphabetic input through the
                 # bounded two-phase handler instead of a full-text sub().
                 out = self._scrub_email(out, rx, _sub)
             else:
@@ -156,7 +156,7 @@ class ComplianceLayer:
         return out, redactions
 
     def _scrub_email(self, text: str, rx: re.Pattern, sub_fn) -> str:
-        """Bounded, linear email scrubbing (SEC-2026-06-11-01).
+        """Scrub email addresses with bounded, linear scanning.
 
         The naive full-text email sub() is superlinear when nothing matches:
         on long alphabetic input the local-part class consumes to end-of-string
@@ -180,7 +180,7 @@ class ComplianceLayer:
         return "".join(pieces)
 
 
-# ─────────────────────────────── SafetyLayer ───────────────────────────────
+# SafetyLayer
 @dataclass
 class Rule:
     """
@@ -211,7 +211,7 @@ class Rule:
                 # traceback: both can echo the offending input text (e.g. a
                 # custom rule that raises with the input embedded), which
                 # would leak PHI/PII into logs even though the fail-closed
-                # BLOCK decision itself is correct (ISSUE-5).
+                # BLOCK decision itself is correct.
                 log.warning(
                     "safety rule %s failed closed: %s",
                     self.rule_id,
@@ -276,7 +276,7 @@ class SafetyLayer:
                 # 500 or silently disappear from the audit trace.
                 rule_id = getattr(r, "rule_id", "<unknown>")
                 # See the note in Rule.evaluate() above: exception message
-                # and traceback can both echo the offending input (ISSUE-5).
+                # and traceback can both echo the offending input.
                 log.warning(
                     "safety rule %s failed closed: %s",
                     rule_id,
@@ -295,7 +295,7 @@ class SafetyLayer:
                 clf = classifier(text)
             except Exception as exc:
                 # See the note in Rule.evaluate() above: exception message
-                # and traceback can both echo the offending input (ISSUE-5).
+                # and traceback can both echo the offending input.
                 log.warning(
                     "safety classifier failed closed during %s pass: %s",
                     phase,
@@ -334,7 +334,7 @@ class SafetyLayer:
                                    phase="post")
 
 
-# ───────────────────────────── ReliabilityLayer ────────────────────────────
+# ReliabilityLayer
 class CircuitOpenError(RuntimeError):
     pass
 
@@ -381,7 +381,7 @@ class ReliabilityLayer:
                 raise
 
 
-# ──────────────────────────────── HITLLayer ────────────────────────────────
+# HITLLayer
 class HITLLayer:
     """
     Human-in-the-loop gateway. For actions classified as consequential, the agent
@@ -420,7 +420,7 @@ class HITLLayer:
         self.store = store
         self.poll_interval_s = max(0.05, float(poll_interval_s))
         self.on_enqueue = on_enqueue  # notification hook (Slack, email, etc.)
-        # Operational counter (P3-11): a notification outage leaves queued
+        # Operational counter : a notification outage leaves queued
         # approvals invisible to humans until timeout — surface it as a
         # number ops can alert on, not only a log line.
         self.enqueue_notify_failures = 0
@@ -461,9 +461,7 @@ class HITLLayer:
         # Local import to avoid a hard package dependency at import time.
         from ..queue.base import QueuedRequest, RequestStatus
 
-        # D3: the tenant must be an explicit, concrete value. The pipeline
-        # always supplies context["tenant"]; if a direct caller omits it,
-        # QueuedRequest.new raises rather than silently using "default".
+        # Queue entries must retain the caller's explicit tenant boundary.
         ctx_tenant = context.get("tenant") or context.get("tenant_id")
         req = QueuedRequest.new(
             action, context,

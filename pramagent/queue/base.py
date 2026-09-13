@@ -82,7 +82,7 @@ class HITLQueueStore(Protocol):
         ...
 
 
-# ──────────────────────────── in-memory reference ──────────────────────────
+# in-memory reference
 class InMemoryHITLQueue:
     """Default in-process queue. Lost on restart. Useful for tests + demos."""
 
@@ -135,7 +135,7 @@ class InMemoryHITLQueue:
         return True
 
 
-# ──────────────── serialization helpers (used by sqlite + postgres) ────────
+# serialization helpers (used by sqlite + postgres)
 def to_row(req: QueuedRequest) -> dict:
     return {
         "request_id": req.request_id,

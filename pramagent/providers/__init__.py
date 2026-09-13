@@ -310,7 +310,7 @@ class GeminiProvider(BaseProvider):
         }
         data = json.dumps(body).encode("utf-8")
         # API key travels as a header, never in the URL — query strings end up
-        # in proxy logs, error reprs, and tracing systems (T2-7/P2-6).
+        # in proxy logs, error reprs, and tracing systems.
         req = urllib.request.Request(
             f"{self.base_url}/models/{model}:generateContent",
             data=data,
@@ -349,7 +349,7 @@ class OllamaProvider(BaseProvider):
         self.max_tokens = max_tokens
         self.temperature = temperature
         # Validated like every other provider URL; private/loopback targets
-        # are expected for a local daemon, so allow them explicitly (P3-7).
+        # are expected for a local daemon, so allow them explicitly.
         self.host = validate_http_url(
             host.rstrip("/"),
             allow_http_localhost=True,
@@ -361,7 +361,7 @@ class OllamaProvider(BaseProvider):
         import aiohttp  # lazy import
         t0 = time.perf_counter()
         # bounded like every other provider call — a hung local daemon must
-        # not hold the request forever (P3-7)
+        # not hold the request forever
         timeout_s = float(kwargs.get("timeout_s", self.timeout_s))
         max_tokens = int(kwargs.get("max_tokens", self.max_tokens))
         temperature = float(kwargs.get("temperature", self.temperature))

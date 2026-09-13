@@ -13,6 +13,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -147,13 +148,14 @@ class S3ColdArchiveStore:
         return self.primary.prune_older_than(cutoff_ts, tenant_id=tenant_id)
 
     def delete_for_tenant(self, tenant_id: str) -> int:
-        """GDPR erasure: destroy, never archive (P1-7/T3-2).
+        """GDPR erasure: destroy, never archive.
 
         Archive-then-delete is correct for prune_older_than (retention) but
         is the opposite of erasure — it would preserve the personal data in
         cold storage indefinitely. Erasure bypasses archival entirely and
         also deletes every object this bucket already holds under the
         tenant's prefix (covering archives written by other processes)."""
+        self._validate_tenant_id(tenant_id)
         self._delete_archived_for_tenant(tenant_id)
         return self.primary.delete_for_tenant(tenant_id)
 
@@ -213,6 +215,7 @@ class S3ColdArchiveStore:
         return TraceEvent.from_dict(json.loads(self._decode(body)))
 
     def _record_for(self, trace: TraceEvent) -> ArchiveRecord:
+        self._validate_tenant_id(trace.tenant_id)
         day = time.strftime("%Y/%m/%d", time.gmtime(trace.created_at))
         key = (
             f"{self.prefix}/tenant={trace.tenant_id}/{day}/"
@@ -229,6 +232,13 @@ class S3ColdArchiveStore:
             bucket=self.bucket,
             key=key,
         )
+
+    @staticmethod
+    def _validate_tenant_id(tenant_id: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", tenant_id or ""):
+            raise ValueError(
+                "tenant_id must be 1-128 ASCII letters, digits, dots, underscores, or hyphens"
+            )
 
     def _encode(self, trace: TraceEvent) -> bytes:
         raw = json.dumps(trace.to_dict(), sort_keys=True).encode("utf-8")

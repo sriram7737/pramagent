@@ -78,8 +78,8 @@ def resolve_signing_key_ring() -> dict:
     reporting its post-rotation tail as tampered.
 
     When ``PRAMAGENT_SIGNING_KEYS`` is unset it falls back to the single
-    ``PRAMAGENT_SIGNING_KEY`` (resolved through the secret-manager indirection
-    layer, preserving HIGH-2), i.e. the classic unversioned behavior.
+    ``PRAMAGENT_SIGNING_KEY``, resolved through the same secret-manager
+    indirection layer.
 
     Returns kwargs suitable for ``**`` into any store constructor or
     ``SigningKeyRing.from_config``:

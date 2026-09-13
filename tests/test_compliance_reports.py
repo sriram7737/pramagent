@@ -12,7 +12,7 @@ from pramagent.audit import HashChainBackend
 from pramagent.types import TraceEvent
 
 
-# ── ConsentRegistry ────────────────────────────────────────────────────────
+# ConsentRegistry
 def test_grant_and_check_consent():
     reg = ConsentRegistry()
     reg.grant("acme", "subj1", [Purpose.SERVICE, Purpose.ANALYTICS])
@@ -45,7 +45,7 @@ def test_purpose_limitation_isolates_tenants():
     assert len(reg.for_tenant("other")) == 0
 
 
-# ── RetentionPolicy ────────────────────────────────────────────────────────
+# RetentionPolicy
 def test_retention_below_floor_rejected():
     with pytest.raises(ValueError):
         RetentionPolicy(retention_days=30)
@@ -57,7 +57,7 @@ def test_retention_cutoff_is_in_past():
     assert pol.cutoff_ts(now=1000.0 * 86400) < 1000.0 * 86400
 
 
-# ── ComplianceReporter ─────────────────────────────────────────────────────
+# ComplianceReporter
 def _armed_store(signing_key: str = ""):
     store = MemoryStore()
     audit = HashChainBackend(signing_key=signing_key)
@@ -106,7 +106,7 @@ def test_report_pdf_writes_file():
         os.unlink(path)
 
 
-# ── Finding 2.1: unkeyed chain must not be reported as tamper-evident ──
+# unkeyed chain must not be reported as tamper-evident
 def test_report_unkeyed_chain_flagged_not_tamper_evident():
     """An unkeyed (plain SHA-256) chain is internally consistent but forgeable
     by anyone with write access. hash_chain_verified may be True, but the

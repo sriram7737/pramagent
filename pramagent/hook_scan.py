@@ -16,7 +16,7 @@ each reimplemented these passes, and they drifted into three distinct bypasses:
   * ``claude`` and ``gemini`` scanned only a hardcoded field list
     (``command``/``content``/``new_string``/...), so a payload routed through
     any other argument was never content-scanned.
-  * the marketplace ``pramagent_guard`` plugin skipped BOTH passes entirely  - 
+  * the marketplace ``pramagent_guard`` plugin skipped BOTH passes entirely  -
     it ran only the structural ToolGuard evaluate, i.e. 1 of the 3 defenses.
   * every adapter called ``scan_for_injection`` on the RAW argument text, which
     does not decode base64/hex/unicode runs the way ``evaluate_input`` does  -  so

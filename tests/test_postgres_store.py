@@ -18,8 +18,7 @@ from pramagent.store_postgres import GENESIS, PostgresStore, PostgresUnavailable
 from pramagent.types import TraceEvent
 
 
-# ─────────────────────────── fake psycopg driver ──────────────────────────
-
+# fake psycopg driver
 class _FakeDB:
     def __init__(self):
         self.traces: dict[str, dict] = {}     # trace_id -> row
@@ -215,8 +214,7 @@ def _trace(tenant: str, text: str, session: str = "s") -> TraceEvent:
     return tr
 
 
-# ───────────────────────────── store behaviour ────────────────────────────
-
+# store behaviour
 def test_save_and_get_roundtrip_keyed_by_call_id(pg):
     store, _ = pg
     tr = _trace("acme", "hello world")
@@ -294,8 +292,7 @@ def test_ping_returns_true(pg):
     assert store.ping() is True
 
 
-# ───────────────────────────── hash chain ─────────────────────────────────
-
+# hash chain
 def test_chain_append_updates_head_and_verifies(pg):
     store, _ = pg
     h1, _ = store.append({"tenant_id": "t", "n": 1})
@@ -329,7 +326,7 @@ def test_chain_tamper_is_detected(pg):
 
 def test_chain_row_deletion_is_detected(pg):
     """Deleting an interior link must break verification — this is exactly
-    what the unchained sha256(payload) hash could not detect (T2-3)."""
+    what the unchained sha256(payload) hash could not detect ."""
     store, db = pg
     store.append({"tenant_id": "t", "n": 1})
     store.append({"tenant_id": "t", "n": 2})
@@ -358,7 +355,7 @@ def test_head_restored_on_reopen(pg):
 def test_concurrent_appends_never_fork_the_chain(pg):
     """Each append derives prev inside the transaction (FOR UPDATE), so even
     interleaved writers that pre-read the same stale head cannot fork the
-    chain (P1-5 / T2-4)."""
+    chain ."""
     store, db = pg
     stale_head = store.head
     store.append({"tenant_id": "t", "n": 1}, stale_head)
@@ -367,8 +364,7 @@ def test_concurrent_appends_never_fork_the_chain(pg):
     assert db.chain[1]["prev_hash"] == db.chain[0]["this_hash"]
 
 
-# ───────────────────── erasure redacts the chain too ──────────────────────
-
+# erasure redacts the chain too
 def test_erasure_redacts_chain_payloads_and_still_verifies(pg):
     store, db = pg
     store.append({"tenant_id": "erase-me", "input_text": "SSN 123-45-6789",
@@ -417,12 +413,9 @@ def test_delete_for_session_scoped_within_tenant(pg):
     assert "unrelated data" in chain
 
 
-# ───────────────────────────── failure modes ──────────────────────────────
-
+# failure modes
 def test_export_audit_jsonl_warns_on_truncation(pg, tmp_path, caplog):
-    """MEDIUM-1: the export caps at --limit most-recent rows; truncation must
-    be warned (dropped count reported), never silent. Omitting the limit
-    exports everything."""
+    """A bounded export reports how many older rows were omitted."""
     import logging
 
     store, _ = pg
@@ -446,8 +439,7 @@ def test_export_audit_jsonl_warns_on_truncation(pg, tmp_path, caplog):
 
 
 def test_require_rls_raises_on_bypass_role(monkeypatch):
-    """D2: with PRAMAGENT_REQUIRE_RLS set, a superuser/BYPASSRLS connection
-    (where the isolation policy is inert) must fail startup, not just warn."""
+    """Strict RLS mode rejects roles that bypass the isolation policy."""
     class _SuperuserCursor:
         def __enter__(self): return self
         def __exit__(self, *a): return False

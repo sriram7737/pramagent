@@ -1,5 +1,4 @@
 # Pramagent - pilot docker-compose
-# ─────────────────────────────────────────────────────────────────────────────
 # Services:
 #   postgres  - audit store + hash chain persistence
 #   redis     - HITL signalling, rate-limit buckets, session memory
@@ -11,8 +10,6 @@
 #   docker compose up -d
 #   open http://localhost:8080/docs       # OpenAPI
 #   open http://localhost:8501/          # Dashboard
-# ─────────────────────────────────────────────────────────────────────────────
-
 x-logging: &default-logging
   driver: "json-file"
   options:
@@ -21,7 +18,7 @@ x-logging: &default-logging
 
 services:
 
-  # ── Postgres ───────────────────────────────────────────────────────────────
+  # Postgres
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -36,7 +33,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
-    # internal-only: never published to the host (P1-10/T2-9)
+    # internal-only: never published to the host
     expose:
       - "5432"
     healthcheck:
@@ -49,7 +46,7 @@ services:
     cpus: 1.0
     logging: *default-logging
 
-  # ── Redis ──────────────────────────────────────────────────────────────────
+  # Redis
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -64,7 +61,7 @@ services:
       --appendonly yes
     volumes:
       - redis_data:/data
-    # internal-only: never published to the host (P1-10/T2-9)
+    # internal-only: never published to the host
     expose:
       - "6379"
     healthcheck:
@@ -79,10 +76,10 @@ services:
     cpus: 0.5
     logging: *default-logging
 
-  # ── Pramagent API ──────────────────────────────────────────────────────────
+  # Pramagent API
   api:
     build:
-      context: .
+      context:.
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
@@ -97,7 +94,7 @@ services:
       PRAMAGENT_LOG_LEVEL: ${PRAMAGENT_LOG_LEVEL:-info}
       PRAMAGENT_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       # Store priority: PRAMAGENT_POSTGRES_DSN > PRAMAGENT_DB > opt-in memory.
-      # The API refuses to start without one of the three (P0-1), so this DSN
+      # The API refuses to start without one of the three , so this DSN
       # is what makes the stack actually persist traces + the audit chain.
       # Connects as pramagent_app (see deploy/postgres/init.sh), not
       # POSTGRES_USER: POSTGRES_USER is a superuser and would silently defeat
@@ -140,10 +137,10 @@ services:
     cpus: 1.0
     logging: *default-logging
 
-  # ── Dashboard ──────────────────────────────────────────────────────────────
+  # Dashboard
   dashboard:
     build:
-      context: .
+      context:.
       dockerfile: deploy/dashboard/Dockerfile
     restart: unless-stopped
     depends_on:
@@ -154,7 +151,7 @@ services:
       PRAMAGENT_API_KEY: ${PRAMAGENT_API_KEY}
       PRAMAGENT_DASHBOARD_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/1"
       PRAMAGENT_DASHBOARD_KEY: ${PRAMAGENT_DASHBOARD_KEY:?PRAMAGENT_DASHBOARD_KEY is required}
-      # Finding 1.1: the dashboard signs its sessions with a secret DISTINCT
+      # the dashboard signs its sessions with a secret DISTINCT
       # from the API's PRAMAGENT_JWT_SECRET so an API-minted token can never
       # authenticate a dashboard session. PRAMAGENT_JWT_SECRET is still passed
       # only for the startup strength-check; DASHBOARD sessions use the value
@@ -181,7 +178,7 @@ services:
     cpus: 0.5
     logging: *default-logging
 
-  # ── Postgres backup (opt-in) ─────────────────────────────────────────────
+  # Postgres backup (opt-in)
   # Scheduled pg_dump -> object storage, closing the "no backup automation"
   # gap. Off by default so existing deployments aren't forced to configure
   # S3 before `docker compose up` — enable with:
@@ -189,7 +186,7 @@ services:
   backup:
     profiles: ["backup"]
     build:
-      context: .
+      context:.
       dockerfile: deploy/postgres/Dockerfile.backup
     restart: unless-stopped
     depends_on:
@@ -225,7 +222,7 @@ services:
     cpus: 0.5
     logging: *default-logging
 
-  # ── Audit-chain tamper detection (opt-in) ────────────────────────────────
+  # Audit-chain tamper detection (opt-in)
   # Runs `pramagent audit-verify-watch` on a loop, closing the "detection is
   # entirely manual" gap. Reuses the api image/build (the CLI ships in the
   # same package) rather than a separate Dockerfile. Enable with:
@@ -233,7 +230,7 @@ services:
   audit-watch:
     profiles: ["audit-watch"]
     build:
-      context: .
+      context:.
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
@@ -254,7 +251,7 @@ services:
     cpus: 0.25
     logging: *default-logging
 
-  # ── Scheduled retention pruning (opt-in) ─────────────────────────────────
+  # Scheduled retention pruning (opt-in)
   # Runs `pramagent retention-prune` on a loop instead of leaving it purely
   # manual/external-cron. Scoped to ONE tenant per instance (retention-prune
   # refuses unscoped pruning by design) — for multi-tenant deployments, run
@@ -264,7 +261,7 @@ services:
   retention-prune:
     profiles: ["retention-prune"]
     build:
-      context: .
+      context:.
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped

@@ -166,16 +166,14 @@ EXTENDED_ATTACKS = DEFAULT_ATTACKS + [
 ]
 
 
-# ── SEC-2026-06-11-02: obfuscated / indirected attack variants ──────────────
+# obfuscated / indirected attack variants
 # Bypass classes proven in security testing. The base64 entries defeat plain
 # keyword matching by constru
 
 
-# ── SEC-2026-06-11-02: encoding / framing / indirection bypass corpus ──────
-# Security testing proved three bypass classes that plaintext heuristics miss.
-# These augment the benchmark so regressions in the IsolationLayer decode-and-
-# scan + framing patterns show up as a rising bypass rate. Appended AFTER the
-# first 100 entries so the `--attacks 100` keyword-only bound stays meaningful.
+# encoding / framing / indirection bypass corpus
+# Include encoded and indirect attacks that plaintext heuristics miss. Keep
+# these after the first 100 entries so the keyword-only benchmark stays stable.
 
 # base64-encoded variants of the top 10 injection patterns
 B64_ATTACKS = [

@@ -54,38 +54,28 @@ def _normalize_dashboard_tenant(raw_tenant: str, allow_super_admin: bool) -> str
     return raw_tenant or "default"
 
 
-_DEFAULT_JWT_SECRET = "change-me-in-production"  # nosec B105  -  sentinel, refused at startup
+_DEFAULT_JWT_SECRET = "change-me-in-production"  # nosec B105: rejected at startup
 
 from pramagent.secrets import resolve_secret
 
-# resolve_secret() falls back to AWS Secrets Manager/Vault when
-# <NAME>_AWS_SECRET_ID / <NAME>_VAULT_PATH is set, otherwise behaves exactly
-# like plain os.environ.get()  -  no change for existing env-var deployments.
+# ``resolve_secret`` supports environment variables, AWS Secrets Manager, and
+# Vault through one interface.
 PRAMAGENT_API_URL       = os.environ.get("PRAMAGENT_API_URL", "http://localhost:8080")
 PRAMAGENT_API_KEY       = resolve_secret("PRAMAGENT_API_KEY")
 PRAMAGENT_DASHBOARD_KEY = resolve_secret("PRAMAGENT_DASHBOARD_KEY", PRAMAGENT_API_KEY)  # shared key for browser
 PRAMAGENT_JWT_SECRET    = resolve_secret("PRAMAGENT_JWT_SECRET", _DEFAULT_JWT_SECRET)
-# Finding 1.1  -  cross-service JWT confusion. Dashboard sessions are signed and
-# verified with a secret DISTINCT from the API's PRAMAGENT_JWT_SECRET. It falls
-# back to the API secret so single-secret deployments keep working, but the
-# aud/iss binding below rejects an API-minted token here even when the secret
-# IS shared  -  closing the path where a read-only API token (aud=pramagent-api)
-# became an all-tenant (tenant="*") dashboard admin session.
+# Dashboard sessions can use a distinct key. Issuer and audience checks still
+# separate dashboard and API tokens when a deployment shares the fallback key.
 DASHBOARD_JWT_SECRET = resolve_secret(
     "PRAMAGENT_DASHBOARD_JWT_SECRET", PRAMAGENT_JWT_SECRET)
-# This dashboard mints and accepts only its own issuer/audience. The API uses
-# iss="pramagent"/aud="pramagent-api"; keeping these disjoint is what stops a
-# token minted for one service from authenticating against the other.
+# Keep dashboard tokens scoped to this service.
 _DASHBOARD_ISS = "pramagent-dashboard"
 _DASHBOARD_AUD = "pramagent-dashboard"
 PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN = os.environ.get(
     "PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN", "false"
 ).lower() in {"1", "true", "yes", "on"}
-# The shared-key LOGIN FORM fallback (password field == PRAMAGENT_DASHBOARD_KEY)
-# is a single bearer secret that logs anyone who knows it in as an admin
-# session  -  a de facto backdoor alongside the per-user bcrypt store. Off by
-# default; the X-API-Key header path (a separate, documented CLI/curl
-# mechanism, not a browser login) is unaffected by this flag.
+# The shared-key browser login grants an admin session and is disabled by
+# default. The documented X-API-Key automation path is controlled separately.
 PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN = os.environ.get(
     "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN", "false"
 ).lower() in {"1", "true", "yes", "on"}
@@ -94,10 +84,7 @@ PRAMAGENT_DASHBOARD_TENANT = _normalize_dashboard_tenant(
     _PRAMAGENT_DASHBOARD_TENANT_RAW,
     PRAMAGENT_DASHBOARD_ALLOW_SUPER_ADMIN,
 )
-# Defaults to true: session/CSRF cookies require HTTPS unless an operator
-# explicitly opts out (e.g. plain-http local dev). Chrome/Firefox already
-# treat http://localhost as a trustworthy origin for Secure cookies, so this
-# does not break the common local-dev path.
+# Require HTTPS cookies unless a local deployment explicitly opts out.
 PRAMAGENT_DASHBOARD_SECURE_COOKIE = os.environ.get(
     "PRAMAGENT_DASHBOARD_SECURE_COOKIE", "true"
 ).lower() in {"1", "true", "yes", "on"}
@@ -128,18 +115,12 @@ PRAMAGENT_DASHBOARD_STATS_TRACE_LIMIT = max(
 PRAMAGENT_DASHBOARD_DEFAULT_ROLE = os.environ.get(
     "PRAMAGENT_DASHBOARD_DEFAULT_ROLE", "viewer"
 )
-# Finding 1.x: open self-signup must never enrol a privileged role. Approver
-# (can approve HITL) and admin are privileged; granting them requires a
-# deliberate admin action, not open enrolment. Clamp the signup role to a
-# read-only set  -  if an operator points DEFAULT_ROLE at a privileged role, the
-# signup path falls back to viewer rather than minting privileged accounts.
+# Open signup is limited to read-only roles; privileged roles require an admin.
 _SIGNUP_SAFE_ROLES = {"viewer", "auditor"}
 
 
 def _clamp_signup_role(role: str) -> str:
-    """Downgrade a privileged configured role to viewer for the open-signup
-    path (finding 1.x). Admin/approver are privileged; open enrolment must not
-    grant them."""
+    """Limit open signup to a read-only role."""
     return role if role in _SIGNUP_SAFE_ROLES else "viewer"
 
 
@@ -150,17 +131,12 @@ PRAMAGENT_DASHBOARD_SIGNUP_TENANT = _normalize_dashboard_tenant(
 )
 
 def validate_dashboard_config() -> None:
-    """Refuse to serve with a missing or well-known JWT secret.
-
-    Uses the shared denylist from ``pramagent.security`` so EVERY published
-    placeholder spelling (hyphenated, underscored, "changeme", ...) is refused  -
-    the previous equality check only caught the hyphenated variant, letting
-    the repo's own ``change_me_in_production`` example value sail through
-    (P0-2 / T1-1). The JWT secret signs every session cookie, so a known
-    secret means anyone can forge a super-admin (tenant "*") session.
-    """
+    """Refuse missing, weak, or published placeholder signing secrets."""
     from pramagent.security import assert_strong_secret
     assert_strong_secret("PRAMAGENT_JWT_SECRET", PRAMAGENT_JWT_SECRET)
+    assert_strong_secret(
+        "PRAMAGENT_DASHBOARD_JWT_SECRET", DASHBOARD_JWT_SECRET
+    )
     if PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN:
         log.warning(
             "PRAMAGENT_DASHBOARD_ALLOW_SHARED_KEY_LOGIN=1: the browser login "
@@ -176,7 +152,7 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def _lifespan(app_: FastAPI):
-    # lifespan replaces the deprecated @app.on_event("startup") hook (P3-3)
+    # lifespan replaces the deprecated @app.on_event("startup") hook
     validate_dashboard_config()
     yield
 
@@ -246,10 +222,7 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 def _sign(payload: dict) -> str:
-    # Stamp this dashboard's issuer/audience so a token minted here cannot be
-    # replayed against the API (and vice versa) even under a shared secret
-    # (finding 1.1). Existing iss/aud in the payload are overwritten so the
-    # binding can't be spoofed by the caller building the payload.
+    # Overwrite caller values so issuer and audience binding cannot be spoofed.
     payload = {**payload, "iss": _DASHBOARD_ISS, "aud": _DASHBOARD_AUD}
     header  = _b64url(b'{"alg":"HS256","typ":"JWT"}')
     body    = _b64url(json.dumps(payload).encode())
@@ -269,12 +242,9 @@ def _verify(token: str, *, check_revocation: bool = True) -> Optional[dict]:
         )
         if not hmac.compare_digest(expected, sig):
             return None
-        # decode payload
         padded = body + "=" * (4 - len(body) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
-        # Reject anything not minted by THIS dashboard: an API token
-        # (aud=pramagent-api / iss=pramagent) fails here regardless of a shared
-        # signing secret  -  the core of the finding 1.1 fix.
+        # A valid API token is still invalid for a dashboard session.
         if payload.get("iss") != _DASHBOARD_ISS or payload.get("aud") != _DASHBOARD_AUD:
             return None
         if payload.get("exp", 0) < time.time():
@@ -320,10 +290,7 @@ def _get_auth(request: Request) -> Optional[AuthContext]:
     if token:
         payload = _verify(token)
         if payload:
-            # Finding 1.1  -  deny on absent tenant/role instead of defaulting to
-            # "*"/"admin". A legitimate dashboard token always carries both
-            # (see the login handler); a token missing either is treated as
-            # unauthenticated rather than silently promoted to super-admin.
+            # Missing claims must not inherit privileged defaults.
             tenant = payload.get("tenant")
             role = payload.get("role")
             if not tenant or not role:
@@ -1090,7 +1057,7 @@ async def approve(
         msg, cls = "Approved", "badge-ok"
     except Exception as exc:
         msg, cls = f"Error: {exc}", "badge-block"
-    # Upstream error bodies can carry markup  -  escape before rendering (T2-1)
+    # Upstream error bodies can carry markup  -  escape before rendering
     return HTMLResponse(f'<span class="badge {cls}">{html.escape(msg)}</span>')
 
 
@@ -1108,7 +1075,7 @@ async def deny(
         msg, cls = "Denied", "badge-block"
     except Exception as exc:
         msg, cls = f"Error: {exc}", "badge-block"
-    # Upstream error bodies can carry markup  -  escape before rendering (T2-1)
+    # Upstream error bodies can carry markup  -  escape before rendering
     return HTMLResponse(f'<span class="badge {cls}">{html.escape(msg)}</span>')
 
 
@@ -1177,11 +1144,8 @@ async def audit_verify_page(
     )
 
 
-# -- hook admin console --------------------------------------------------------
-# Admin-only. Enable/disable hook surfaces and individual tools, edit ToolGuard
-# policy schemas, and review the SHA-256 hash-chained audit of every change.
-# Reads/writes the central config via pramagent.hook_admin (same host as the
-# hooks), not the API proxy  -  the config is local to the deployment.
+# Hook admin console
+# This page manages the deployment-local hook configuration and audit chain.
 
 @app.get("/hooks", response_class=HTMLResponse)
 async def hooks_console(
@@ -1222,8 +1186,8 @@ async def hooks_toggle_surface(
 
     try:
         hook_admin.set_surface_enabled(
-            surface, enabled == "true", actor=ctx.username or "admin")
-    except ValueError as exc:
+            surface, enabled == "true", actor=f"dashboard:{ctx.username or 'admin'}")
+    except (RuntimeError, ValueError) as exc:
         return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
     return RedirectResponse("/hooks", status_code=303)
 
@@ -1242,9 +1206,30 @@ async def hooks_toggle_tool(
 
     try:
         hook_admin.set_tool_enabled(
-            tool, enabled == "true", actor=ctx.username or "admin")
-    except ValueError as exc:
+            tool, enabled == "true", actor=f"dashboard:{ctx.username or 'admin'}")
+    except (RuntimeError, ValueError) as exc:
         return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
+    return RedirectResponse("/hooks", status_code=303)
+
+
+@app.post("/hooks/integrity/bind")
+async def hooks_bind_integrity(
+    request: Request,
+    csrf_token: str = Form(...),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        hook_admin.bind_legacy_state(
+            actor=f"dashboard:{ctx.username or 'admin'}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RedirectResponse(
+            f"/hooks?error={quote_plus(str(exc))}", status_code=303
+        )
     return RedirectResponse("/hooks", status_code=303)
 
 
@@ -1265,8 +1250,10 @@ async def hooks_upsert_policy(
         return RedirectResponse(
             f"/hooks?error={quote_plus('Invalid JSON: ' + str(exc))}", status_code=303)
     try:
-        hook_admin.upsert_policy(policy, actor=ctx.username or "admin")
-    except ValueError as exc:
+        hook_admin.upsert_policy(
+            policy, actor=f"dashboard:{ctx.username or 'admin'}"
+        )
+    except (RuntimeError, ValueError) as exc:
         return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
     return RedirectResponse("/hooks", status_code=303)
 
@@ -1282,7 +1269,14 @@ async def hooks_delete_policy(
     _require_admin_role(ctx)
     from pramagent import hook_admin
 
-    hook_admin.delete_policy(name, actor=ctx.username or "admin")
+    try:
+        hook_admin.delete_policy(
+            name, actor=f"dashboard:{ctx.username or 'admin'}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RedirectResponse(
+            f"/hooks?error={quote_plus(str(exc))}", status_code=303
+        )
     return RedirectResponse("/hooks", status_code=303)
 
 
@@ -1314,9 +1308,9 @@ async def hooks_upsert_tenant(
             enabled=(enabled == "true"),
             allowed_tools=_parse_tool_list(allowed_tools),
             denied_tools=_parse_tool_list(denied_tools) or [],
-            actor=ctx.username or "admin",
+            actor=f"dashboard:{ctx.username or 'admin'}",
         )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         return RedirectResponse(f"/hooks?error={quote_plus(str(exc))}", status_code=303)
     return RedirectResponse("/hooks", status_code=303)
 
@@ -1332,7 +1326,14 @@ async def hooks_delete_tenant(
     _require_admin_role(ctx)
     from pramagent import hook_admin
 
-    hook_admin.delete_tenant(tenant_id, actor=ctx.username or "admin")
+    try:
+        hook_admin.delete_tenant(
+            tenant_id, actor=f"dashboard:{ctx.username or 'admin'}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RedirectResponse(
+            f"/hooks?error={quote_plus(str(exc))}", status_code=303
+        )
     return RedirectResponse("/hooks", status_code=303)
 
 
@@ -1353,7 +1354,7 @@ async def export_csv(
         if isinstance(value, (dict, list)):
             value = json.dumps(value, sort_keys=True)
         if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t"):
-            return "'" + value          # neutralize spreadsheet formulas (T2-1)
+            return "'" + value          # neutralize spreadsheet formulas
         return value
 
     params: dict = {"limit": 10000}

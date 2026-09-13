@@ -6,10 +6,10 @@
       <div class="eyebrow">Administration</div>
       <h1>Hook control console</h1>
     </div>
-    {% if config.chain_valid %}
-      <span class="badge ok">Audit chain intact</span>
+    {% if config.chain_valid and config.config_integrity_valid %}
+      <span class="badge ok">Config and audit verified</span>
     {% else %}
-      <span class="badge bad">Audit chain BROKEN</span>
+      <span class="badge bad">Control-plane integrity failed</span>
     {% endif %}
   </div>
 
@@ -20,9 +20,16 @@
   <p style="color:var(--muted);margin:4px 0 0">
     Changes take effect on the next tool call. Enforcement fails <strong>safe</strong>:
     a missing or corrupt config leaves every hook ON. Every change below is
-    appended to a SHA-256 hash-chained audit.
+    bound to an HMAC-SHA-256 audit chain.
+    {% if not config.config_integrity_valid %}<br><strong>{{ config.config_integrity_reason }}</strong>{% endif %}
     {% if config.updated_by %}<br>Last change by <strong>{{ config.updated_by }}</strong>.{% endif %}
   </p>
+  {% if not config.config_integrity_valid %}
+    <form method="post" action="/hooks/integrity/bind" style="margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button primary" type="submit">Bind reviewed legacy config</button>
+    </form>
+  {% endif %}
 </section>
 
 <section class="panel">

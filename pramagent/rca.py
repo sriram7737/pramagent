@@ -44,7 +44,7 @@ class RCAEngine:
         return (max((Verdict(a) for a in fired), key=lambda v: precedence[v])
                 if fired else Verdict.ALLOW)
 
-    # ── decision replay ──────────────────────────────────────────────
+    # decision replay
     def replay(self, call_id: str) -> dict:
         """
         Re-derive the pre and post verdicts from the recorded rule results,
@@ -72,7 +72,7 @@ class RCAEngine:
             "reproducible": pre_matches and post_matches,
         }
 
-    # ── causality graph ──────────────────────────────────────────────
+    # causality graph
     def causality(self, call_id: str) -> list[CausalNode]:
         t = self.get(call_id)
         nodes: list[CausalNode] = [CausalNode("input", "input", t.input_text[:80], [])]
@@ -84,7 +84,7 @@ class RCAEngine:
         nodes.append(CausalNode("output", "output", t.output_text[:80], [last]))
         return nodes
 
-    # ── counterfactual ───────────────────────────────────────────────
+    # counterfactual
     def counterfactual(self, call_id: str, disable_rule: str) -> dict:
         """Recompute the verdict as if `disable_rule` had not fired. No production calls.
 
@@ -104,7 +104,7 @@ class RCAEngine:
             "changed": verdict.value != t.pre_verdict,
         }
 
-    # ── tool-call graph (complex agents) ─────────────────────────────
+    # tool-call graph (complex agents)
     def tool_call_graph(self, call_id: str) -> dict:
         """Build a directed graph of tool calls recorded in the trace.
 
@@ -174,7 +174,7 @@ class RCAEngine:
         return [ev.layer for ev in t.layer_events
                 if str(ev.decision).lower() in decisive]
 
-    # ── incident report ──────────────────────────────────────────────
+    # incident report
     def incident_report(self, call_id: str) -> str:
         t = self.get(call_id)
         lines = [

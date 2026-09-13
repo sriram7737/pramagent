@@ -66,7 +66,7 @@ def test_ethereum_anchor_submits_hash_as_calldata():
 
     assert receipt.tx_hash == "0x" + "12" * 32
     # default is submit-and-return: never wait for mining on the hot path
-    # (P1-1/T1-7); -1 = submitted, unconfirmed
+    # ; -1 = submitted, unconfirmed
     assert receipt.block_number == 0
     assert receipt.status == -1
     assert w3.eth.account.last_tx["data"] == "0x" + "a" * 64
@@ -119,7 +119,7 @@ def test_ethereum_backend_records_real_anchor_metadata():
 
     assert tx_hash.startswith("eth:0x")
     assert backend.last_anchor is not None
-    # hot path submits without waiting for mining (P1-1/T1-7); confirmation
+    # hot path submits without waiting for mining ; confirmation
     # is reconciled out-of-band via verify_on_chain
     assert backend.last_anchor.status == -1
     assert backend.last_anchor.block_number == 0

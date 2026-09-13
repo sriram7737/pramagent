@@ -13,7 +13,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# ── MemoryStore ────────────────────────────────────────────────────────
+# MemoryStore
 def test_memory_prune_older_than():
     store = MemoryStore()
     armor = Pramagent(provider=MockProvider(), store=store)
@@ -41,7 +41,7 @@ def test_memory_delete_for_tenant():
     assert remaining[0].tenant_id == "hospital"
 
 
-# ── SQLiteStore ────────────────────────────────────────────────────────
+# SQLiteStore
 def _sqlite_path():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)

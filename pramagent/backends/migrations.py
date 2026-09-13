@@ -57,7 +57,7 @@ class MigrationRunner:
         self._dsn = dsn
         self._is_pg = dsn is not None
 
-    # ── connection helpers ─────────────────────────────────────────────────
+    # connection helpers
     def _connect(self):
         if self._is_pg:
             from .. import _pg
@@ -78,7 +78,7 @@ class MigrationRunner:
         )
         conn.commit()
 
-    # ── public API ─────────────────────────────────────────────────────────
+    # public API
     def current_version(self) -> int:
         conn = self._connect()
         try:
@@ -137,7 +137,7 @@ class MigrationRunner:
             conn.close()
 
 
-# ── default migrations (mirror the stores' bootstrap schema) ────────────────
+# default migrations (mirror the stores' bootstrap schema)
 # SQLite-flavoured DDL; Postgres deployments should use MIGRATIONS_PG.
 
 MIGRATIONS: list[Migration] = [
@@ -174,10 +174,10 @@ MIGRATIONS: list[Migration] = [
 
 # Postgres-flavoured migrations. Versions 1-2 mirror PostgresStore's bootstrap
 # DDL; version 3 re-keys pre-0.7.1 rows from this_hash to call_id — the v0.7.1
-# protocol fix (P1-6/T2-3) keys pramagent_traces.trace_id by the payload's
+# protocol fix  keys pramagent_traces.trace_id by the payload's
 # call_id so /v1/trace/{call_id} can find rows written by older releases.
 # Versions 4-5 add the tenant-isolation policy and the append-only chain guard
-# (finding 4.2), reusing PostgresStore's own DDL so the two schema sources
+# , reusing PostgresStore's own DDL so the two schema sources
 # cannot diverge.
 
 
@@ -233,16 +233,8 @@ MIGRATIONS_PG: list[Migration] = [
             " AND trace_id IS DISTINCT FROM payload->>'call_id'"
         ),
     ),
-    # Finding 4.2: the runner used to omit tenant isolation and chain
-    # immutability entirely, so a deployment that provisions schema via the
-    # MigrationRunner (and never boots PostgresStore, which re-applies these on
-    # every startup) ran with RLS and the append-only guard absent. Rather than
-    # duplicate the DDL (and let it drift), these two migrations run the exact
-    # idempotent templates PostgresStore uses — that store is the source of
-    # truth and is what the live RLS test exercises. The templates are wholly
-    # idempotent (CREATE TABLE IF NOT EXISTS, ALTER ... ENABLE/FORCE, DROP
-    # POLICY IF EXISTS + CREATE POLICY, CREATE OR REPLACE FUNCTION, DROP TRIGGER
-    # IF EXISTS + CREATE TRIGGER), so re-running the table DDL is a no-op.
+    # Reuse PostgresStore's idempotent DDL so migration-only deployments get
+    # the same row-level security and append-only chain constraints.
     Migration(
         version=4,
         name="enable_traces_row_level_security",

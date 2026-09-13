@@ -125,7 +125,7 @@ def test_dashboard_super_admin_requires_explicit_opt_in():
     assert dashboard._normalize_dashboard_tenant("tenant_a", False) == "tenant_a"
 
 
-# ── Finding #6: refuse to start with the well-known default JWT secret ──
+# refuse to start with the well-known default JWT secret
 def test_dashboard_startup_refuses_default_jwt_secret(monkeypatch):
     monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", "change-me-in-production")
     with pytest.raises(RuntimeError, match="PRAMAGENT_JWT_SECRET"):
@@ -142,6 +142,9 @@ def test_dashboard_startup_refuses_empty_jwt_secret(monkeypatch):
 
 def test_dashboard_startup_accepts_strong_jwt_secret(monkeypatch):
     monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", "a-strong-random-secret")
+    monkeypatch.setattr(
+        dashboard, "DASHBOARD_JWT_SECRET", "a-separate-strong-dashboard-secret"
+    )
     with TestClient(dashboard.app) as client:
         assert client.get("/health").status_code == 200
 
@@ -753,7 +756,7 @@ def test_dashboard_reset_requires_preauth_csrf(tmp_path, monkeypatch):
     assert response.status_code == 403
 
 
-# ── Finding 1.x: open self-signup cannot enrol a privileged role ──
+# open self-signup cannot enrol a privileged role
 def test_dashboard_signup_role_clamped_away_from_privileged():
     # Privileged configured roles downgrade to viewer on the open-signup path;
     # non-privileged roles pass through.
@@ -765,7 +768,7 @@ def test_dashboard_signup_role_clamped_away_from_privileged():
     assert dashboard.PRAMAGENT_DASHBOARD_SIGNUP_ROLE in {"viewer", "auditor"}
 
 
-# ── Finding 1.1: cross-service JWT confusion (API token → dashboard admin) ──
+# cross-service JWT confusion (API token → dashboard admin)
 import time  # noqa: E402
 
 
@@ -785,9 +788,7 @@ def test_dashboard_rejects_api_audience_token_even_with_shared_secret(monkeypatc
     Pre-fix the dashboard checked neither aud nor iss, so the token verified
     and _get_auth promoted it to tenant='*'/role='admin' (all-tenant read)."""
     shared = "a-strong-shared-secret-value-123456"
-    # Cover both the pre-fix (PRAMAGENT_JWT_SECRET) and post-fix
-    # (DASHBOARD_JWT_SECRET) variable names so the signature matches whichever
-    # the code verifies against.
+    # Set both supported secret variables to exercise shared-key isolation.
     monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", shared)
     monkeypatch.setattr(dashboard, "DASHBOARD_JWT_SECRET", shared, raising=False)
 
@@ -813,9 +814,7 @@ def test_dashboard_denies_session_token_missing_tenant_or_role(monkeypatch):
 
 
 def test_api_rejects_dashboard_token(monkeypatch):
-    """1.1 (reverse direction, lock-in): a dashboard-minted token must never
-    verify against the API's JWTManager. Already safe via aud/iss pinning on
-    the API side; this locks it so the 1.1 fix can't regress it."""
+    """A dashboard token cannot authenticate against the API."""
     shared = "shared-secret-for-reverse-check-000"
     monkeypatch.setattr(dashboard, "PRAMAGENT_JWT_SECRET", shared)
     monkeypatch.setattr(dashboard, "DASHBOARD_JWT_SECRET", shared, raising=False)

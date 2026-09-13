@@ -1,7 +1,7 @@
 """Unit tests for pramagent.hook_scan — the shared content-scan helpers every
 tool-call hook now uses.
 
-These pin the three bypasses the module was created to close:
+The suite covers three scanner boundaries:
   1. field-routing  — a payload in ANY argument leaf is scanned, not just a
      hardcoded field subset;
   2. nesting        — payloads inside nested dicts/lists are scanned;

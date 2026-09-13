@@ -12,8 +12,7 @@ from pramagent.layers.tool_guard import SideEffect
 from pramagent.types import Verdict
 
 
-# ── Settings ──────────────────────────────────────────────────────────────────
-
+# Settings
 class TestSettings:
     def test_defaults(self):
         s = Settings()
@@ -95,8 +94,7 @@ class TestSettings:
         assert s.postgres_store() is None
 
 
-# ── delimiter fencing ──────────────────────────────────────────────────────
-
+# delimiter fencing
 class TestFence:
     def test_wraps_content_in_open_and_close_tags(self):
         result = _fence("untrusted_thing", "hello")
@@ -115,8 +113,7 @@ class TestFence:
         assert result.count("<t>") == 1  # only the genuine opening tag
 
 
-# ── LLMJudge ─────────────────────────────────────────────────────────────────
-
+# LLMJudge
 class TestLLMJudge:
 
     def _judge(self, response_json: str, policy=None):
@@ -154,8 +151,7 @@ class TestLLMJudge:
         assert d.latency_ms == 0.0
 
     async def test_arguments_are_pii_scrubbed_before_judge_provider(self):
-        """B2: tool arguments go to an external LLM provider, so PII/PHI must
-        be redacted first — the same treatment the main prompt path gets."""
+        """Tool arguments are redacted before reaching an external judge."""
         captured = {}
 
         async def provider(prompt):
@@ -263,8 +259,7 @@ class TestLLMJudge:
         assert result["confidence"] == 0.9
 
 
-# ── CLI smoke tests ───────────────────────────────────────────────────────────
-
+# CLI smoke tests
 class TestCLI:
     def test_version_exits_zero(self):
         import subprocess, sys
@@ -436,7 +431,7 @@ class TestCLI:
 
     def test_audit_export_calls_store_export_and_reports_count(self, monkeypatch, tmp_path, capsys):
         """audit-export must be reachable from the CLI, not just as a
-        library method with no subcommand and no doc reference (ISSUE-12)."""
+        library method with no subcommand and no doc reference ."""
         from types import SimpleNamespace
         from pramagent import cli
 
@@ -484,7 +479,7 @@ class TestCLI:
         """auth-revoke must have a CLI-reachable path when the operator uses
         PRAMAGENT_API_KEYS instead of a Postgres-backed registry — the
         runbook tells responders to run this command unconditionally
-        (ISSUE-6)."""
+        ."""
         from types import SimpleNamespace
         from pramagent import cli
         from pramagent.auth import _hash_key
@@ -505,7 +500,7 @@ class TestCLI:
     def test_auth_revoke_without_any_backend_fails_with_actionable_message(self, monkeypatch, capsys):
         """No PRAMAGENT_API_KEY_DSN and no PRAMAGENT_API_KEY_REVOCATION_FILE:
         must fail with a clear, actionable error, not a bare RuntimeError
-        the operator can't act on mid-incident (ISSUE-6)."""
+        the operator can't act on mid-incident ."""
         from types import SimpleNamespace
         from pramagent import cli
 

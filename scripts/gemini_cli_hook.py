@@ -48,7 +48,7 @@ from pramagent.hook_state import tool_enabled as _tool_enabled
 from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
 from pramagent.hook_state import targets_protected_path as _targets_protected_path
 
-# Tenant this hook runs as (PRAMAGENT_TENANT_ID). See claude_code_hook.py.
+# The local tenant is unrestricted until it is managed in the console.
 _TENANT_ID = os.environ.get("PRAMAGENT_TENANT_ID", "gemini-cli-local")
 from pramagent.layers.tool_guard import ToolGuardLayer, ToolPolicy, SideEffect
 from pramagent.layers.isolation import IsolationLayer
@@ -58,50 +58,27 @@ from pramagent.types import Verdict, HITLStatus
 
 _COMPLIANCE = ComplianceLayer()  # PII/PHI regex scan, deterministic, no network/API calls
 
-# block_on_injection=False: we want the hit list back so we can attribute a
-# clear reason, not have it raise. The hook decides what to do with hits.
+# Return pattern IDs so the hook can explain its decision.
 _ISOLATION = IsolationLayer(block_on_injection=False)
 
-# Content scanning now covers EVERY string argument (see pramagent.hook_scan),
-# so there is no hardcoded field list to keep in sync with each host's tool
-# surface  -  the replace tool's "instruction" field, or any future field, is
-# scanned automatically.
+# Shared scanning covers every decoded string leaf in the tool arguments.
 
-# -- Audit chain ----------------------------------------------------------
-# File-backed so the hash chain survives across hook invocations: Gemini
-# CLI runs this script as a brand-new process per tool call, so anything
-# in-memory would restart at genesis every time and never actually link
-# records together. SQLiteStore re-reads the chain head from disk under a
-# write lock on every append, so this is also safe if Gemini CLI ever
-# fires hooks for concurrent tool calls.
-#
-# Deliberately NOT constructed here at module import time: sqlite3.connect
-# can raise (e.g. the target directory doesn't exist), and an exception
-# raised during module import happens before main()'s try/except below
-# ever runs, so it would crash with a generic, uncontrolled exit code
-# instead of the deliberate sys.exit(2) hard-block. main() constructs it
-# inside its own try block instead, so a failure here is handled exactly
-# like any other hook failure.
+# Audit chain
+# Gemini launches a new process per call, so use SQLite to retain one chain.
+# Construct the store inside ``main`` so open failures follow the deny path.
 _AUDIT_DB_PATH = os.environ.get(
     "PRAMAGENT_GEMINI_HOOK_AUDIT_DB",
     os.path.join(_REPO_ROOT, "pramagent_gemini_hook_audit.db"),
 )
 
 
-# -- HITL switch ----------------------------------------------------------
-# OFF by default, same as scripts/claude_code_hook.py. When off, ESCALATE
-# verdicts deny (see (1) in the module docstring -- there is no "ask" to
-# fall back to here). When PRAMAGENT_HOOK_ENABLE_HITL=1, ESCALATE instead
-# routes through a real HITLLayer.gate() call. As wired below this is a
-# stub with no approver/store configured, so it will simply wait out a
-# short timeout and resolve to IDLE, which denies, every time. To make this
-# actually useful, wire a real persistent store or approver callback
-# before relying on this switch in practice.
+# HITL
+# Gemini has no "ask" result, so escalation denies unless a real approver is
+# wired. The placeholder HITL path also times out closed.
 _HITL_ENABLED = os.environ.get("PRAMAGENT_HOOK_ENABLE_HITL", "0") == "1"
 _HITL_TIMEOUT_S = float(os.environ.get("PRAMAGENT_HOOK_HITL_TIMEOUT_S", "8"))
 
-# Self-contained proof of invocation, independent of Gemini CLI's own
-# verbose/debug output. Every call to this script appends one line here.
+# Keep a local invocation log independent of host debug output.
 _LOG_PATH = os.path.join(_REPO_ROOT, "pramagent_gemini_hook.log")
 
 
@@ -134,15 +111,8 @@ def _decision_output(decision: str, reason: str) -> dict:
     return {"decision": decision, "reason": reason}
 
 
-# -- Policy registration -------------------------------------------------
-# Tool names and parameter schemas are Gemini CLI's own built-in tool
-# surface (confirmed against the google-gemini/gemini-cli docs/tools
-# reference), not Claude Code's tool names -- registering the wrong names
-# would mean every real Gemini CLI tool call gets denied as "not
-# registered" by ToolGuardLayer's fail-closed default. Anything not
-# registered here is still BLOCKed by default, deliberately: an
-# unrecognized tool_name (e.g. a new host or connector tool) should not
-# silently pass.
+# Policy registration
+# These names follow Gemini CLI's built-in tool surface. Unknown names deny.
 _GUARD = ToolGuardLayer()
 
 _GUARD.register(ToolPolicy(
@@ -218,10 +188,7 @@ def evaluate_event(event: dict) -> dict:
     tool_input = event.get("tool_input", {}) or {}
     session_id = event.get("session_id", "local")
 
-    # Control-plane self-protection (see scripts/claude_code_hook.py for the
-    # rationale). Refuse any tool call that would write the hook's own config or
-    # admin audit DB, checked BEFORE the master switch so a tampering write
-    # cannot turn the surface off and slip through.
+    # Protect control-plane files before consulting the switch they contain.
     protected_hit = _targets_protected_path(tool_name, tool_input)
     if protected_hit:
         return _decision_output(
@@ -230,17 +197,16 @@ def evaluate_event(event: dict) -> dict:
             f"the hook control plane ({protected_hit}). Change hook settings "
             f"through the admin console instead.")
 
-    # Admin master switch (fail-safe; see pramagent.hook_state). Disabled ->
-    # allow-no-comment. The call is still recorded by main()'s audit append.
+    # Missing or invalid state keeps enforcement enabled.
     if not _hook_enabled("gemini"):
         return {}
 
-    # Per-tool master switch from the admin console: a disabled tool denies.
+    # A global tool disable takes precedence over its policy.
     if not _tool_enabled(tool_name):
         return _decision_output(
             "deny", f"Pramagent hook admin: tool '{tool_name}' is disabled")
 
-    # Per-tenant permission from the admin console.
+    # Managed tenants are constrained by their allow and deny lists.
     if not _tenant_tool_allowed(_TENANT_ID, tool_name):
         return _decision_output(
             "deny",
@@ -284,11 +250,8 @@ def evaluate_event(event: dict) -> dict:
             gemini_decision = "allow" if status == HITLStatus.APPROVED else "deny"
             reason = f"Pramagent HITL ({status.value}): {decision.reason}"
             return _decision_output(gemini_decision, reason)
-        # No "ask" outcome exists in Gemini CLI's BeforeTool contract, so
-        # an ESCALATE-worthy call fails closed to deny rather than
-        # silently becoming an allow. Set PRAMAGENT_HOOK_ENABLE_HITL=1 and
-        # wire a real approver/store to route these through HITLLayer
-        # instead of a blanket deny.
+        # Gemini has no interactive "ask" result, so unresolved escalation
+        # must deny.
         return _decision_output(
             "deny",
             f"Pramagent ToolGuard (escalate, no HITL wired): {decision.reason}",
@@ -328,18 +291,14 @@ def _record_audit_entry(audit: SQLiteStore, event: dict, output: dict) -> None:
 def main() -> None:
     raw = sys.stdin.read()
     try:
-        # Constructed here, inside the try block, not at module import
-        # time: see the comment above _AUDIT_DB_PATH for why.
+        # Store creation belongs inside the fail-closed boundary.
         audit = SQLiteStore(path=_AUDIT_DB_PATH)
         event = json.loads(raw) if raw else {}
         tool_name = event.get("tool_name", "?")
         output = evaluate_event(event)
         _record_audit_entry(audit, event, output)
     except Exception as exc:  # noqa: BLE001 -- deliberately broad: any
-        # failure here (bad JSON, a layer raising, the audit store
-        # failing to open or write) must hard-block, not fall through to
-        # Gemini CLI's non-zero/non-2-exit-code-is-a-non-fatal-warning-
-        # proceed-anyway behavior. See point (2) in the module docstring.
+        # Exit 2 is Gemini's hard deny; other failures may be treated as warnings.
         sys.stderr.write(f"pramagent gemini_cli_hook failed closed: {exc}\n")
         _log(tool_name="<error>", decision_summary=f"deny:hook_error:{exc}")
         sys.exit(2)

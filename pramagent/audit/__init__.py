@@ -77,10 +77,10 @@ def canonical_hash(payload: dict, prev_hash: str, signing_key: str = "") -> str:
     return hashlib.sha256(material_bytes).hexdigest()
 
 
-# ── signing-key rotation (G1) ──────────────────────────────────────────────
+# Signing-key rotation
 # The audit chain HMAC is keyed by PRAMAGENT_SIGNING_KEY. Naively rotating that
 # key breaks verify_chain() for every pre-rotation entry, and key compromise is
-# a SEV-1 in the incident runbook with no remediation step. SigningKeyRing
+# a critical incident with no remediation step. SigningKeyRing
 # mirrors JWTManager's kid-based rotation: multiple named keys, one active for
 # new writes, all retained for verification. Each new chain payload carries the
 # active kid ("_kid"), so verification selects the key that actually signed
@@ -157,10 +157,8 @@ def chain_link_hash_ok(payload: dict, prev_hash: str, stored_hash: str,
 
 # Chain-payload fields that can carry user content and must be tombstoned on
 # GDPR Art. 17 erasure. pii_redactions holds only pattern labels, never values.
-# `reason` is included because a ToolGuard schema/validation reason can echo a
-# failing argument or output value; the write path now redacts those at source
-# (B1, see validate_schema(redact_values=True)), but tombstoning here also
-# covers the legacy non-jsonschema validator path and any pre-fix entries.
+# Reasons may contain values from legacy validators, so erasure tombstones them
+# alongside prompt and output fields.
 GDPR_TOMBSTONE_FIELDS = ("input_text", "output_text", "would_block_reason", "reason")
 
 
@@ -240,7 +238,7 @@ class HashChainBackend:
         self._signing_key = signing_key
         # Appends may arrive from worker threads (core offloads persistence
         # via asyncio.to_thread); deriving prev and inserting must be one
-        # critical section or concurrent writers fork the chain (P1-5/T2-4).
+        # critical section or concurrent writers fork the chain.
         self._lock = threading.Lock()
 
     @property
@@ -406,7 +404,7 @@ class HyperledgerBackend:
         # (anchoring is expected), a submission failure raises by default
         # rather than silently degrading to a local-only pseudo-anchor —
         # otherwise a caller who believes anchoring is active has no signal
-        # that it silently stopped (ISSUE-10). Pass fail_open=True only for
+        # that it silently stopped . Pass fail_open=True only for
         # dev/demo deployments that knowingly accept local chain-only
         # evidence during Fabric outages.
         self.fail_open = fail_open

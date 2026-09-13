@@ -66,7 +66,7 @@ class EncryptedSQLiteStore:
         # HMAC key for canonical_hash (PRAMAGENT_SIGNING_KEY); see its
         # docstring for why an unkeyed chain alone isn't tamper-evident
         # against an actor with raw DB write access. signing_keys/active_kid
-        # enable kid-versioned rotation (G1).
+        # Enable kid-versioned rotation.
         from .audit import SigningKeyRing
         self._keyring = SigningKeyRing.from_config(
             signing_key=signing_key, signing_keys=signing_keys,
@@ -90,21 +90,21 @@ class EncryptedSQLiteStore:
 
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        # Same shared-connection serialization as SQLiteStore (P1-5/T2-4).
+        # Same shared-connection serialization as SQLiteStore.
         self._lock = threading.RLock()
         self._create_tables()
         self._head = self._load_head()
         # prev of the most recent append — core records it on the trace
         self.last_prev_hash = GENESIS
 
-    # ── encryption helpers ────────────────────────────────────────────────
+    # encryption helpers
     def _encrypt(self, data: str) -> bytes:
         return self._fernet.encrypt(data.encode("utf-8"))
 
     def _decrypt(self, blob: bytes) -> str:
         return self._fernet.decrypt(blob).decode("utf-8")
 
-    # ── schema ────────────────────────────────────────────────────────────
+    # schema
     def _create_tables(self) -> None:
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS traces (
@@ -130,7 +130,7 @@ class EncryptedSQLiteStore:
     def close(self) -> None:
         self._conn.close()
 
-    # ── TraceStore interface ──────────────────────────────────────────────
+    # TraceStore interface
     def save(self, trace: TraceEvent) -> None:
         blob = self._encrypt(json.dumps(trace.to_dict(), sort_keys=True))
         self._conn.execute(
@@ -197,7 +197,7 @@ class EncryptedSQLiteStore:
     def delete_for_tenant(self, tenant_id: str) -> int:
         """GDPR erasure for one tenant: deletes the trace rows AND redacts the
         tenant's payloads inside audit_chain — identical semantics to
-        SQLiteStore (P1-2/T3-1). Encryption under a single global key is
+        SQLiteStore . Encryption under a single global key is
         retention, not erasure; the PII-bearing fields must be tombstoned."""
         with self._lock:
             cur = self._conn.execute(
@@ -261,7 +261,7 @@ class EncryptedSQLiteStore:
                 self._conn.commit()
             return redacted
 
-    # ── AuditBackend interface ────────────────────────────────────────────
+    # AuditBackend interface
     @property
     def head(self) -> str:
         return self._head
@@ -269,7 +269,7 @@ class EncryptedSQLiteStore:
     def append(self, payload: dict, prev_hash: str | None = None) -> AuditAppendResult:
         """Append one chain link. `prev` is re-read from the DB inside
         BEGIN IMMEDIATE under the write lock — same fork-proof linkage
-        derivation as SQLiteStore (P1-5/T2-4); the prev_hash parameter is
+        derivation as SQLiteStore ; the prev_hash parameter is
         retained for interface compatibility and ignored."""
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")   # cross-process write lock
@@ -350,7 +350,7 @@ class EncryptedSQLiteStore:
         return True
 
     def count(self, tenant_id: str | None = None) -> int:
-        """Trace count via SQL COUNT — never a full-table load (P2-14)."""
+        """Trace count via SQL COUNT — never a full-table load ."""
         with self._lock:
             if tenant_id:
                 row = self._conn.execute(

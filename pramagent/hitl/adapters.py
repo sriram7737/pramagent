@@ -55,8 +55,7 @@ class AdapterError(RuntimeError):
     pass
 
 
-# ───────────────────────────── webhook approver ────────────────────────────
-
+# webhook approver
 class WebhookApprover:
     """POST the request to a webhook; optionally poll for the decision.
 
@@ -151,8 +150,7 @@ class WebhookApprover:
         return None  # timeout → idle
 
 
-# ───────────────────────────── email notifier ──────────────────────────────
-
+# email notifier
 @dataclass
 class SMTPConfig:
     host: str
@@ -207,8 +205,7 @@ class EmailNotifier:
         return None  # notify-only
 
 
-# ──────────────────────────── pagerduty notifier ───────────────────────────
-
+# pagerduty notifier
 class PagerDutyNotifier:
     """Trigger a PagerDuty Events API v2 alert. Notify-only (returns None)."""
 
@@ -253,8 +250,7 @@ class PagerDutyNotifier:
         return None  # notify-only
 
 
-# ──────────────────────────── composite approver ───────────────────────────
-
+# composite approver
 class ServiceNowNotifier:
     """Create a ServiceNow record for an approval escalation.
 

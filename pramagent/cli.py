@@ -66,7 +66,7 @@ def cmd_init(args) -> int:
         """)
         # owner-only permissions: the file holds freshly generated secrets,
         # so it must never be created world-readable via the default umask
-        # (P3-9). No-op on Windows, where mode bits are not enforced.
+        # . No-op on Windows, where mode bits are not enforced.
         fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(env_content)
@@ -240,9 +240,9 @@ def _store_from_env():
     from .secrets import resolve_secret, resolve_signing_key_ring
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
-    # HIGH-2 + finding 7.1/7.2: resolve signing/encryption keys through the SAME
-    # indirection layer the API's build_default_armor() uses, and honor the
-    # PRAMAGENT_SIGNING_KEYS rotation ring. A single-key path here reported a
+    # Resolve signing and encryption keys through the same indirection layer
+    # as the API, including the PRAMAGENT_SIGNING_KEYS rotation ring. A
+    # single-key path here would report a
     # correctly-rotated chain (rows tagged with a newer kid) as tampered, so
     # `audit verify`/`audit-verify-watch`/`audit-export` fired false alarms.
     key_cfg = resolve_signing_key_ring()
@@ -302,10 +302,9 @@ def cmd_retention_prune(args) -> int:
 
 
 def cmd_audit_export(args) -> int:
-    """CLI-reachable wrapper for PostgresStore.export_audit_jsonl(), which
-    previously had no subcommand and wasn't referenced in any doc (ISSUE-12).
+    """Export stored trace rows as JSONL.
 
-    See docs/INCIDENT_RESPONSE_RUNBOOK.md for how to correlate an exported
+    See docs/INCIDENT_RESPONSE_RUNBOOK.md to correlate an exported
     trace with who approved a HITL action and which API key made the call
     — TraceEvent has no actor/approver field of its own, so that's a
     three-way join against the HITL queue's decided_by and
@@ -386,12 +385,9 @@ def _send_audit_alert(broken: list, *, source: str) -> None:
 
 
 def cmd_audit_verify_watch(args) -> int:
-    """Run store.verify() once (or on a loop) and alert on tamper detection.
+    """Run ``store.verify()`` once or continuously and alert on failures.
 
-    Closes the "detection is entirely manual" gap: previously nothing called
-    verify_chain() except a human hitting /v1/audit/verify or the CLI by
-    hand. Point an external scheduler (cron, k8s CronJob) or --interval-s at
-    this command to get automated detection with alerting.
+    Use ``--interval-s`` or an external scheduler for automated monitoring.
     """
     import time
 

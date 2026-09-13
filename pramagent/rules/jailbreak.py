@@ -22,7 +22,7 @@ from ..types import Verdict
 # Each tuple is (rule_id, pattern, detail).
 # Patterns are case-insensitive (Rule compiles with re.IGNORECASE).
 _PATTERNS: list[tuple[str, str, str]] = [
-    # ── ignore-prior-instructions family ────────────────────────────────
+    # ignore-prior-instructions family
     ("jb_ignore_previous",
      r"ignore\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions|prompts|messages|directives|rules)",
      "JailbreakBench/HarmBench: ignore-previous-instructions"),
@@ -36,7 +36,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"<\s*(?:system|admin|root)\s*>\s*[^<]{0,200}(?:override|reset|new\s+rules)",
      "OWASP LLM01: fake-system-tag override"),
 
-    # ── persona / jailbreak named modes ─────────────────────────────────
+    # persona / jailbreak named modes
     ("jb_dan",
      r"\b(?:do\s+anything\s+now|d\.?a\.?n\.?\s+mode|act\s+as\s+dan)\b",
      "JailbreakBench: DAN persona"),
@@ -56,7 +56,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"\bstan\s+mode\b|strive\s+to\s+avoid\s+norms",
      "JailbreakBench: STAN jailbreak"),
 
-    # ── "as <role>" social engineering ──────────────────────────────────
+    # "as <role>" social engineering
     ("jb_as_admin",
      r"\bas\s+(?:an?\s+)?(?:admin|administrator|developer|engineer|moderator|owner|superuser|sysadmin)\b.{0,120}(?:disable|turn\s+off|bypass|ignore)",
      "Garak: privilege-escalation framing"),
@@ -64,7 +64,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"(?:my\s+)?(?:grand(?:ma|mother)|grandpa|grandfather)\s+(?:used\s+to|would|always)\s+(?:tell|read|sing)",
      "Reddit r/ChatGPT: grandma-exploit (CVE-style)"),
 
-    # ── encoding / obfuscation prompts ──────────────────────────────────
+    # encoding / obfuscation prompts
     ("jb_base64_decode",
      r"(?:decode|interpret|run)\s+(?:the\s+following|this)\s+(?:base64|hex|rot13|binary|ascii)\b",
      "HarmBench: encoded-payload bypass"),
@@ -75,7 +75,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"[​‌‍⁠﻿]{3,}",
      "OWASP LLM01: zero-width injection"),
 
-    # ── "for educational purposes" framings ─────────────────────────────
+    # "for educational purposes" framings
     ("jb_educational",
      r"(?:purely\s+)?(?:for\s+)?(?:educational|academic|research|hypothetical)\s+purposes?\s+(?:only|,)?.{0,80}(?:how\s+(?:to|do)|provide|explain|step.{0,5}by.{0,5}step)",
      "HarmBench: educational framing"),
@@ -86,7 +86,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"\bthought\s+experiment\b.{0,80}(?:how\s+(?:to|would)|step.{0,5}by.{0,5}step)",
      "Garak: hypothetical framing"),
 
-    # ── direct policy-bypass keywords ───────────────────────────────────
+    # direct policy-bypass keywords
     ("jb_no_warnings",
      r"(?:do\s+not|don'?t|never)\s+(?:include|add|give)\s+(?:any\s+)?(?:warnings?|disclaimers?|caveats?|safety\s+notes?)",
      "JailbreakBench: warning-suppression"),
@@ -100,7 +100,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"\bopposite\s+day\b|reverse\s+(?:all\s+)?(?:your\s+)?(?:rules|instructions)",
      "JailbreakBench: opposite-day"),
 
-    # ── prompt-injection via tool / document content ────────────────────
+    # prompt-injection via tool / document content
     ("jb_indirect_injection_marker",
      r"(?:IMPORTANT|URGENT|SYSTEM\s+NOTE)[: ]+\s*(?:assistant|model|ai)\s*[:,]\s*(?:ignore|disregard|new\s+instructions)",
      "OWASP LLM01: indirect prompt injection marker"),
@@ -111,7 +111,7 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"(?:list|show|print|reveal|dump|leak)\s+(?:all|every|the)\s+(?:system\s+prompt|hidden\s+instructions|api\s+keys|secrets|env(?:ironment)?\s+vars?)",
      "OWASP LLM06: sensitive-info disclosure"),
 
-    # ── chain-of-thought extraction ─────────────────────────────────────
+    # chain-of-thought extraction
     ("jb_reveal_system_prompt",
      r"(?:repeat|reveal|show|print)\s+(?:the|your)\s+(?:initial|system|original|first)\s+(?:prompt|instructions|message)",
      "OWASP LLM06: system-prompt extraction"),
@@ -119,12 +119,11 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"(?:repeat|echo|print)\s+(?:everything|all\s+the\s+text)\s+(?:above|before\s+this|so\s+far)",
      "OWASP LLM06: prompt-leak"),
 
-    # ── DAN-style "two responses" ───────────────────────────────────────
+    # DAN-style "two responses"
     ("jb_two_responses",
      r"(?:give|provide|respond\s+with)\s+two\s+(?:responses|answers|versions).{0,80}(?:normal|standard|safe).{0,40}(?:jailbroken|uncensored|dan|unrestricted)",
      "JailbreakBench: dual-output DAN"),
-
-    # ── known dangerous capability requests (broad signal, often ESCALATE) ─
+    # Dangerous capability requests are broad escalation signals.
     ("jb_make_weapon",
      r"\bhow\s+(?:to|do\s+i|can\s+i)\s+(?:make|build|synthesi[sz]e|construct)\s+(?:a\s+)?(?:bomb|explosive|nerve\s+agent|bio(?:logical)?\s+weapon|nuclear\s+(?:bomb|device))",
      "HarmBench: harmful-capability request"),
@@ -135,17 +134,17 @@ _PATTERNS: list[tuple[str, str, str]] = [
      r"\bsynthesi[sz]e\s+(?:methamphetamine|fentanyl|cocaine|heroin|lsd|mdma)\b",
      "HarmBench: drug-synthesis request"),
 
-    # ── token-smuggling / homoglyph ─────────────────────────────────────
+    # token-smuggling / homoglyph
     ("jb_homoglyph_ignore",
      r"[іі]gnore|іgnore|ignоre|іgnоre",   # cyrillic-i / cyrillic-o substitutions
      "Garak: homoglyph substitution"),
 
-    # ── refusal-test probes ─────────────────────────────────────────────
+    # refusal-test probes
     ("jb_refusal_test",
      r"will\s+you\s+(?:refuse|decline|say\s+no)\s+if\s+i\s+ask",
      "JailbreakBench: refusal-probe"),
 
-    # ── plain "ignore safety" ───────────────────────────────────────────
+    # plain "ignore safety"
     ("jb_ignore_safety",
      r"(?:ignore|bypass|disable|turn\s+off)\s+(?:your\s+)?(?:safety|content|moderation)\s+(?:guidelines|filter|policy|rules)",
      "OWASP LLM01: safety-rule bypass"),

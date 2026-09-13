@@ -37,8 +37,7 @@ def test_high_precision_patterns_always_redact():
     assert "jane@x.com" not in out and "123-45-6789" not in out
 
 
-# ── SEC-2026-06-15 H-1: HIPAA MRN + insurance member ID ────────────────────
-
+# HIPAA MRN and insurance member ID
 def test_mrn_redacted_anywhere():
     c = ComplianceLayer()
     for text in ("Patient MRN-447823 admitted today.",
@@ -86,8 +85,7 @@ def test_multiple_emails_all_redacted():
     assert "Contact" in out and "today." in out
 
 
-# ── SEC-2026-06-11-01: regex CPU DoS regressions ───────────────────────────
-
+# regex CPU DoS regressions
 def test_scrub_long_no_match_completes_fast():
     """Long alphabetic input previously triggered superlinear backtracking in
     the email pattern (16 KiB ≈ 1.3 s; 256 KiB never finished). The bounded

@@ -84,12 +84,12 @@ from ..types import LayerEvent, Verdict
 from ..usage import UsageTracker
 
 
-# ──────────────────────────── request / response ───────────────────────────
+# request / response
 class RunRequest(BaseModel):
     # max_length rejects oversized bodies with 422 BEFORE they are handed to
     # the pipeline — the 64 KiB isolation cap runs after FastAPI has already
     # parsed the JSON into memory, so it cannot defend the parse itself
-    # (P2-4/T1-8). Pair with a reverse-proxy body cap (see DEPLOYMENT.md).
+    # . Pair with a reverse-proxy body cap (see DEPLOYMENT.md).
     prompt: str = Field(
         ...,
         min_length=1,
@@ -209,7 +209,7 @@ class DemoRequestAccessRequest(BaseModel):
     model_config = {"extra": "ignore"}
 
 
-# Typed response models for the stable surfaces (P2-10): shape changes can
+# Typed response models for the stable surfaces : shape changes can
 # no longer ship silently, and the OpenAPI schema documents real fields.
 
 class RuleResultModel(BaseModel):
@@ -283,7 +283,7 @@ class PruneResponse(BaseModel):
     tenant_id: str
 
 
-# ─────────────────────────── default configuration ─────────────────────────
+# default configuration
 NVIDIA_DEMO_MODELS: dict[str, str] = {
     "mistralai/mistral-small-4-119b-2603": "Mistral Small 4",
     "meta/llama-3.3-70b-instruct": "Llama 3.3 70B",
@@ -440,7 +440,7 @@ def _unauthenticated_api_allowed() -> bool:
     registry (dev/demo) and that opt-in has not expired.
 
     This is the single gate consulted by BOTH startup enforcement and the
-    request-path scope check (finding 1.2), so an empty registry can never
+    request-path scope check , so an empty registry can never
     silently fall through to an unauthenticated, no-scope request just because
     the best-effort public-runtime heuristic failed to flag the deployment."""
     return (
@@ -456,9 +456,10 @@ def _enforce_authenticated_public_api(registry: APIKeyRegistry) -> None:
         if _looks_like_public_runtime():
             log.warning(
                 "starting with PRAMAGENT_ALLOW_UNAUTHENTICATED_API=1 on what "
-                "looks like a public-facing runtime — every request is "
-                "trusted at face value (client-supplied tenant_id, no scope "
-                "enforcement). Set PRAMAGENT_API_KEYS/PRAMAGENT_API_KEY_DSN "
+                "looks like a public-facing runtime — requests have no "
+                "authenticated identity or scope enforcement. No-auth mode "
+                "uses the shared default tenant unless its strict default is "
+                "explicitly disabled. Set PRAMAGENT_API_KEYS/PRAMAGENT_API_KEY_DSN "
                 "for anything beyond a demo, and consider "
                 "PRAMAGENT_ALLOW_UNAUTHENTICATED_API_UNTIL to time-box this."
             )
@@ -472,9 +473,8 @@ def _enforce_authenticated_public_api(registry: APIKeyRegistry) -> None:
         )
     # The heuristic above is best-effort only (see _looks_like_public_runtime
     # docstring): it cannot see a bare container run with a published port
-    # and no distinguishing env var, for one. A False result here is not
-    # proof this process is unreachable from outside this machine, so this
-    # case must never be silent even though it does not raise.
+    # and no distinguishing environment variable. A false result does not
+    # establish that the process is private, so always warn.
     log.warning(
         "starting with no PRAMAGENT_API_KEYS/PRAMAGENT_API_KEY_DSN configured "
         "and no public-runtime signal detected, every request will be "
@@ -530,6 +530,26 @@ def _peer_is_trusted_proxy(request: Request) -> bool:
     except ValueError:
         return False
     return any(addr in network for network in networks)
+
+
+def _forwarded_client_ip(peer_host: str, forwarded: str) -> str:
+    """Resolve X-Forwarded-For only when the immediate peer is trusted."""
+    networks = _trusted_proxy_networks()
+    try:
+        peer = ipaddress.ip_address(peer_host)
+    except ValueError:
+        return peer_host or "anon"
+    if not networks or not any(peer in network for network in networks):
+        return str(peer)
+    hops = [part.strip() for part in forwarded.split(",") if part.strip()]
+    for raw_hop in reversed(hops):
+        try:
+            hop = ipaddress.ip_address(raw_hop)
+        except ValueError:
+            return str(peer)
+        if not any(hop in network for network in networks):
+            return str(hop)
+    return str(peer)
 
 
 def _request_is_https(request: Request) -> bool:
@@ -699,8 +719,7 @@ class DemoProductSignals:
         except Exception as exc:
             self._postgres_ready = False
             self._postgres_error = str(exc)
-            # LOW-2: align with the ISSUE-5 posture — log the exception type,
-            # not a full traceback that could echo row/query content.
+            # Keep row and query content out of application logs.
             log.warning("demo product signal Postgres unavailable; using memory: %s",
                         exc.__class__.__name__)
 
@@ -733,7 +752,7 @@ class DemoProductSignals:
             self._postgres_ready = False
             self._postgres_error = str(exc)
             log.warning("demo product signal event persistence failed: %s",
-                        exc.__class__.__name__)  # LOW-2: no traceback (ISSUE-5 posture)
+                        exc.__class__.__name__)
 
     def _persist_lead(self, lead: dict) -> None:
         if not self._postgres_ready:
@@ -757,7 +776,7 @@ class DemoProductSignals:
             self._postgres_ready = False
             self._postgres_error = str(exc)
             log.warning("demo product signal lead persistence failed: %s",
-                        exc.__class__.__name__)  # LOW-2: no traceback (ISSUE-5 posture)
+                        exc.__class__.__name__)
 
     def record_run(
         self,
@@ -985,7 +1004,7 @@ class DemoProductSignals:
             self._postgres_ready = False
             self._postgres_error = str(exc)
             log.warning("demo product signal Postgres read failed: %s",
-                        exc.__class__.__name__)  # LOW-2: no traceback (ISSUE-5 posture)
+                        exc.__class__.__name__)
             return None
 
     def snapshot(self, *, limit: int = 100) -> dict:
@@ -1003,12 +1022,12 @@ def build_default_armor() -> Pramagent:
 
     Refuses to start without one of the three so the reference deployment can
     never silently boot on a MemoryStore that loses every trace on restart
-    (P0-1 / T1-12)."""
+    ."""
     from ..secrets import resolve_secret, resolve_signing_key_ring
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
     encryption_key = resolve_secret("PRAMAGENT_ENCRYPTION_KEY").strip()
-    # Finding 7.1/7.2: resolve the (possibly rotated) signing-key ring from env
+    # resolve the (possibly rotated) signing-key ring from env
     # — PRAMAGENT_SIGNING_KEYS for a versioned ring, else PRAMAGENT_SIGNING_KEY.
     key_cfg = resolve_signing_key_ring()
     has_signing_key = bool(key_cfg["signing_key"] or key_cfg["signing_keys"])
@@ -1016,7 +1035,7 @@ def build_default_armor() -> Pramagent:
         _env_true("PRAMAGENT_REQUIRE_ENCRYPTED_STORE")
         or _phi_mode_enabled()
     )
-    # Finding 2.1: a persistent audit chain with no signing key is unkeyed
+    # a persistent audit chain with no signing key is unkeyed
     # plain SHA-256 — internally consistent but silently re-forgeable by anyone
     # with database write access (it detects accidental corruption only, not
     # tampering). Refuse to boot such a store unless an operator explicitly
@@ -1036,8 +1055,7 @@ def build_default_armor() -> Pramagent:
         # PRAMAGENT_ENCRYPTION_KEY (application-level Fernet encryption of
         # the payload column — verifiable, not an attestation), or the
         # PRAMAGENT_POSTGRES_ENCRYPTION_AT_REST flag (trusting
-        # provider-managed disk/TDE encryption instead). Either is accepted;
-        # PRAMAGENT_ENCRYPTION_KEY used to be silently ignored for Postgres.
+        # provider-managed disk/TDE encryption instead). Either is accepted.
         if (
             require_encrypted_store
             and not encryption_key
@@ -1231,7 +1249,7 @@ def build_slack_approver_from_env() -> Optional[SlackHITLApprover]:
 def build_tool_guard_backend_from_env():
     """Use Redis for ToolGuard distributed history when configured.
 
-    Finding 5.2: without a shared backend, ToolGuard's per-session call-count
+    without a shared backend, ToolGuard's per-session call-count
     and dangerous-chain-depth limits are tracked per-process, so across N
     workers the effective limits are multiplied by ~N. By default a missing or
     unreachable Redis degrades to per-process counting with a warning. Set
@@ -1336,7 +1354,7 @@ def build_default_tool_guard(backend=None) -> ToolGuardLayer:
     ], backend=backend, chain_ttl_s=int(os.environ.get("PRAMAGENT_TOOL_GUARD_TTL_S", "300")))
 
 
-# ───────────────────────────────── app factory ─────────────────────────────
+# app factory
 def create_app(armor: Optional[Pramagent] = None,
                registry: Optional[APIKeyRegistry] = None,
                tool_guard: Optional[ToolGuardLayer] = None,
@@ -1348,8 +1366,9 @@ def create_app(armor: Optional[Pramagent] = None,
         every /v1 endpoint requires `Authorization: Bearer <key>`. The tenant
         is taken from the key — request bodies that assert a different tenant
         are rejected.
-      * If the registry is empty, the API runs unauthenticated and the tenant
-        is read from the request body (single-tenant or trusted-network mode).
+      * If the registry is empty, the API runs unauthenticated in the shared
+        "default" tenant. Client-selected tenants require explicitly disabling
+        strict single-tenant mode and are intended only for local tests.
     """
     from contextlib import asynccontextmanager
 
@@ -1358,8 +1377,8 @@ def create_app(armor: Optional[Pramagent] = None,
     @asynccontextmanager
     async def _lifespan(app_):
         # lifespan context manager replaces the deprecated on_event hooks
-        # (P3-3); shutdown closes the stores so SQLite WAL checkpoints and
-        # Postgres connections are released cleanly on SIGTERM (P2-15).
+        # ; shutdown closes the stores so SQLite WAL checkpoints and
+        # Postgres connections are released cleanly on SIGTERM.
         yield
         log.info("shutdown: closing stores")
         armor_obj = app_.state.armor
@@ -1392,7 +1411,7 @@ def create_app(armor: Optional[Pramagent] = None,
             "Access-Control-Max-Age": "600",
         }
 
-    # ── CORS ──────────────────────────────────────────────────────────────
+    # CORS
     allowed_origins = [
         o.strip()
         for o in os.environ.get("PRAMAGENT_CORS_ORIGINS", "").split(",")
@@ -1409,9 +1428,9 @@ def create_app(armor: Optional[Pramagent] = None,
         expose_headers=["X-Request-Id", "Retry-After"],
     )
 
-    # ── Security headers + structured request logging ─────────────────────
-    # CSP for /demo: script-src/style-src pinned to sha256 hashes of the
-    # inline <script>/<style> blocks actually shipped in demo_page.html.
+    # Security headers + structured request logging
+    # CSP for /demo: script-src/style-src pins the inline blocks in
+    # demo_page.html by SHA-256 hash.
     # If that HTML's inline script or style content changes, regenerate
     # these hashes or the browser will block them.
     _DEMO_CSP = (
@@ -1424,12 +1443,9 @@ def create_app(armor: Optional[Pramagent] = None,
         "script-src 'self' 'sha256-tOs3xBGIOdc/4HwSnPzLdiUeM4VoPRCpvteaM3FHjwM='; "
         "connect-src 'self'"
     )
-    # Start in report-only mode: logs violations via the browser console
-    # without blocking anything. Flip the header name to
-    # "Content-Security-Policy" once you've confirmed a day or two of clean
-    # traffic with no console violations.
+    # Enforce by default. Report-only remains an explicit diagnostic option.
     _CSP_HEADER_NAME = os.environ.get(
-        "PRAMAGENT_CSP_HEADER_NAME", "Content-Security-Policy-Report-Only"
+        "PRAMAGENT_CSP_HEADER_NAME", "Content-Security-Policy"
     )
 
     @app.middleware("http")
@@ -1510,7 +1526,7 @@ def create_app(armor: Optional[Pramagent] = None,
     app.state.usage = usage_tracker or UsageTracker.from_env()
     # A configured JWT secret must never be a published placeholder: the repo's
     # own .env.example values would let anyone forge tenant tokens offline
-    # (P0-2 / T1-1). Unset → per-process random fallback (token issuance is
+    # . Unset → per-process random fallback (token issuance is
     # separately refused in that mode, see issue_token).
     from ..secrets import resolve_secret
     jwt_secret = resolve_secret("PRAMAGENT_JWT_SECRET")
@@ -1565,11 +1581,8 @@ def create_app(armor: Optional[Pramagent] = None,
                 "PRAMAGENT_API_KEY_MAX_AGE_DAYS must be a positive number of days"
             )
 
-    # P3-1: the old `request: Request = None` annotation lied about
-    # nullability. FastAPI special-cases the bare Request annotation (it is
-    # not a Pydantic field, so Optional[...] is rejected) and always injects
-    # the request for dependencies — the truthful signature is a required,
-    # non-Optional Request with no default.
+    # FastAPI always injects its special ``Request`` parameter. Keep it
+    # non-optional and before parameters with defaults.
     def _enforce_key_rotation(record: AuthRecord) -> None:
         """Reject API keys past PRAMAGENT_API_KEY_MAX_AGE_DAYS, when set.
 
@@ -1642,7 +1655,7 @@ def create_app(armor: Optional[Pramagent] = None,
         ) -> str:
             """Resolve tenant, enforce scope, and apply tenant/IP rate limits."""
             if len(app.state.registry) == 0:
-                # Finding 1.2 — fail closed in the request path, not only at
+                # — fail closed in the request path, not only at
                 # startup. Without an explicit (unexpired) opt-in, an empty
                 # registry means "no identity available", which must reject
                 # rather than fall through to an empty-tenant, no-scope pass.
@@ -1677,37 +1690,22 @@ def create_app(armor: Optional[Pramagent] = None,
     require_write_tenant = _scope_dependency(WRITE_SCOPE)
     require_audit_tenant = _scope_dependency((READ_SCOPE, AUDIT_SCOPE))
     require_admin_tenant = _scope_dependency(ADMIN_SCOPE)
-    # A2: approving/denying a HITL request needs a scope distinct from the
-    # write scope used to request one, so a single credential cannot both
-    # propose and approve its own consequential action.
+    # Separate approval from request creation to preserve separation of duties.
     require_approve_tenant = _scope_dependency(APPROVE_SCOPE)
 
     def _resolve_tenant(tenant: str, provided_tenant_id: str = "") -> str:
-        """Resolve a concrete effective tenant for ownership/scoping checks.
+        """Resolve the non-empty tenant used for ownership checks.
 
-        When auth is enabled, `tenant` (from the API key) is authoritative
-        and always wins. When auth is disabled (empty registry / dev mode),
-        `tenant` is "" and the caller-supplied tenant_id selects which
-        logical tenant bucket to use, defaulting to "default".
-
-        Either way the return value is a concrete, non-empty string. Callers
-        must run their ownership/equality check against it unconditionally
-        (never `if tenant: <enforce>`) — an empty resolved tenant used to be
-        treated as "no tenant, skip the check" instead of "the tenant is
-        the empty string", which let unauthenticated callers see and act on
-        every other tenant's data (ISSUE-1/7).
-
-        Finding 4.1: in no-auth mode (`tenant == ""`) the caller is
-        unauthenticated, so a client-chosen tenant_id is not a trustworthy
-        identity — no-auth mode is single-tenant by design. When
-        PRAMAGENT_STRICT_SINGLE_TENANT is set, any tenant_id other than the
-        shared "default" bucket is refused rather than silently honored, so an
-        operator can hard-enforce the single-tenant contract. It is opt-in so
-        that local dev/test can still exercise multi-tenant behavior without
-        provisioning keys; configure API-key auth for real multi-tenant use."""
+        Authenticated tenants are authoritative. No-auth mode defaults to one
+        shared tenant and rejects client-selected tenants unless strict mode is
+        explicitly disabled for local testing.
+        """
         if not tenant:
+            strict_single_tenant = os.environ.get(
+                "PRAMAGENT_STRICT_SINGLE_TENANT", "true"
+            ).strip().lower() not in {"0", "false", "no", "off"}
             if (provided_tenant_id and provided_tenant_id != "default"
-                    and _env_true("PRAMAGENT_STRICT_SINGLE_TENANT")):
+                    and strict_single_tenant):
                 raise HTTPException(
                     status_code=403,
                     detail=(
@@ -1725,12 +1723,9 @@ def create_app(armor: Optional[Pramagent] = None,
         """Fetch a trace, enforcing tenant ownership.
 
         Routes through _resolve_tenant so the fetch is ALWAYS scoped to a
-        concrete tenant — the caller's tenant when auth is enabled, the
-        caller-supplied bucket (default "default") in no-auth mode. The
-        previous `tenant if tenant else None` left the get() unscoped
-        whenever auth was disabled, which returned any tenant's full
-        prompt/output (HIGH-1, same bug class as ISSUE-1/7 on more sensitive
-        data)."""
+        Resolve a concrete tenant before reading the store. Passing ``None``
+        would turn this into an unscoped lookup.
+        """
         tenant_filter = _resolve_tenant(tenant, provided_tenant_id)
         try:
             return app.state.armor.store.get(call_id, tenant_id=tenant_filter)
@@ -1800,9 +1795,7 @@ def create_app(armor: Optional[Pramagent] = None,
                 raise
 
         store = app.state.armor.store
-        # Always a concrete tenant (the caller's, or the caller-supplied
-        # bucket / "default" in no-auth mode) — never "" — so the this_hash
-        # fallback cannot walk another tenant's traces (HIGH-1).
+        # Keep the hash fallback scoped to the resolved tenant.
         tenant_filter = _resolve_tenant(tenant, provided_tenant_id)
         if hasattr(store, "list_by_tenant"):
             traces = store.list_by_tenant(tenant_filter, None, 500)
@@ -1877,9 +1870,8 @@ def create_app(armor: Optional[Pramagent] = None,
 
     def _demo_ip(request: Request) -> str:
         forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            return forwarded.split(",", 1)[0].strip() or "anon"
-        return request.client.host if request.client else "anon"
+        peer = request.client.host if request.client else ""
+        return _forwarded_client_ip(peer, forwarded) if forwarded else (peer or "anon")
 
     def _demo_rate_key(request: Request, api_key: str) -> str:
         # Hash the visitor key before it touches the in-memory rate bucket.
@@ -1998,11 +1990,8 @@ def create_app(armor: Optional[Pramagent] = None,
             r"(\$|routing\s+number|account|acct[-_ ]?\d{6,}|refund|vendor)",
             r"\b(routing\s+number|account\s+\d{6,18}|acct[-_ ]?\d{6,})\b"
             r"[\s\S]{0,100}\b(wire|transfer|send|refund|payment)\b",
-            # Consequential trading actions (SEC-2026-06-15 F-4): approving a
-            # margin call or ordering a liquidation moves money and must gate
-            # the same way a wire does. "approve the margin call" + "proceed
-            # with liquidation of positions" previously sailed through as a
-            # plain response.
+            # Margin calls and liquidation orders move money and require the
+            # same approval gate as a wire transfer.
             r"\b(approve|authori[sz]e|confirm|execute|proceed\s+with|process)\b"
             r"[\s\S]{0,80}\b(margin\s+call|liquidat(?:e|ion|ing)|"
             r"close\s+(?:out\s+)?(?:all\s+)?(?:leveraged\s+|open\s+)?positions?|"
@@ -2013,8 +2002,8 @@ def create_app(armor: Optional[Pramagent] = None,
             r"(?:out\s+)?(?:all\s+)?(?:leveraged\s+|open\s+)?positions?\b"
             r"[\s\S]{0,140}\b(authori[sz]ed|proceed|confirm|immediately|risk\s+committee)\b",
             r"\bmargin\s+call\b[\s\S]{0,80}\b(approve|authori[sz]e|liquidat|proceed|sell|close)\b",
-            # International / cross-border transfers (SEC-2026-06-15 F-2): an
-            # IBAN or SWIFT/BIC value alongside a move verb must gate like ACH.
+            # International transfers are consequential. An IBAN or SWIFT/BIC
+            # value alongside a move verb must gate like ACH.
             # Requiring both the value and the verb keeps "how do IBAN
             # transfers work?" from being treated as an action.
             r"\b(transfer|wire|send|remit|initiate|process|pay)\b[\s\S]{0,120}"
@@ -2083,7 +2072,7 @@ def create_app(armor: Optional[Pramagent] = None,
                     ),
                     detail="provider output appears to contain file exfiltration code",
                 ),
-                # SEC-2026-06-15-01 (SE-2): catch a model that accepts a fake
+                # catch a model that accepts a fake
                 # emergency override and declares its own safety controls off
                 # ("OVERRIDE_ACCEPTED ... Content filters disabled"). Even when
                 # the input slips past the isolation heuristics, this confirmed
@@ -2257,8 +2246,17 @@ def create_app(armor: Optional[Pramagent] = None,
                 )
 
         try:
-            raw_body = await request.json()
-        except Exception:
+            body = bytearray()
+            async for chunk in request.stream():
+                body.extend(chunk)
+                if len(body) > 300_000:
+                    return JSONResponse(
+                        {"detail": "demo request is too large"},
+                        status_code=413,
+                        headers=_demo_cors_headers(),
+                    )
+            raw_body = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
             return JSONResponse(
                 {"detail": "invalid JSON body"},
                 status_code=400,
@@ -2459,7 +2457,7 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.post("/v1/auth/token", response_model=TokenResponse)
     async def issue_token(body: TokenRequest, request: Request):
         # This endpoint is by design unauthenticated (it bootstraps auth), so
-        # it gets an IP-keyed rate bucket instead of the tenant one (T1-2).
+        # it gets an IP-keyed rate bucket instead of the tenant one.
         ip = request.client.host if request.client else "anon"
         allowed, retry_after = app.state.bucket.allow(f"token:{ip}")
         if not allowed:
@@ -2469,7 +2467,7 @@ def create_app(armor: Optional[Pramagent] = None,
         if len(app.state.registry) == 0:
             raise HTTPException(status_code=400, detail="API-key auth is not enabled")
         # Without a shared signing secret each worker would mint tokens only
-        # it can verify — intermittent 401s across replicas (P2-12). Refuse
+        # it can verify — intermittent 401s across replicas . Refuse
         # issuance instead of minting un-verifiable tokens. resolve_secret()
         # so a secret sourced from AWS Secrets Manager/Vault (not a plain
         # env var) still counts as "configured" here.
@@ -2499,10 +2497,10 @@ def create_app(armor: Optional[Pramagent] = None,
         """O(1) readiness: dependency connectivity only.
 
         Never integrity-verifies the chain or counts traces — that is O(n)
-        work an unauthenticated probe must not trigger (P1-3/T1-5); chain
+        work an unauthenticated probe must not trigger ; chain
         verification lives in /v1/audit/verify (authenticated, rate-limited).
         Operational detail (auth mode, Slack errors, counts) is not disclosed
-        on this unauthenticated surface (P2-18/T1-9)."""
+        on this unauthenticated surface ."""
         a = app.state.armor
         checks: dict[str, bool] = {}
         ping = getattr(a.store, "ping", None)
@@ -2529,7 +2527,7 @@ def create_app(armor: Optional[Pramagent] = None,
         # When auth is off, fall back to body or "default".
         effective_tenant = _resolve_tenant(tenant, req.tenant_id or "")
         # Quota accounting may hit Redis and fan out to the billing webhook
-        # (sync urllib) — keep both off the event loop (P1-8/T1-7).
+        # (sync urllib) — keep both off the event loop.
         quota_decision = await asyncio.to_thread(
             app.state.usage.reserve_call, effective_tenant)
         if not quota_decision.allowed:
@@ -2566,11 +2564,10 @@ def create_app(armor: Optional[Pramagent] = None,
     @app.get("/v1/audit/verify")
     async def verify_audit(tenant: str = Depends(require_audit_tenant)):
         a = app.state.armor
-        return {"chain_valid": a.audit.verify_chain(),
-                "records": len(a.audit.records())}
+        return {"chain_valid": a.audit.verify_chain()}
 
     @app.get("/v1/metrics")
-    async def metrics(tenant: str = Depends(require_tenant)):
+    async def metrics(tenant: str = Depends(require_admin_tenant)):
         report = app.state.armor.observability.report()
         report["usage_quota_enabled"] = app.state.usage.enabled
         report["usage_event_sinks"] = len(getattr(app.state.usage, "event_sinks", []))
@@ -2610,7 +2607,7 @@ def create_app(armor: Optional[Pramagent] = None,
         # This endpoint calls ToolGuardLayer directly, bypassing
         # Pramagent.validate_tool() — so it needs its own durable-audit
         # append, or the decision only lives in ToolGuardLayer's in-memory
-        # bounded deque and is lost on restart or deque overflow (ISSUE-4).
+        # bounded deque and is lost on restart or deque overflow.
         await asyncio.to_thread(app.state.armor.audit.append, decision.to_dict())
         return ToolValidateResponse(**decision.to_dict())
 
@@ -2655,7 +2652,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
     # RCA is per-trace: fetch the single trace (ownership enforced by
     # _fetch_trace, 404 on cross-tenant) instead of deserializing the whole
-    # store per request (P1-4/T1-6).
+    # store per request.
 
     @app.post("/v1/rca/{call_id}/replay")
     async def rca_replay(call_id: str, request: Request,
@@ -2787,14 +2784,14 @@ def create_app(armor: Optional[Pramagent] = None,
             audit.redact_for_session(tenant_id, session_id)
         return {"deleted": deleted, "tenant_id": tenant_id, "session_id": session_id}
 
-    # ── dashboard-friendly routes (unversioned prefix, used by admin UI) ─────
+    # dashboard-friendly routes (unversioned prefix, used by admin UI)
     # These mirror the /v1 data surface for the dashboard. They carry the SAME
     # auth dependency as /v1 — the dashboard authenticates with its upstream
     # API key. When auth is enabled, every route is scoped to the caller's
     # tenant so the dashboard key cannot read or decide across tenants.
 
     @app.get("/metrics")
-    async def metrics_unversioned(tenant: str = Depends(require_tenant)):
+    async def metrics_unversioned(tenant: str = Depends(require_admin_tenant)):
         """Dashboard-friendly metrics endpoint (same auth as /v1/metrics)."""
         report = app.state.armor.observability.report()
         report["usage_quota_enabled"] = app.state.usage.enabled
@@ -2829,11 +2826,11 @@ def create_app(armor: Optional[Pramagent] = None,
         When auth is enabled the listing is hard-scoped to the caller's tenant
         — the tenant_id query parameter cannot widen it. The tenant filter is
         pushed into SQL (idx_traces_tenant) so a busy neighbor tenant can
-        never crowd a caller's rows out of the page (P1-9).
+        never crowd a caller's rows out of the page.
 
-        In no-auth mode the caller-supplied tenant_id selects the bucket,
-        defaulting to "default" — never an empty filter that would list every
-        tenant's prompts/outputs (HIGH-1)."""
+        In no-auth mode, the caller-supplied tenant selects the bucket and
+        defaults to ``default``. An empty tenant would make this lookup global.
+        """
         tenant_id = _resolve_tenant(tenant, tenant_id)
 
         store = app.state.armor.store
@@ -2915,16 +2912,15 @@ def create_app(armor: Optional[Pramagent] = None,
         # approvals. Unknown / cross-tenant ids both return 404 so the
         # response does not leak which request ids exist. This check always
         # runs, even for the unauthenticated "default" tenant — an empty
-        # resolved tenant is never treated as "skip the check" (ISSUE-1/7).
+        # resolved tenant is never treated as "skip the check".
         match = next(
             (p for p in _pending_approvals(hitl)
              if p["request_id"] == request_id), None)
         if match is None or match["tenant_id"] != effective_tenant:
             raise HTTPException(status_code=404, detail="approval request not found")
-        # A4: attribute the decision to the authenticated caller. The REST
-        # auth model identifies tenants/keys (not individual users), so the
-        # actor is recorded at that granularity — honest about what was
-        # actually authenticated.
+        # Attribute the decision to the authenticated caller. The REST
+        # auth model identifies tenants and keys rather than individual users,
+        # so actor attribution stops at the tenant boundary.
         decided_by = f"api:{effective_tenant}"
         registry.decide(request_id, body.approved, decided_by=decided_by)
         return {"request_id": request_id,
@@ -2944,7 +2940,7 @@ def create_app(armor: Optional[Pramagent] = None,
 
 
 # Preferred: factory pattern, which defers env parsing and classifier builds
-# to server start instead of module import (P3-2):
+# to server start instead of module import :
 #     uvicorn pramagent.api.app:create_app --factory
 # The module-level `app` is kept for back-compat (uvicorn pramagent.api.app:app)
 # behind an opt-out switch.

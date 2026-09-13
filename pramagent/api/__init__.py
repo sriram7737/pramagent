@@ -3,7 +3,7 @@
     from pramagent.api.app import create_app          # factory (preferred)
     from pramagent.api.app import app                 # eager module-level app
 
-The module-level ``app`` exists only when PRAMAGENT_EAGER_APP != "0" (P3-2);
+The module-level ``app`` exists only when PRAMAGENT_EAGER_APP != "0" ;
 the factory is always available.
 """
 from .app import create_app

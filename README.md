@@ -793,8 +793,10 @@ should stay additive here: keep the public `Pramagent`, `ToolGuardLayer`,
 then document newer controls in this repo.
 
 Recent additions include the local hook control plane, per-tenant hook
-permissions, hash-chained hook-admin audit records, and the guarded PennyLane
-QNode example under `examples/quantum/`. Users coming from the cookbook or
+permissions, HMAC-chained hook-admin audit records, and the guarded PennyLane
+QNode example under `examples/quantum/`. Existing hook-control files created
+before state binding must be reviewed and bound once from the admin console;
+until then, hook enforcement stays on. Users coming from the cookbook or
 LangChain listing can upgrade Pramagent from PyPI and follow the docs in this
 repository without changing either upstream link.
 

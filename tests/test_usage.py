@@ -169,6 +169,10 @@ def test_usage_from_env_adds_webhook_sink(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_BILLING_WEBHOOK_URL", "https://billing.example/events")
     monkeypatch.setenv("PRAMAGENT_BILLING_WEBHOOK_SECRET", "secret")
     monkeypatch.setenv("PRAMAGENT_BILLING_WEBHOOK_TIMEOUT_S", "0.25")
+    monkeypatch.setattr(
+        "pramagent.security.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
 
     tracker = UsageTracker.from_env()
 
@@ -184,7 +188,7 @@ def test_usage_from_env_defaults_to_fail_open(monkeypatch):
     outage doesn't 429 every tenant. This is the intentional opposite of
     RedisBackend's rate limiter (fail-closed by default): the rate limiter
     guards against unbounded external abuse, the quota tracker only risks
-    a tenant's own spend budget during the outage (ISSUE-9)."""
+    a tenant's own spend budget during the outage ."""
     monkeypatch.delenv("PRAMAGENT_QUOTA_FAIL_OPEN", raising=False)
     assert UsageTracker.from_env().fail_open is True
 

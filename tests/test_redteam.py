@@ -33,12 +33,7 @@ from pramagent.hitl.workflow import (
 )
 from pramagent.types import HITLStatus
 from pramagent.telemetry import trace_layer, configure_otel, _NoOpSpan
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 1. Multi-turn / context-carry injection
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestMultiTurnInjection:
     """Attackers don't always send a one-shot injection.  They build context
     over multiple turns then trigger in a later message."""
@@ -73,12 +68,7 @@ class TestMultiTurnInjection:
         self.iso.memory_append("evil", "s1", "DROP TABLE users;--")
         tenant_b = self.iso.memory_for("good", "s1")
         assert "DROP TABLE users;--" not in tenant_b
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 2. Argument-level injection scanning
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestArgumentInjection:
 
     @pytest.mark.parametrize("args,expected_pattern", [
@@ -112,11 +102,7 @@ class TestArgumentInjection:
         args = {"amount": 42, "active": True, "ratio": 0.99}
         findings = scan_arguments_for_injection(args)
         assert findings == []
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 2b. sql_injection/shell_injection: high-precision vs contextual (SEC-2026-07-10)
-# ══════════════════════════════════════════════════════════════════════════
+# SQL and shell injection: high-precision versus contextual signals
 # Bare punctuation ("--", ";", "|" next to a letter) used to be sufficient
 # on its own, indistinguishable from an ordinary dash, a piped shell
 # command, a semicolon in a sentence, or regex alternation. These lock in
@@ -189,12 +175,7 @@ class TestArgInjectionPrecision:
         )
         assert decision.verdict == Verdict.BLOCK
         assert decision.reason.count("sql_injection") == 1
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 3. Tool-chain attack detection
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestToolChain:
 
     @pytest.mark.parametrize("chain,expect_verdict", [
@@ -212,6 +193,13 @@ class TestToolChain:
         verdict, reason, _ = detect_dangerous_chain(["read", "payment"])
         if verdict == Verdict.ESCALATE:
             assert reason
+
+    def test_benign_interleaving_does_not_hide_dangerous_chain(self):
+        verdict, _, matched = detect_dangerous_chain(
+            ["read", "compute", "external_message"], window=10
+        )
+        assert verdict == Verdict.ESCALATE
+        assert matched == ["read", "external_message"]
 
     def test_chain_window_limits_lookback(self):
         """A dangerous pair separated by more than chain_window ops should not fire."""
@@ -237,12 +225,7 @@ class TestToolChain:
         d = guard.evaluate("send_email", {"to": "attacker@evil.com"}, tenant_id="t", session_id="s1")
         assert d.verdict == Verdict.ESCALATE
         assert "exfil" in d.reason.lower() or "chain" in d.reason.lower() or d.verdict == Verdict.ESCALATE
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 4. Output validation / prompt leaking via tool outputs
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestOutputValidation:
 
     def _guard_with_output_schema(self):
@@ -326,12 +309,7 @@ class TestOutputValidation:
         result = guard.validate_output("mystery_tool", "AKIAIOSFODNN7EXAMPLE")
         # known exfil pattern should fire even without a policy
         assert not result.ok
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 5. HITL workflow — escalation chain, quorum, audit log
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestHITLWorkflow:
 
     async def test_approver_chain_escalates_on_timeout(self):
@@ -460,12 +438,7 @@ class TestHITLWorkflow:
             row = json.loads(f.read().strip())
         assert row["action"] == "test_action"
         assert row["decision"] is True
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 6. OTel telemetry — no-op when sdk absent
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestTelemetry:
 
     def test_trace_layer_noop_when_not_configured(self):
@@ -498,12 +471,7 @@ class TestTelemetry:
             tel._OTEL_AVAILABLE = original
             tel._configured = False
             tel._tracer = None
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 7. Backend circuit breaker (in-process simulation)
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestBackendCircuitBreaker:
 
     def test_redis_circuit_breaker_opens_after_threshold(self):
@@ -548,12 +516,7 @@ class TestBackendCircuitBreaker:
             raise ConnectionError("permanent")
         with pytest.raises(ConnectionError):
             _retry_sync(always_fails, max_attempts=2, base_delay_s=0.001)
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 8. Memory poisoning via normal-looking writes
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestMemoryPoisoning:
     """An attacker with access to session-memory writes can try to poison
     the context so later injection patterns appear in the stored history."""
@@ -580,12 +543,7 @@ class TestMemoryPoisoning:
         self.iso.memory_append("t", "attacker_session", "DROP TABLE users;")
         victim_memory = self.iso.memory_for("t", "victim_session")
         assert "DROP TABLE users;" not in victim_memory
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 9. Full pipeline integration with tool-chain attack
-# ══════════════════════════════════════════════════════════════════════════
-
 async def test_pipeline_blocks_injection_before_tool():
     """Injection in prompt must be blocked before ToolGuard is reached."""
     armor = Pramagent()
@@ -635,9 +593,6 @@ async def test_trace_headers_propagate():
         trace_headers={"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
     )
     assert not resp.blocked
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 2c. Hardening pass follow-up: argument-injection false positives found by
 # live-testing the Claude Code hook against this repo's own file-authoring
 # (backticks in markdown, JS/Ruby template interpolation, the word "from"
@@ -647,8 +602,6 @@ async def test_trace_headers_propagate():
 # this repo's own Claude Code PreToolUse hook scans a Write call's whole
 # file content for these same patterns, so writing the intact strings
 # would get this file-write itself denied.
-# ══════════════════════════════════════════════════════════════════════════
-
 class TestTemplateInjectionContextualGate:
 
     def test_plain_js_template_literal_is_not_flagged_as_template_injection(self):

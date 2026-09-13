@@ -12,7 +12,7 @@ defenses:
      and exfiltration patterns, authority/developer framing, and translation/
      indirection wrappers. Base64-looking tokens are decoded and the decoded
      text is scanned too, so encoding an attack does not bypass the patterns
-     (SEC-2026-06-11-02). These are heuristics, not a complete defense.
+     (). These are heuristics, not a complete defense.
      An ML classifier hook is provided for layering stronger detection.
 
   3. Hard size limits. Input and output bytes are capped per call to prevent
@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+import unicodedata
 from typing import Callable, Optional
 
 from ..types import Provenance
@@ -52,18 +53,12 @@ class InjectionSuspected(Exception):
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
     ("instruction_override",
      re.compile(
-         # SEC-2026-07-10: widened filler words ("the"/"everything" alongside
+         # widened filler words ("the"/"everything" alongside
          # "all") and vocabulary ("guidance"/"directives" alongside
          # "instructions/rules/guidelines", "preceding" alongside
-         # "previous/prior/above/earlier") to close a paraphrase gap found in
-         # live testing: "disregard prior guidance", "ignore the previous
-         # instructions", and "the new instructions are/is to <verb>" (not
-         # just "new instructions:") previously slipped through. Deliberately
-         # NOT relaxed to match a bare reference word with no following
-         # instruction-noun (e.g. "disregard the above and comply") since
-         # that risks false positives on ordinary "ignore the above
-         # calculation" phrasing; the pre-scan classifier and other patterns
-         # in this list are the backstop for that class of phrasing instead.
+         # Require an instruction noun after the reference word. Matching a
+         # bare phrase such as "ignore the above" creates too many false
+         # positives for ordinary prose.
          r"(?:ignore|disregard)\s+(?:all\s+|everything\s+|the\s+)?"
          r"(previous|prior|above|earlier|preceding)\s+"
          r"(instructions?|prompts?|rules?|guidelines?|guidance|directives?)|"
@@ -138,12 +133,9 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
          r"\[INST\]|<<SYS>>|<</SYS>>|---\s*new\s+prompt)",
          re.IGNORECASE),
      "attempt to inject a chat-template delimiter"),
-    # ── SEC-2026-06-15-01: fake "emergency override" framing ────────────────
-    # Red-team proved a bypass that frames the request as activating a system
-    # emergency/maintenance override ("this is a test of the emergency override
-    # system") and then asks to disable content filters. The classic
-    # disregard_safety pattern misses it: the verb is "disable"/"activate" (not
-    # ignore/override) and the target is "content filters" (not safety/rules).
+    # fake "emergency override" framing
+    # Emergency and maintenance framing often hides a request to disable
+    # filters, which the direct instruction-override pattern does not cover.
     ("emergency_override",
      re.compile(
          r"\b(SYSTEM\s+ALERT|PRIORITY\s+OVERRIDE|MAINTENANCE\s+MODE\s+ACTIVE)\b|"
@@ -165,7 +157,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
          r"guardrails?|safeguards?|safety\s+(filters?|checks?|controls?|guidelines?))\b",
          re.IGNORECASE),
      "request to disable safety/content controls"),
-    # ── SEC-2026-06-15-02: encoded-payload framing + override tokens ─────────
+    # encoded-payload framing + override tokens
     # The decoded forms of base64/hex/unicode payloads are appended by
     # _augment_decoded and scanned by every heuristic above, so an encoded
     # "ignore all previous instructions" is caught by instruction_override.
@@ -190,10 +182,8 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
      "prompt asks the model to emit an override-confirmation token"),
 ]
 
-# ── SEC-2026-06-11-02: authority framing + indirection wrappers ────────────
-# Security testing proved bypasses that claim a privileged role ("as a
-# developer ...") or wrap the override in an innocuous task ("translate to
-# French: ignore ..."). Kept as raw strings so deployments can extend them.
+# authority framing + indirection wrappers
+# Keep these as raw strings so deployments can extend the corpus.
 AUTHORITY_FRAMING_PATTERNS: list[str] = [
     r"\bas\s+an?\s+(developer|admin(?:istrator)?|system|operator|tester)\b",
     r"\b(reveal|show|display|print|output|give\s+me)\s+(?:me\s+)?"
@@ -221,13 +211,9 @@ _INJECTION_PATTERNS += [
     for p in INDIRECTION_PATTERNS
 ]
 
-# ── SEC-2026-06-15-02: targeted non-English instruction-override phrases ─────
-# Red-team proved fr/es/de/hi "ignore all previous instructions" variants slip
-# past the English-first heuristics AND the keyword classifier (the demo forces
-# keyword-only, so the multilingual embedding exemplars never load). This is
-# targeted coverage for the proven languages, NOT full multilingual support —
-# the scalable fix is wiring the embedding classifier. See
-# docs/IMPLEMENTATION_STATUS.md; the output post-check is the backstop.
+# targeted non-English instruction-override phrases
+# These phrases provide targeted coverage, not general multilingual support.
+# Use the embedding classifier for broader language coverage.
 MULTILINGUAL_OVERRIDE_PATTERNS: list[str] = [
     r"ignor(?:ez|er)\s+toutes\s+les\s+instructions\s+pr[ée]c[ée]dentes",      # fr
     r"ignor(?:a|ar)\s+todas\s+las\s+instrucciones\s+(?:anteriores|previas)",  # es
@@ -271,7 +257,7 @@ class IsolationLayer:
                         InProcessBackend. Pass RedisBackend for multi-worker.
     memory_ttl_s      : TTL for memory entries in seconds (default 3600).
 
-    Auditing (finding 2.3): this layer does NOT write to the audit chain. Its
+    Auditing : this layer does NOT write to the audit chain. Its
     decisions (InjectionSuspected / InputTooLarge / IsolationViolation) are
     durably recorded only when it runs inside ``Pramagent.run()``, which audits
     the whole pipeline via ``_finalize()``. Standalone use of these methods
@@ -313,13 +299,6 @@ class IsolationLayer:
         """Append an item to scope memory (safe for multi-worker)."""
         self._backend.memory_append(self._scope_key(tenant_id, session_id), item)
 
-    # B5: a previous assert_scope() helper lived here but was never called
-    # anywhere in the pipeline — it implied a scope-binding check that wasn't
-    # actually running. The real tenant/identity binding happens upstream in
-    # the API layer (see api/app.py _resolve_tenant / _resolve_auth_record;
-    # trust boundary noted for D4), so the dead helper was removed rather than
-    # left as misleading security-looking code.
-
     def clear_scope(self, tenant_id: str, session_id: str) -> None:
         self._backend.memory_clear(self._scope_key(tenant_id, session_id))
 
@@ -338,6 +317,9 @@ class IsolationLayer:
 
     def scan_for_injection(self, text: str) -> list[dict]:
         """Return hits for every heuristic that fires. Empty = no match (not safe)."""
+        text = unicodedata.normalize("NFKC", text).translate(
+            dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
+        )
         hits = []
         for pid, rx, detail in _INJECTION_PATTERNS:
             if rx.search(text):
@@ -351,7 +333,7 @@ class IsolationLayer:
         Encoding an attack is therefore not a bypass: "SWdub3Jl..." (base64),
         "69676e6f7265..." (hex), and "\\u0069\\u0067..." (unicode escapes) all
         decode to "ignore ..." and are then caught by instruction_override
-        (SEC-2026-06-11-02 base64; SEC-2026-06-15-02 hex + unicode).
+        (base64; hex + unicode).
 
         Only printable decodes longer than 8 chars are appended. Binary noise —
         hashes, ids, gzip frames — decodes to non-text and is dropped, so this

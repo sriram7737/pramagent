@@ -38,7 +38,7 @@ class PramagentGuard:
         self.tenant_id = tenant_id
         self.session_id = session_id
 
-    # ── Tool wrapper ───────────────────────────────────────────────────
+    # Tool wrapper
     def wrap_tool(self, fn: Optional[Callable] = None, *,
                   name: Optional[str] = None,
                   action_label: str = "tool_call"):
@@ -77,7 +77,7 @@ class PramagentGuard:
             return _decorate(fn)
         return _decorate
 
-    # ── Agent wrapper ──────────────────────────────────────────────────
+    # Agent wrapper
     def wrap_agent(self, agent: Any) -> Any:
         """Patch a CrewAI Agent so its prompt → response cycle runs through
         Pramagent. Returns the same agent object (mutated in place) — CrewAI's

@@ -36,7 +36,7 @@ def test_hyperledger_backend_fails_closed_by_default_when_gateway_configured():
     failure (here, the fabric SDK being unavailable) must raise by default,
     matching EthereumBackend's fail_open=False default, instead of silently
     degrading to a local-only pseudo-anchor with no signal to the caller
-    that anchoring stopped working (ISSUE-10)."""
+    that anchoring stopped working ."""
     hb = HyperledgerBackend(channel="audit", chaincode="anchor", gateway="fabric-gw:7051")
     try:
         hb.append({"x": 1})
