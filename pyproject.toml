@@ -134,6 +134,7 @@ include-package-data = true
     "docs/IMPLEMENTATION_STATUS.md",
     "docs/QUANTUM.md",
     "docs/EVIDENCE_ENVELOPE_V2.md",
+    "docs/HOOK_DEPLOYMENT_BOUNDARY.md",
     "docs/HARDENING_GUIDE.md",
     "docs/INCIDENT_RESPONSE_RUNBOOK.md",
     "docs/BACKUP_DR_RUNBOOK.md",

@@ -642,6 +642,13 @@ calls:
 
 ## Coding-Agent Hooks
 
+For deployments where the agent must not be able to rewrite its own hook,
+install the runtime and host configuration under an OS-owned permission
+boundary. The Windows and Linux installers, threat boundary, and verification
+steps are documented in
+[Hook Deployment Boundary](docs/HOOK_DEPLOYMENT_BOUNDARY.md). In-process path
+checks alone do not protect files writable by the same OS identity.
+
 Pramagent also ships a publishable hook plugin for coding agents:
 
 - Claude Code `PreToolUse`
