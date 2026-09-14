@@ -120,7 +120,29 @@ The plugin fails closed by default when:
 - the hook payload is malformed;
 - `pramagent` is not importable;
 - `policies.json` is missing or invalid;
-- ToolGuard evaluation raises.
+- ToolGuard evaluation raises;
+- self-protection cannot be loaded;
+- a launcher fails to import, times out, or emits invalid JSON when the
+  standalone bootstrap is used.
+
+The default matcher is broad. Unknown tools therefore reach ToolGuard and are
+denied until an administrator adds a policy. The guard also rejects writes to
+its host settings, launchers, plugin registration and policy files, imported
+Pramagent package, audit stores, and common credential/system locations.
+
+This is still an application-layer control. Install the hook and its
+configuration under an account the agent cannot write, or enforce equivalent
+Windows ACL/Linux ownership controls. A process running as the same unrestricted
+OS user can otherwise change permissions or use an execution path the host did
+not send through the hook.
+
+After installing a surface, run `pramagent hooks-doctor --repo-root <checkout>`
+against the source checkout that supplied the hook/plugin files. It verifies the
+host configuration, fail-closed launcher, approved runtime hashes, plugin
+manifest, and signed control-plane state. The PyPI wheel supplies the policy
+engine and doctor command, not the host hook bundle. Use `--strict` in deployment
+checks to reject same-account writable hook files instead of reporting them as a
+warning.
 
 Set `PRAMAGENT_GUARD_FAILURE_DECISION=ask` only if you prefer human review over
 hard denial for hook-runtime errors.

@@ -18,7 +18,7 @@ worker) and Pramagent will pick up the decision via polling.
 from __future__ import annotations
 
 from .base import (HITLQueueStore, InMemoryHITLQueue, QueuedRequest,
-                   RequestStatus)
+                   RequestStatus, approval_binding)
 from .sqlite import SQLiteHITLQueue
 from .postgres import PostgresHITLQueue
 
@@ -27,6 +27,7 @@ __all__ = [
     "InMemoryHITLQueue",
     "QueuedRequest",
     "RequestStatus",
+    "approval_binding",
     "SQLiteHITLQueue",
     "PostgresHITLQueue",
 ]

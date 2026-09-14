@@ -64,6 +64,33 @@ def resolve_secret(name: str, default: str = "") -> str:
     return default
 
 
+def _signing_key_ring_from_env(prefix: str) -> dict:
+    """Build store kwargs from a signing-key environment namespace."""
+    raw = os.environ.get(f"{prefix}_SIGNING_KEYS", "").strip()
+    if raw:
+        keys: dict[str, str] = {}
+        for pair in raw.split(","):
+            if ":" not in pair:
+                continue
+            kid, value = pair.split(":", 1)
+            kid, value = kid.strip(), value.strip()
+            if kid and value:
+                keys[kid] = value
+        if keys:
+            return {
+                "signing_key": "",
+                "signing_keys": keys,
+                "active_kid": os.environ.get(
+                    f"{prefix}_SIGNING_ACTIVE_KID", ""
+                ).strip() or None,
+            }
+    return {
+        "signing_key": resolve_secret(f"{prefix}_SIGNING_KEY").strip(),
+        "signing_keys": None,
+        "active_kid": None,
+    }
+
+
 def resolve_signing_key_ring() -> dict:
     """Resolve audit-chain signing-key configuration from the environment,
     supporting key rotation (findings 7.1 / 7.2).
@@ -85,28 +112,28 @@ def resolve_signing_key_ring() -> dict:
     ``SigningKeyRing.from_config``:
     ``{"signing_key", "signing_keys", "active_kid"}``.
     """
-    raw = os.environ.get("PRAMAGENT_SIGNING_KEYS", "").strip()
-    if raw:
-        keys: dict[str, str] = {}
-        for pair in raw.split(","):
-            if ":" not in pair:
-                continue
-            kid, value = pair.split(":", 1)
-            kid, value = kid.strip(), value.strip()
-            if kid and value:
-                keys[kid] = value
-        if keys:
-            return {
-                "signing_key": "",
-                "signing_keys": keys,
-                "active_kid": os.environ.get(
-                    "PRAMAGENT_SIGNING_ACTIVE_KID", "").strip() or None,
-            }
-    return {
-        "signing_key": resolve_secret("PRAMAGENT_SIGNING_KEY").strip(),
-        "signing_keys": None,
-        "active_kid": None,
-    }
+    return _signing_key_ring_from_env("PRAMAGENT")
+
+
+def resolve_quantum_signing_key_ring() -> dict:
+    """Resolve a quantum audit key ring without changing other audit stores.
+
+    Quantum commands prefer ``PRAMAGENT_QUANTUM_SIGNING_KEYS`` and
+    ``PRAMAGENT_QUANTUM_SIGNING_ACTIVE_KID``. A dedicated single-key setting
+    and its secret-manager indirections are also supported. When no quantum
+    namespace is configured, the normal Pramagent signing configuration is
+    used for backward compatibility.
+    """
+    dedicated_names = (
+        "PRAMAGENT_QUANTUM_SIGNING_KEYS",
+        "PRAMAGENT_QUANTUM_SIGNING_ACTIVE_KID",
+        "PRAMAGENT_QUANTUM_SIGNING_KEY",
+        "PRAMAGENT_QUANTUM_SIGNING_KEY_AWS_SECRET_ID",
+        "PRAMAGENT_QUANTUM_SIGNING_KEY_VAULT_PATH",
+    )
+    if any(os.environ.get(name, "").strip() for name in dedicated_names):
+        return _signing_key_ring_from_env("PRAMAGENT_QUANTUM")
+    return resolve_signing_key_ring()
 
 
 def _fetch_aws_secret(secret_id: str) -> str:

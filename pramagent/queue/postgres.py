@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS {table} (
     decided_at   DOUBLE PRECISION,
     status       TEXT NOT NULL DEFAULT 'pending',
     decided_by   TEXT NOT NULL DEFAULT '',
-    notes        TEXT NOT NULL DEFAULT ''
+    notes        TEXT NOT NULL DEFAULT '',
+    expires_at   DOUBLE PRECISION,
+    binding_hash TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS {status_idx}
     ON {table}(status);
@@ -55,6 +57,10 @@ CREATE INDEX IF NOT EXISTS {created_idx}
 # the ordinary keyword; this is the same documented workaround used in
 # tests/test_postgres_rls_live.py.
 _RLS_KW = "ALTER" + " TABLE"
+_BINDING_MIGRATION = (
+    _RLS_KW + " {table} ADD COLUMN IF NOT EXISTS expires_at DOUBLE PRECISION;\n"
+    + _RLS_KW + " {table} ADD COLUMN IF NOT EXISTS binding_hash TEXT NOT NULL DEFAULT '';\n"
+)
 _RLS_TEMPLATE = (
     _RLS_KW + " {table} ENABLE ROW LEVEL SECURITY;\n"
     + _RLS_KW + " {table} FORCE ROW LEVEL SECURITY;\n"
@@ -174,7 +180,7 @@ class PostgresHITLQueue:
         return self._sql.SQL(template).format(table=self._table_ident)
 
     def _schema_sql(self):
-        return self._sql.SQL(_SCHEMA + _RLS_TEMPLATE).format(
+        return self._sql.SQL(_SCHEMA + _BINDING_MIGRATION + _RLS_TEMPLATE).format(
             table=self._table_ident,
             status_idx=self._status_idx_ident,
             tenant_idx=self._tenant_idx_ident,
@@ -203,8 +209,8 @@ class PostgresHITLQueue:
         sql = self._query(
             "INSERT INTO {table} "
             "(request_id, action, context, tenant_id, created_at, "
-            "decided_at, status, decided_by, notes) "
-            "VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s) "
+            "decided_at, status, decided_by, notes, expires_at, binding_hash) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (request_id) DO NOTHING"
         )
         def _fn(cur):
@@ -214,7 +220,12 @@ class PostgresHITLQueue:
                 row["request_id"], row["action"], row["context"],
                 row["tenant_id"], row["created_at"], row["decided_at"],
                 row["status"], row["decided_by"], row["notes"],
+                row["expires_at"], row["binding_hash"],
             ))
+            if cur.rowcount == 0:
+                raise ValueError(
+                    f"approval request already exists: {row['request_id']}"
+                )
         self._run(_fn)
         return request.request_id
 
@@ -241,7 +252,14 @@ class PostgresHITLQueue:
         if isinstance(d.get("context"), dict):
             import json
             d["context"] = json.dumps(d["context"])
-        return from_row(d)
+        request = from_row(d)
+        if (request.status == RequestStatus.PENDING.value
+                and request.expires_at is not None
+                and request.expires_at <= time.time()):
+            self.expire(request.request_id, tenant_id=request.tenant_id)
+            request.status = RequestStatus.EXPIRED.value
+            request.decided_at = time.time()
+        return request
 
     def list_pending(self, tenant_id: Optional[str] = None,
                      limit: int = 100) -> list[QueuedRequest]:
@@ -268,33 +286,92 @@ class PostgresHITLQueue:
             if isinstance(d.get("context"), dict):
                 import json
                 d["context"] = json.dumps(d["context"])
-            out.append(from_row(d))
+            request = from_row(d)
+            if (request.expires_at is not None
+                    and request.expires_at <= time.time()):
+                self.expire(request.request_id, tenant_id=request.tenant_id)
+                continue
+            out.append(request)
         return out
 
     def decide(self, request_id: str, *, approved: bool,
                decided_by: str = "", notes: str = "",
-               tenant_id: Optional[str] = None) -> bool:
+               tenant_id: Optional[str] = None,
+               expected_binding: Optional[str] = None) -> bool:
         new_status = (RequestStatus.APPROVED.value if approved
                       else RequestStatus.DENIED.value)
+        now = time.time()
+        binding_clause = " AND binding_hash=%s" if expected_binding is not None else ""
         if tenant_id is None:
             sql = self._query(
                 "UPDATE {table} "
                 "SET status=%s, decided_at=%s, decided_by=%s, notes=%s "
-                "WHERE request_id=%s AND status=%s")
-            args: tuple = (new_status, time.time(), decided_by, notes,
-                           request_id, RequestStatus.PENDING.value)
+                "WHERE request_id=%s AND status=%s "
+                "AND (expires_at IS NULL OR expires_at > %s)" + binding_clause)
+            args: tuple = (new_status, now, decided_by, notes,
+                           request_id, RequestStatus.PENDING.value, now)
         else:
             sql = self._query(
                 "UPDATE {table} "
                 "SET status=%s, decided_at=%s, decided_by=%s, notes=%s "
-                "WHERE request_id=%s AND status=%s AND tenant_id=%s")
-            args = (new_status, time.time(), decided_by, notes,
-                    request_id, RequestStatus.PENDING.value, tenant_id)
+                "WHERE request_id=%s AND status=%s AND tenant_id=%s "
+                "AND (expires_at IS NULL OR expires_at > %s)" + binding_clause)
+            args = (new_status, now, decided_by, notes,
+                    request_id, RequestStatus.PENDING.value, tenant_id, now)
+        if expected_binding is not None:
+            args = (*args, expected_binding)
+
+        lookup_sql = self._query(
+            "SELECT * FROM {table} WHERE request_id=%s"
+            + (" AND tenant_id=%s" if tenant_id is not None else "")
+        )
+        lookup_args = (
+            (request_id, tenant_id) if tenant_id is not None else (request_id,)
+        )
 
         def _fn(cur):
             self._apply_scope(cur, tenant_id)
+            cur.execute(lookup_sql, lookup_args)
+            raw = cur.fetchone()
+            if raw is None:
+                return False
+            row = self._rowdict(cur, raw)
+            if isinstance(row.get("context"), dict):
+                import json
+                row["context"] = json.dumps(row["context"])
+            if not from_row(row).binding_is_valid():
+                return False
             cur.execute(sql, args)
-            return cur.rowcount > 0
+            if cur.rowcount > 0:
+                return True
+            expire_sql = self._query(
+                "UPDATE {table} SET status=%s, decided_at=%s "
+                "WHERE request_id=%s AND status=%s "
+                "AND expires_at IS NOT NULL AND expires_at <= %s"
+            )
+            expire_args: tuple = (
+                RequestStatus.EXPIRED.value,
+                now,
+                request_id,
+                RequestStatus.PENDING.value,
+                now,
+            )
+            if tenant_id is not None:
+                expire_sql = self._query(
+                    "UPDATE {table} SET status=%s, decided_at=%s "
+                    "WHERE request_id=%s AND status=%s AND tenant_id=%s "
+                    "AND expires_at IS NOT NULL AND expires_at <= %s"
+                )
+                expire_args = (
+                    RequestStatus.EXPIRED.value,
+                    now,
+                    request_id,
+                    RequestStatus.PENDING.value,
+                    tenant_id,
+                    now,
+                )
+            cur.execute(expire_sql, expire_args)
+            return False
         return self._run(_fn)
 
     def expire(self, request_id: str,

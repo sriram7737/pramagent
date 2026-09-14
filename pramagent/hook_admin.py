@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import time
+import threading
+import json
 from typing import Any, Optional
 
 from . import hook_state
@@ -19,6 +21,8 @@ KNOWN_TOOLS: dict[str, tuple[str, ...]] = {
                "apply_patch", "write_file", "replace", "Read", "LS", "Grep", "Glob",
                "read_file", "list_directory", "glob", "grep_search", "search_file_content"),
 }
+
+_ADMIN_LOCK = threading.RLock()
 
 
 def all_known_tools() -> list[str]:
@@ -61,13 +65,105 @@ def _audit(action: str, *, actor: str, detail: dict[str, Any]) -> dict[str, Any]
 def _commit(
     state: dict[str, Any], *, action: str, actor: str, detail: dict[str, Any]
 ) -> dict[str, Any]:
-    # Resolve and validate the key before touching the live config.
-    hook_state._audit_key_config()
-    saved = hook_state._save_state(state, actor=actor)
-    audited_detail = dict(detail)
-    audited_detail["state_hash"] = hook_state.state_digest(saved)
-    chain = _audit(action, actor=actor, detail=audited_detail)
-    return {"state": saved, "chain": chain}
+    with _ADMIN_LOCK:
+        # Resolve and validate the key before touching the live config.
+        hook_state._audit_key_config()
+        proposed = dict(state)
+        base_hash = proposed.pop("_base_state_hash", None)
+        current, readable = hook_state._read_state()
+        current_hash = hook_state.state_digest(current)
+        if base_hash is not None and base_hash != current_hash:
+            raise RuntimeError(
+                "hook config changed during this update; reload before retrying"
+            )
+        saved = hook_state._save_state(proposed, actor=actor)
+        audited_detail = dict(detail)
+        audited_detail.update({
+            "before_state_hash": current_hash if readable else "",
+            "state_hash": hook_state.state_digest(saved),
+            "changes": _state_changes(current, saved),
+            "state_snapshot": json.loads(json.dumps(saved)),
+        })
+        chain = _audit(action, actor=actor, detail=audited_detail)
+        return {"state": saved, "chain": chain}
+
+
+def _state_changes(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return compact, field-level changes for an operator-readable audit."""
+    changes: list[dict[str, Any]] = []
+
+    def walk(path: str, left: Any, right: Any) -> None:
+        if isinstance(left, dict) and isinstance(right, dict):
+            for key in sorted(set(left) | set(right)):
+                walk(f"{path}.{key}" if path else key, left.get(key), right.get(key))
+            return
+        if left != right:
+            changes.append({"path": path, "before": left, "after": right})
+
+    walk("", hook_state._normalize(before), hook_state._normalize(after))
+    return changes
+
+
+def _validated_snapshot(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("audit record does not contain a restorable state")
+    state = hook_state._normalize(raw)
+    for policy in state["policies"] or []:
+        try:
+            tool_policy_from_dict(policy)
+        except PolicyLoadError as exc:
+            raise ValueError(f"rollback policy is invalid: {exc}") from exc
+    known = set(all_known_tools())
+    for tenant, entry in state["tenants"].items():
+        names = (entry.get("allowed_tools") or []) + (entry.get("denied_tools") or [])
+        unknown = sorted(set(names) - known)
+        if unknown:
+            raise ValueError(
+                f"rollback tenant {tenant!r} contains unknown tools: {unknown}"
+            )
+    return state
+
+
+def rollback_config(target_hash: str, *, actor: str) -> dict[str, Any]:
+    """Restore an audited snapshot by chain hash or state hash.
+
+    Rollback appends a new event; it never deletes or rewrites audit history.
+    """
+    if not target_hash:
+        raise ValueError("target_hash is required")
+    if not verify_chain():
+        raise RuntimeError("cannot roll back while the hook audit chain is invalid")
+
+    from .store import SQLiteStore
+
+    store = SQLiteStore(path=_audit_db_path(), **hook_state._audit_key_config())
+    try:
+        records = store.records()
+    finally:
+        store.close()
+    target = None
+    target_chain_hash = ""
+    for row in records:
+        payload = row.get("payload", {}) if isinstance(row, dict) else {}
+        detail = payload.get("detail", {}) if isinstance(payload, dict) else {}
+        if payload.get("source") != "hook_admin":
+            continue
+        if row.get("this_hash") == target_hash or detail.get("state_hash") == target_hash:
+            target = detail.get("state_snapshot")
+            target_chain_hash = row.get("this_hash", "")
+            break
+    state = _validated_snapshot(target)
+    current = hook_state._state_for_update()
+    state["_base_state_hash"] = current.get("_base_state_hash")
+    return _commit(
+        state,
+        action="rollback_config",
+        actor=actor,
+        detail={
+            "target_chain_hash": target_chain_hash,
+            "target_state_hash": hook_state.state_digest(state),
+        },
+    )
 
 
 def bind_legacy_state(*, actor: str) -> dict[str, Any]:
@@ -232,7 +328,7 @@ def verify_chain() -> bool:
         store.close()
 
 
-def read_audit(limit: int = 100) -> list[dict[str, Any]]:
+def read_audit(limit: int = 100, *, include_state: bool = False) -> list[dict[str, Any]]:
     """Most recent config-change records, newest first, each with its chain
     hash so the console can show the tamper-evident position of every change."""
     from .store import SQLiteStore
@@ -253,13 +349,17 @@ def read_audit(limit: int = 100) -> list[dict[str, Any]]:
         payload = row.get("payload", {}) if isinstance(row, dict) else {}
         if payload.get("source") != "hook_admin":
             continue
+        detail = dict(payload.get("detail") or {})
+        if not include_state:
+            detail.pop("state_snapshot", None)
         out.append({
             "action": payload.get("action"),
             "actor": payload.get("actor"),
-            "detail": payload.get("detail"),
+            "detail": detail,
             "created_at": payload.get("created_at"),
             "this_hash": row.get("this_hash"),
             "prev_hash": row.get("prev_hash"),
+            "restorable": isinstance(payload.get("detail", {}).get("state_snapshot"), dict),
         })
         if len(out) >= limit:
             break

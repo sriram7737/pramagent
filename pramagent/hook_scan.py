@@ -32,7 +32,56 @@ by field-routing or encoding.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+_SHELL_DENY = (
+    (re.compile(r"\brm\s+[^\r\n]*(?:-rf|-fr|--recursive|--force)", re.I), "recursive forced delete"),
+    (re.compile(r"\bRemove-Item\b[^\r\n]*(?:-Recurse|-Force|-r\b)", re.I), "recursive forced delete"),
+    (re.compile(r"\b(?:del|erase|rmdir|rd)\b[^\r\n]*(?:/s|/q)", re.I), "recursive forced delete"),
+    (re.compile(r"\b(?:mkfs|format)\b|\bdd\s+[^\r\n]*\bof=", re.I), "filesystem destruction"),
+    (re.compile(r"\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\r\n|]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh|pwsh|powershell|iex)\b", re.I), "download-and-execute pipeline"),
+    (re.compile(r"\biex\s*\([^\r\n]*(?:Invoke-WebRequest|iwr)\b", re.I), "download-and-execute expression"),
+    (re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", re.I), "process fork bomb"),
+    (re.compile(r"\bgit\s+(?:reset\s+--hard|clean\s+[^\r\n]*-[^\s]*[fd])\b", re.I), "destructive git cleanup"),
+    (re.compile(r"\b(?:git\s+push|gh\s+release|npm\s+publish|twine\s+upload)\b", re.I), "external publish"),
+    (re.compile(r"\b(?:railway\s+up|vercel\s+--prod|fly\s+deploy|firebase\s+deploy)\b", re.I), "production deployment"),
+    (re.compile(r"\b(?:drop|truncate)\s+(?:table|database|schema)\b", re.I), "destructive database command"),
+)
+
+_READ_ONLY_ESCAPE = re.compile(
+    r"(?:--output(?:=|\s)|--ext-diff\b|--textconv\b|--pre(?:-glob)?(?:=|\s)|"
+    r"--passthru\b|--generate\b)",
+    re.I,
+)
+
+_SHELL_READ_ONLY = re.compile(
+    r"^\s*(?:"
+    r"pwd|ls(?:\s|$)|dir(?:\s|$)|Get-ChildItem(?:\s|$)|"
+    r"cat(?:\s|$)|type(?:\s|$)|Get-Content(?:\s|$)|head(?:\s|$)|tail(?:\s|$)|wc(?:\s|$)|"
+    r"git\s+(?:status|diff|log|show|branch|rev-parse)(?:\s|$)|"
+    r"rg(?:\s|$)|grep(?:\s|$)|findstr(?:\s|$)|"
+    r"python(?:\.exe)?\s+--version\s*$|py\s+--version\s*$"
+    r")",
+    re.I,
+)
+
+
+def shell_command_risk(command: Any) -> tuple[str, str]:
+    """Classify a shell command as read-only, review, or deny."""
+    if not isinstance(command, str) or not command.strip():
+        return "deny", "missing shell command"
+    for pattern, reason in _SHELL_DENY:
+        if pattern.search(command):
+            return "deny", reason
+    if (
+        not re.search(r"[;&|><`\r\n]", command)
+        and not _READ_ONLY_ESCAPE.search(command)
+        and _SHELL_READ_ONLY.match(command)
+    ):
+        return "allow", "known read-only command"
+    return "review", "shell command requires approval"
 
 
 def iter_strings(value: Any, path: str = "$") -> list[tuple[str, str]]:

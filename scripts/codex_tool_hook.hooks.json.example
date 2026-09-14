@@ -1,9 +1,6 @@
 {
-  "hooksConfig": {
-    "enabled": true
-  },
   "hooks": {
-    "BeforeTool": [
+    "pre_tool_use": [
       {
         "matcher": ".*",
         "hooks": [
@@ -13,11 +10,11 @@
             "args": [
               "scripts/hook_bootstrap.py",
               "--host",
-              "gemini",
+              "pretool",
               "--script",
-              "scripts/gemini_cli_hook.py"
+              "scripts/codex_tool_hook.py"
             ],
-            "timeout": 20000
+            "timeout": 20
           }
         ]
       }

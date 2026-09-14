@@ -37,7 +37,8 @@ interpreter path from:
   python scripts\claude_code_hook.py
 ```
 
-Expected result: a JSON decision with `"permissionDecision":"ask"`.
+Expected result: `{}` because `ls` is in the read-only shell tier. A command
+such as `npm install` returns `"permissionDecision":"ask"`.
 
 Read-only tools such as `Read`, `LS`, `Grep`, and `Glob` return `{}` when their
 arguments match the expected schema. Unknown tool names return `"deny"` whenever
@@ -45,25 +46,38 @@ the hook is invoked for them.
 
 ## Matcher Choices
 
-The example matcher covers Claude Code's common local tools:
+The example uses a strict matcher:
 
 ```text
-Bash|PowerShell|Write|Edit|MultiEdit|Read|LS|Grep|Glob
+.*
 ```
 
-For strict fail-closed host-tool experiments, change the matcher to a broad
-regular expression such as `.*`. This is not native MCP support; it only means
-Claude Code will send more matched tool names through this hook. With a broad
-matcher, any unregistered tool name is denied by `ToolGuardLayer` instead of
-silently passing through.
+This sends every host tool through the hook. Any unregistered name is denied by
+`ToolGuardLayer` instead of silently passing through.
 
 ## Current Policy
 
 | Tool | Side effect | Hook behavior |
 | --- | --- | --- |
-| `Bash`, `PowerShell` | destructive | ask |
+| `Bash`, `PowerShell` | destructive | allow known read-only commands, deny destructive forms, ask otherwise |
 | `Write`, `Edit`, `MultiEdit` | write | ask |
 | `Read`, `LS`, `Grep`, `Glob` | read | allow when schema and injection checks pass |
 | unregistered tools | unknown | deny |
 
 This hook is a guardrail and approval router. It is not an OS sandbox.
+
+## Integrity Check
+
+Run the installation doctor after setup and after upgrades:
+
+```powershell
+pramagent hooks-doctor --repo-root C:\path\to\pramagent
+pramagent hooks-doctor --repo-root C:\path\to\pramagent --strict
+```
+
+The command checks the fail-closed bootstrap wiring, approved SHA-256 hashes,
+plugin manifest, signed control-plane state, and whether the current account can
+rewrite runtime files in that source checkout. The PyPI package does not install
+host configuration or plugin files. On Windows, a hash match detects modification
+but does not prevent a same-user process from replacing the hook; use a separate
+administrator-owned installation or restrictive ACLs for that stronger boundary.

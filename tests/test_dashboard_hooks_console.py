@@ -187,3 +187,22 @@ def test_delete_tenant(monkeypatch):
     )
     assert resp.status_code == 303
     assert "temp" not in hook_state.get_tenants()
+
+
+def test_admin_can_restore_a_prior_hook_config(monkeypatch):
+    from pramagent import hook_admin, hook_state
+
+    client, csrf = _login_admin(monkeypatch)
+    hook_admin.set_surface_enabled("claude", False, actor="seed")
+    target_hash = hook_admin.read_audit(1)[0]["this_hash"]
+    hook_admin.set_surface_enabled("claude", True, actor="seed")
+
+    response = client.post(
+        "/hooks/rollback",
+        data={"target_hash": target_hash, "csrf_token": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert hook_state.is_enabled("claude") is False
+    assert hook_admin.read_audit(1)[0]["actor"] == "dashboard:alice"
