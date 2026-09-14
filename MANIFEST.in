@@ -10,6 +10,7 @@ include examples/demo.py
 include examples/dynamic_feed_agent.py
 include examples/live_payment_agent.py
 recursive-include examples/quantum *.py *.md
+recursive-include pramagent/quantum/data *.json
 include pramagent/api/demo_page.html
 include pramagent/api/demo_signals_admin.html
 include deploy/dashboard/Dockerfile
@@ -23,6 +24,7 @@ include docs/INCIDENT_RESPONSE_RUNBOOK.md
 include docs/BACKUP_DR_RUNBOOK.md
 include docs/SUPPLY_CHAIN.md
 include docs/IMPLEMENTATION_STATUS.md
+include docs/EVIDENCE_ENVELOPE_V2.md
 include docs/LIVE_TEST_RESULTS.md
 include docs/LIVE_WORKFLOW_DEMO.md
 include docs/LOAD_TEST.md
@@ -34,6 +36,12 @@ include docs/INDEXING_AND_DISCOVERY.md
 include docs/SECURITY_SCAN_REPORT_2026-06-07.md
 include docs/TECHNICAL_MARKETING_POST.md
 include docs/integrations/langgraph.md
+include docs/quantum-results/ibm_fez_daj5doomhr3c73e8i5a0.json
+include docs/quantum-results/ibm_fez_dajg0i1hvn6c73cuckbg.json
+include docs/quantum-results/ibm_fez_dajg4l1hvn6c73cucon0.json
+include docs/quantum-results/transpiler_depth_attribution.json
+include docs/quantum-results/ibm_fez_dajgtnphvn6c73cudlf0.json
+include docs/quantum-results/ibm_fez_dajho5hhvn6c73cueht0.json
 include corpus/overreach/README.md
 include corpus/overreach/cases.jsonl
 include requirements-security.txt

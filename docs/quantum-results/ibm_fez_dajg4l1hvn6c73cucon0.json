@@ -1,0 +1,112 @@
+{
+  "audit": {
+    "chain_valid": true,
+    "record_count_after_run": 8,
+    "record_sequence": [
+      "tool_guard_allow:ibm_quantum_sampler",
+      "qpu_execution_authorized",
+      "qpu_job_submitted",
+      "qpu_job_completed"
+    ],
+    "storage": ".pramagent/quantum-audit.db"
+  },
+  "claim_scope": "Physical IBM QPU optimization-level comparison through Pramagent; not a quantum-advantage claim",
+  "comparison_to_optimization_1": {
+    "contingency_table": [
+      [
+        123,
+        5
+      ],
+      [
+        126,
+        2
+      ]
+    ],
+    "metric": "same-bit versus different-bit outcomes",
+    "p_value": 0.44661437949666116,
+    "significant_at_0_05": false,
+    "test": "two-sided Fisher exact"
+  },
+  "derived": {
+    "different_bit_shots": 2,
+    "same_bit_correlation": 0.984375,
+    "same_bit_correlation_wilson_95": [
+      0.9448190233201827,
+      0.9957045502898559
+    ],
+    "same_bit_shots": 126
+  },
+  "evidence": {
+    "actual_cost_usd": null,
+    "backend": "ibm_fez",
+    "circuit_hash": "5eefc53ccdd2ba2a269df671533b070f36e8e9b204a5467143c31021c8bb7ecf",
+    "completed_at": 1789330013.7327435,
+    "counts": {
+      "00": 74,
+      "01": 1,
+      "10": 1,
+      "11": 52
+    },
+    "device_kind": "hardware",
+    "estimated_cost_usd": null,
+    "evidence_hash": "0802363fd39c17f25725d96a6a67f75160609369d06d734792979b0e1f7daf3b",
+    "execution_id": "dajg4l1hvn6c73cucon0",
+    "pricing_model": "ibm_qpu_time_unpriced",
+    "provider": "ibm_quantum_platform",
+    "queue_seconds": null,
+    "schema_version": "1.0",
+    "shots_observed": 128,
+    "shots_requested": 128,
+    "status": "completed",
+    "submitted_at": 1789330003.0120158,
+    "usage_seconds": 2.0,
+    "workload": "bell_attestation"
+  },
+  "isa_circuit": {
+    "depth": 7,
+    "operations": {
+      "barrier": 1,
+      "cz": 1,
+      "measure": 2,
+      "rz": 5,
+      "sx": 3
+    },
+    "physical_qubits": [
+      146,
+      147
+    ],
+    "size": 11,
+    "swap_count": 0
+  },
+  "limitations": [
+    "The depth improvement is one ISA layer, from 8 to 7, rather than the proposed reduction to 4 or 5.",
+    "The comparison runs used different physical qubits and only 128 shots each.",
+    "The two-sided Fisher exact p-value is 0.4466, so the higher observed correlation is not statistically significant.",
+    "This result does not demonstrate quantum advantage or hybrid-VLM quality improvement."
+  ],
+  "pramagent_execution": {
+    "logical_depth": 3,
+    "minimum_correlation": 0.6,
+    "optimization_level": 3,
+    "passed": true,
+    "session_id": "opt3-auto-ibm-20260913",
+    "transpiled_depth": 7,
+    "wires": 2
+  },
+  "provider_metrics": {
+    "circuit_execution_seconds": 0.032852992,
+    "qiskit_version": "qiskit_ibm_runtime-0.49.0,qiskit-2.5.2*",
+    "qpu_charge_time_seconds": 2,
+    "timestamps": {
+      "created": "2026-09-13T20:06:44.968246Z",
+      "finished": "2026-09-13T20:06:52.977634Z",
+      "running": "2026-09-13T20:06:46.740665Z"
+    }
+  },
+  "retrieval": {
+    "method": "Pramagent CLI submission followed by QiskitRuntimeService.job provider lookup and local SQLite audit verification",
+    "retrieved_at": "2026-09-13T20:08:02.1373256Z"
+  },
+  "record_type": "pramagent.ibm_hardware_attestation",
+  "record_version": "1.0"
+}

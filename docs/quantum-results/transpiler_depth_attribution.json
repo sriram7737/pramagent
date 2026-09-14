@@ -1,0 +1,130 @@
+{
+  "record_type": "transpiler_depth_attribution",
+  "record_version": "1.0",
+  "claim_scope": "Offline transpilation only. No QPU execution, no shots, no QPU time consumed.",
+  "question": "Is the ISA depth 8->7 difference between the two ibm_fez runs caused by optimization level or by the physical qubit pair?",
+  "method": {
+    "backend": "ibm_fez",
+    "backend_source": "QiskitRuntimeService.backend() metadata fetch; no job submitted",
+    "circuit": "pramagent.quantum.ibm_runtime.build_bell_circuit()",
+    "grid": "optimization_level in {1,3} x initial_layout in {[0,1],[146,147],auto}",
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "qiskit": "2.5.2",
+    "qiskit_ibm_runtime": "0.49.0"
+  },
+  "results": [
+    {
+      "optimization_level": 1,
+      "requested_layout": "[0,1]",
+      "depth_min": 8,
+      "depth_median": 8.0,
+      "depth_max": 8,
+      "size_min": 12,
+      "size_max": 12,
+      "physical_qubits_selected": [
+        [
+          0,
+          1
+        ]
+      ],
+      "seeds": 10
+    },
+    {
+      "optimization_level": 1,
+      "requested_layout": "[146,147]",
+      "depth_min": 8,
+      "depth_median": 8.0,
+      "depth_max": 8,
+      "size_min": 12,
+      "size_max": 12,
+      "physical_qubits_selected": [
+        [
+          146,
+          147
+        ]
+      ],
+      "seeds": 10
+    },
+    {
+      "optimization_level": 1,
+      "requested_layout": "auto",
+      "depth_min": 8,
+      "depth_median": 8.0,
+      "depth_max": 8,
+      "size_min": 12,
+      "size_max": 12,
+      "physical_qubits_selected": [
+        [
+          0,
+          1
+        ]
+      ],
+      "seeds": 10
+    },
+    {
+      "optimization_level": 3,
+      "requested_layout": "[0,1]",
+      "depth_min": 7,
+      "depth_median": 7.0,
+      "depth_max": 7,
+      "size_min": 11,
+      "size_max": 11,
+      "physical_qubits_selected": [
+        [
+          0,
+          1
+        ]
+      ],
+      "seeds": 10
+    },
+    {
+      "optimization_level": 3,
+      "requested_layout": "[146,147]",
+      "depth_min": 7,
+      "depth_median": 7.0,
+      "depth_max": 7,
+      "size_min": 11,
+      "size_max": 11,
+      "physical_qubits_selected": [
+        [
+          146,
+          147
+        ]
+      ],
+      "seeds": 10
+    },
+    {
+      "optimization_level": 3,
+      "requested_layout": "auto",
+      "depth_min": 7,
+      "depth_median": 7.0,
+      "depth_max": 7,
+      "size_min": 11,
+      "size_max": 11,
+      "physical_qubits_selected": [
+        [
+          147,
+          146
+        ]
+      ],
+      "seeds": 10
+    }
+  ],
+  "finding": "For this Bell circuit, backend snapshot, and tested layouts, ISA depth and size varied only with optimization level. Depth was 8 at level 1 and 7 at level 3 for every layout tested, with zero variance across 10 transpiler seeds.",
+  "limitations": [
+    "Establishes the cause of the depth/size difference only. It says nothing about the measured correlation difference between the two hardware runs, which remains confounded and statistically insignificant.",
+    "Depth was deterministic across the 10 seeds tested; it is not a proof of determinism for all seeds or all backend calibration snapshots.",
+    "Backend coupling map and basis gates were read at run time and may differ from those in effect during the original hardware jobs."
+  ]
+}

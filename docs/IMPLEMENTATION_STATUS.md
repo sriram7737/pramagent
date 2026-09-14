@@ -278,7 +278,12 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   eval gates
 - Runtime overtask/overeagerness enforcement for valid-goal overreach
 - AI supervisor focused on high-risk tool classes
-- QuantumLayer (future research only; intentionally not built or exposed)
+- Managed signing keys, archive timestamp renewal, QRNG entropy mixing, and the
+  broader QuantumLayer architecture. Evidence Envelope V2, hybrid checkpoint
+  signing, Merkle proofs, golden vectors, production Sigstore RFC 3161/Rekor
+  anchoring, a durable SQLite retry outbox, and online/cache-only verification
+  are implemented. The current adapter does not capture OCSP/CRL responses or
+  provide RFC 4998 long-term renewal.
 - Real external penetration test (must be run by a third party)
 - 200-500 call run with full production side effects such as real email sends
   or third-party scraper providers. Current heavy run executes real read-only
@@ -287,6 +292,38 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   tests and local smoke coverage, but no published Railway uptime/load evidence
   yet.
 - Pilot-user production deployments
+
+### Implemented quantum execution surface
+
+- Installable PennyLane QNode inspection and metering with input, circuit,
+  result, shot, cost, and session guards under `pramagent.quantum`
+- Installable classical-by-default hybrid router with audited quantum attempts
+  and classical fallback; dependency-light examples remain under
+  `examples/quantum/`
+- Packaged IBM Runtime Bell-pair attestation with explicit physical-hardware
+  consent, an unpriced-QPU-time acknowledgement, per-call/session shot caps,
+  strict ToolGuard schema, provider job ID/counts, and hash-chained events
+- `pramagent quantum-status` for dependency/credential readiness and optional
+  provider connectivity checks; `pramagent quantum-run` for deliberate
+  hardware submission
+- Atomic SQLite shot/cost reservation for one host and PostgreSQL reservation
+  with tenant/session advisory locking for multi-host QNode and IBM callers
+- Sealed, time-bounded IBM calibration canaries and audited bindings from a
+  fresh same-backend canary to completed workload evidence
+- Sealed provider-neutral `QuantumExecutionEvidence` records for IBM and
+  PennyLane execution paths
+- Additive Evidence Envelope V2 with an integer-only RFC 8785 profile,
+  persisted leaf nonces, Merkle inclusion/consistency proofs, strict
+  policy-versioned Ed25519 plus ML-DSA-65 signatures, golden vectors, and the
+  `evidence-v2-verify` CLI
+- Production Sigstore RFC 3161 timestamp and Rekor publication adapters with
+  TUF-authenticated trust, strict artifact binding, bounded network calls, and
+  an off-path SQLite retry outbox
+
+These controls make QPU execution inspectable and bounded. The external
+Quantum-VLM-Adapter now exercises the packaged guard and router in full caption
+inference, but its current small simulator experiment does not establish a
+quality gain or quantum advantage. See `docs/QUANTUM.md`.
 
 ## Latest Workflow Evidence
 

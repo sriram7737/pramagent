@@ -71,13 +71,26 @@ ethereum = ["web3>=7.0,<8"]
 s3 = ["boto3>=1.34", "cryptography>=48.0.1"]
 policy = ["pyyaml>=6.0"]
 quantum = ["pennylane>=0.39"]
+quantum-ibm = ["qiskit>=2.3,<3", "qiskit-ibm-runtime>=0.43,<1"]
+evidence-v2 = [
+    "cryptography>=48.0.1",
+    "pqcrypto>=1.0,<2",
+    "rfc8785>=0.1.4,<1",
+]
+evidence-anchors = [
+    "cryptography>=48.0.1",
+    "pqcrypto>=1.0,<2",
+    "rfc8785>=0.1.4,<1",
+    "rfc3161-client>=1.0.8,<2",
+    "sigstore>=4.5,<4.6",
+]
 # Embedding-based injection classifier (EmbeddingInjectionClassifier) and
 # DeBERTa fine-tuned classifier (DeBERTaInjectionClassifier).
 # Heavy (pulls torch) -- deliberately NOT part of `all`. Without it the
 # classifier falls back to keyword matching.
 ml = ["sentence-transformers>=3.0", "transformers>=4.40"]
 supply-chain = ["pip-audit>=2.8", "cyclonedx-bom>=5"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27", "cryptography>=48.0.1", "jinja2>=3.1", "python-multipart>=0.0.27", "bcrypt>=4.1", "pip-audit>=2.8", "cyclonedx-bom>=5"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27", "cryptography>=48.0.1", "pqcrypto>=1.0,<2", "rfc8785>=0.1.4,<1", "rfc3161-client>=1.0.8,<2", "sigstore>=4.5,<4.6", "jinja2>=3.1", "python-multipart>=0.0.27", "bcrypt>=4.1", "pip-audit>=2.8", "cyclonedx-bom>=5"]
 all = [
     "jsonschema>=4.23",
     "anthropic>=0.39",
@@ -106,12 +119,20 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "deploy.dashboard" = ["templates/*.html", "static/*.svg"]
-"pramagent.api" = ["demo_page.html", "demo_signals_admin.html"]
+"pramagent.api" = [
+    "demo_page.html",
+    "demo_signals_admin.html",
+    "quantum_demo_evidence.json",
+]
+"pramagent" = ["hook_integrity.json"]
+"pramagent.quantum" = ["data/*.json"]
 
 [tool.setuptools.data-files]
 "share/pramagent" = ["README.md", "CHANGELOG.md", "llms.txt"]
 "share/pramagent/docs" = [
     "docs/IMPLEMENTATION_STATUS.md",
+    "docs/QUANTUM.md",
+    "docs/EVIDENCE_ENVELOPE_V2.md",
     "docs/HARDENING_GUIDE.md",
     "docs/INCIDENT_RESPONSE_RUNBOOK.md",
     "docs/BACKUP_DR_RUNBOOK.md",
@@ -139,6 +160,14 @@ include-package-data = true
     "docs/audits/pramagent_enterprise_audit.md",
     "docs/audits/pramagent_full_audit.md",
     "docs/audits/pramagent_security_test_results.md",
+]
+"share/pramagent/docs/quantum-results" = [
+    "docs/quantum-results/ibm_fez_daj5doomhr3c73e8i5a0.json",
+    "docs/quantum-results/ibm_fez_dajg0i1hvn6c73cuckbg.json",
+    "docs/quantum-results/ibm_fez_dajg4l1hvn6c73cucon0.json",
+    "docs/quantum-results/transpiler_depth_attribution.json",
+    "docs/quantum-results/ibm_fez_dajgtnphvn6c73cudlf0.json",
+    "docs/quantum-results/ibm_fez_dajho5hhvn6c73cueht0.json",
 ]
 "share/pramagent/corpus/overreach" = [
     "corpus/overreach/README.md",
