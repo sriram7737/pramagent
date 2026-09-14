@@ -162,26 +162,54 @@ class SQLiteHITLQueue:
         new_status = (RequestStatus.APPROVED.value if approved
                       else RequestStatus.DENIED.value)
         now = time.time()
-        conditions = "request_id = ? AND status = ?"
-        tail: list = [request_id, RequestStatus.PENDING.value]
-        if tenant_id is not None:
-            conditions += " AND tenant_id = ?"
-            tail.append(tenant_id)
-        if expected_binding is not None:
-            conditions += " AND binding_hash = ?"
-            tail.append(expected_binding)
-        conditions += " AND (expires_at IS NULL OR expires_at > ?)"
-        tail.append(now)
-        sql = (
-            "UPDATE hitl_queue SET status = ?, decided_at = ?, "
-            "decided_by = ?, notes = ? WHERE " + conditions
+        base = (
+            new_status,
+            now,
+            decided_by,
+            notes,
+            request_id,
+            RequestStatus.PENDING.value,
         )
-        args = (new_status, now, decided_by, notes, *tail)
-
-        lookup_sql = "SELECT * FROM hitl_queue WHERE request_id = ?"
-        lookup_args: tuple = (request_id,)
-        if tenant_id is not None:
-            lookup_sql += " AND tenant_id = ?"
+        if tenant_id is None and expected_binding is None:
+            sql = (
+                "UPDATE hitl_queue SET status = ?, decided_at = ?, "
+                "decided_by = ?, notes = ? WHERE request_id = ? AND status = ? "
+                "AND (expires_at IS NULL OR expires_at > ?)"
+            )
+            args = (*base, now)
+            lookup_sql = "SELECT * FROM hitl_queue WHERE request_id = ?"
+            lookup_args: tuple = (request_id,)
+        elif tenant_id is None:
+            sql = (
+                "UPDATE hitl_queue SET status = ?, decided_at = ?, "
+                "decided_by = ?, notes = ? WHERE request_id = ? AND status = ? "
+                "AND binding_hash = ? AND (expires_at IS NULL OR expires_at > ?)"
+            )
+            args = (*base, expected_binding, now)
+            lookup_sql = "SELECT * FROM hitl_queue WHERE request_id = ?"
+            lookup_args = (request_id,)
+        elif expected_binding is None:
+            sql = (
+                "UPDATE hitl_queue SET status = ?, decided_at = ?, "
+                "decided_by = ?, notes = ? WHERE request_id = ? AND status = ? "
+                "AND tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)"
+            )
+            args = (*base, tenant_id, now)
+            lookup_sql = (
+                "SELECT * FROM hitl_queue WHERE request_id = ? AND tenant_id = ?"
+            )
+            lookup_args = (request_id, tenant_id)
+        else:
+            sql = (
+                "UPDATE hitl_queue SET status = ?, decided_at = ?, "
+                "decided_by = ?, notes = ? WHERE request_id = ? AND status = ? "
+                "AND tenant_id = ? AND binding_hash = ? "
+                "AND (expires_at IS NULL OR expires_at > ?)"
+            )
+            args = (*base, tenant_id, expected_binding, now)
+            lookup_sql = (
+                "SELECT * FROM hitl_queue WHERE request_id = ? AND tenant_id = ?"
+            )
             lookup_args = (request_id, tenant_id)
         with self._lock:
             row = self._conn.execute(lookup_sql, lookup_args).fetchone()

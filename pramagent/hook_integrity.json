@@ -2,13 +2,13 @@
   "algorithm": "sha256",
   "files": {
     "plugins/pramagent-guard/hooks/hooks.json": "ff8becf1357ac0bb78293aeceb6dba13efb02f99271e378a44824e612784428c",
-    "plugins/pramagent-guard/hooks/scripts/pramagent_guard.py": "a39b3e12d579724a5ede8fdcb70b9bc2745868cf96f95cc0f049687ace4e6ff0",
+    "plugins/pramagent-guard/hooks/scripts/pramagent_guard.py": "f1d12058b8a2433304148a35b11a34eb98247dd66b6fb24de59d81f7039bdf06",
     "plugins/pramagent-guard/policies.json": "e553cc90ef0341a27643cf8777a99332723b054ee051fc29933e3148d1577941",
     "pramagent/hook_scan.py": "afe308fe8e1abd686453473f10f81fcee004f58ed2888707777ab5ba966ccbaa",
     "pramagent/hook_state.py": "9c39c7dcb1f21fe0965275696b79d1a3760aefeef1e408f579f902e11ad41b14",
-    "scripts/claude_code_hook.py": "1a6c7d5cf84ea385ac632162c1824b6a3a1704f9ac847cfa0b0f59af19873520",
-    "scripts/codex_tool_hook.py": "cc8f295db587f9cd980bd78b1f976fb11c903564f710bd93c6bfa3681baded80",
-    "scripts/gemini_cli_hook.py": "b01f8f555cebe095d5e0281432903173d7b2c59ff7ab47fd4efedb283ab21c05",
-    "scripts/hook_bootstrap.py": "c83b0073fbbf776bd861e8121e5b9f05f4dcf904581566be98dcaa69b73ea6b4"
+    "scripts/claude_code_hook.py": "12eed11e8f0f9085a39494df40635f3aef78f889e7958bc4cbe849c2f2895968",
+    "scripts/codex_tool_hook.py": "172fae722277914de429488dce2d9ab7e4f893e09d3fb7254524e2e36b5e1464",
+    "scripts/gemini_cli_hook.py": "a8ab39188c82a256d28648aa16df716eb2d5965aa5d967db4e845e51e0c48f40",
+    "scripts/hook_bootstrap.py": "01a2940136792a2b337bde14334306f786569ed8fb2f6a5a94492f8fbc11d399"
   }
 }

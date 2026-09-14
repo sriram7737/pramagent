@@ -353,10 +353,11 @@ class SigstoreAnchorProvider:
                 builder = builder.add_intermediate_certificate(intermediate)
             builder = builder.add_root_certificate(chain[-1])
             try:
-                if builder.build().verify_message(timestamp, payload):
-                    return
+                verified = builder.build().verify_message(timestamp, payload)
             except Exception:
-                continue
+                verified = False
+            if verified:
+                return
         raise ExternalAnchorError("RFC 3161 response failed trust verification")
 
     def publish_transparency(

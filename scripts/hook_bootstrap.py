@@ -42,7 +42,9 @@ def _verify_child(script: Path) -> None:
     expected = (manifest.get("files") or {}).get(relative, "")
     if not expected:
         raise RuntimeError("hook child is not listed in the integrity manifest")
-    actual = hashlib.sha256(script.read_bytes()).hexdigest()
+    # Windows and Unix use different harmless line endings in source checkouts.
+    # Hash a canonical text representation so the approved manifest is portable.
+    actual = hashlib.sha256(script.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     if not hmac.compare_digest(expected, actual):
         raise RuntimeError("hook child hash does not match the integrity manifest")
 

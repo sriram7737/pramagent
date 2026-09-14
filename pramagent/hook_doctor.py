@@ -76,7 +76,8 @@ def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+            # Match hook_bootstrap: CRLF and LF have identical source semantics.
+            digest.update(chunk.replace(b"\r\n", b"\n"))
     return digest.hexdigest()
 
 
@@ -234,4 +235,3 @@ def inspect_hooks(
         ))
 
     return HookDoctorReport(tuple(checks))
-

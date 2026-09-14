@@ -44,6 +44,7 @@ class PostgresAnchorOutbox:
             raise ValueError(f"unsafe table name: {table!r}")
         self.dsn = str(dsn)
         self.table = table
+        self._table_identifier = '"' + table + '"'
         self._connect_factory = connect_factory or pg_connect
         self._run(self._create_schema)
 
@@ -71,8 +72,8 @@ class PostgresAnchorOutbox:
 
     def _create_schema(self, cursor: Any) -> None:
         cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self.table} (
+            self._query("""
+            CREATE TABLE IF NOT EXISTS {table} (
                 checkpoint_hash TEXT PRIMARY KEY,
                 checkpoint_json JSONB NOT NULL,
                 anchors_json JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -86,13 +87,19 @@ class PostgresAnchorOutbox:
                 last_error TEXT NOT NULL DEFAULT '',
                 updated_at_us BIGINT NOT NULL
             )
-            """
+            """)
         )
         cursor.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_{self.table}_due
-            ON {self.table} (status, next_attempt_at_us, locked_until_us)
-            """
+            self._query("""
+            CREATE INDEX IF NOT EXISTS {due_index}
+            ON {table} (status, next_attempt_at_us, locked_until_us)
+            """)
+        )
+
+    def _query(self, template: str) -> str:
+        """Compose static SQL with the constructor-validated identifier only."""
+        return template.replace("{table}", self._table_identifier).replace(
+            "{due_index}", '"idx_' + self.table + '_due"'
         )
 
     @staticmethod
@@ -133,13 +140,13 @@ class PostgresAnchorOutbox:
 
         def operation(cursor: Any) -> None:
             cursor.execute(
-                f"""
-                INSERT INTO {self.table} (
+                self._query("""
+                INSERT INTO {table} (
                     checkpoint_hash, checkpoint_json, status,
                     next_attempt_at_us, updated_at_us
                 ) VALUES (%s, %s::jsonb, 'queued', %s, %s)
                 ON CONFLICT (checkpoint_hash) DO NOTHING
-                """,
+                """),
                 (checkpoint.checkpoint_hash, encoded, current, current),
             )
 
@@ -148,12 +155,12 @@ class PostgresAnchorOutbox:
     def get(self, checkpoint_hash: str) -> AnchorJob | None:
         def operation(cursor: Any) -> AnchorJob | None:
             cursor.execute(
-                f"""
+                self._query("""
                 SELECT checkpoint_hash, status, attempts, next_attempt_at_us,
                        last_error, anchors_json
-                FROM {self.table}
+                FROM {table}
                 WHERE checkpoint_hash = %s
-                """,
+                """),
                 (checkpoint_hash,),
             )
             row = self._rowdict(cursor, cursor.fetchone())
@@ -234,10 +241,10 @@ class PostgresAnchorOutbox:
 
         def operation(cursor: Any) -> dict[str, Any] | None:
             cursor.execute(
-                f"""
+                self._query("""
                 WITH candidate AS (
                     SELECT checkpoint_hash
-                    FROM {self.table}
+                    FROM {table}
                     WHERE status IN ('queued', 'retry', 'running')
                       AND next_attempt_at_us <= %s
                       AND (status != 'running' OR locked_until_us <= %s)
@@ -245,7 +252,7 @@ class PostgresAnchorOutbox:
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
-                UPDATE {self.table} AS jobs
+                UPDATE {table} AS jobs
                 SET status = 'running', locked_until_us = %s,
                     lease_id = %s, updated_at_us = %s
                 FROM candidate
@@ -254,7 +261,7 @@ class PostgresAnchorOutbox:
                           jobs.anchors_json, jobs.status, jobs.attempts,
                           jobs.next_attempt_at_us, jobs.locked_until_us,
                           jobs.lease_id, jobs.last_error, jobs.updated_at_us
-                """,
+                """),
                 (now_us, now_us, locked_until, lease_id, now_us),
             )
             return self._rowdict(cursor, cursor.fetchone())
@@ -272,12 +279,12 @@ class PostgresAnchorOutbox:
 
         def operation(cursor: Any) -> int:
             cursor.execute(
-                f"""
-                UPDATE {self.table}
+                self._query("""
+                UPDATE {table}
                 SET anchors_json = %s::jsonb, updated_at_us = %s
                 WHERE checkpoint_hash = %s AND status = 'running'
                   AND lease_id = %s
-                """,
+                """),
                 (encoded, now_us, checkpoint_hash, lease_id),
             )
             return cursor.rowcount
@@ -305,14 +312,14 @@ class PostgresAnchorOutbox:
 
         def operation(cursor: Any) -> int:
             cursor.execute(
-                f"""
-                UPDATE {self.table}
+                self._query("""
+                UPDATE {table}
                 SET anchors_json = %s::jsonb, status = %s, attempts = %s,
                     next_attempt_at_us = %s, locked_until_us = 0,
                     lease_id = '', last_error = %s, updated_at_us = %s
                 WHERE checkpoint_hash = %s AND status = 'running'
                   AND lease_id = %s
-                """,
+                """),
                 (
                     encoded,
                     status,

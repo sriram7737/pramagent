@@ -157,9 +157,8 @@ class QuantumBudgetLedger:
         return shots, cost_usd
 
     def _snapshot_locked(self, tenant_id: str, session_id: str) -> QuantumBudgetSnapshot:
-        placeholders = ",".join("?" for _ in self._ACTIVE_STATUSES)
         row = self._conn.execute(
-            f"""
+            """
             SELECT
                 COALESCE(SUM(CASE
                     WHEN status = 'reconciled' THEN actual_shots
@@ -171,9 +170,9 @@ class QuantumBudgetLedger:
                 END), 0.0)
             FROM quantum_budget_reservations
             WHERE tenant_id = ? AND session_id = ?
-              AND status IN ({placeholders})
+              AND status IN ('reserved', 'reconciled', 'uncertain')
             """,
-            (tenant_id, session_id, *self._ACTIVE_STATUSES),
+            (tenant_id, session_id),
         ).fetchone()
         return QuantumBudgetSnapshot(int(row[0] or 0), round(float(row[1] or 0.0), 6))
 

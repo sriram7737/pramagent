@@ -301,33 +301,59 @@ class PostgresHITLQueue:
         new_status = (RequestStatus.APPROVED.value if approved
                       else RequestStatus.DENIED.value)
         now = time.time()
-        binding_clause = " AND binding_hash=%s" if expected_binding is not None else ""
-        if tenant_id is None:
+        if tenant_id is None and expected_binding is None:
             sql = self._query(
                 "UPDATE {table} "
                 "SET status=%s, decided_at=%s, decided_by=%s, notes=%s "
                 "WHERE request_id=%s AND status=%s "
-                "AND (expires_at IS NULL OR expires_at > %s)" + binding_clause)
+                "AND (expires_at IS NULL OR expires_at > %s)"
+            )
             args: tuple = (new_status, now, decided_by, notes,
                            request_id, RequestStatus.PENDING.value, now)
+            lookup_sql = self._query(
+                "SELECT * FROM {table} WHERE request_id=%s"
+            )
+            lookup_args = (request_id,)
+        elif tenant_id is None:
+            sql = self._query(
+                "UPDATE {table} "
+                "SET status=%s, decided_at=%s, decided_by=%s, notes=%s "
+                "WHERE request_id=%s AND status=%s AND binding_hash=%s "
+                "AND (expires_at IS NULL OR expires_at > %s)"
+            )
+            args = (new_status, now, decided_by, notes,
+                    request_id, RequestStatus.PENDING.value, expected_binding, now)
+            lookup_sql = self._query(
+                "SELECT * FROM {table} WHERE request_id=%s"
+            )
+            lookup_args = (request_id,)
+        elif expected_binding is None:
+            sql = self._query(
+                "UPDATE {table} "
+                "SET status=%s, decided_at=%s, decided_by=%s, notes=%s "
+                "WHERE request_id=%s AND status=%s AND tenant_id=%s "
+                "AND (expires_at IS NULL OR expires_at > %s)"
+            )
+            args = (new_status, now, decided_by, notes,
+                    request_id, RequestStatus.PENDING.value, tenant_id, now)
+            lookup_sql = self._query(
+                "SELECT * FROM {table} WHERE request_id=%s AND tenant_id=%s"
+            )
+            lookup_args = (request_id, tenant_id)
         else:
             sql = self._query(
                 "UPDATE {table} "
                 "SET status=%s, decided_at=%s, decided_by=%s, notes=%s "
                 "WHERE request_id=%s AND status=%s AND tenant_id=%s "
-                "AND (expires_at IS NULL OR expires_at > %s)" + binding_clause)
+                "AND binding_hash=%s AND (expires_at IS NULL OR expires_at > %s)"
+            )
             args = (new_status, now, decided_by, notes,
-                    request_id, RequestStatus.PENDING.value, tenant_id, now)
-        if expected_binding is not None:
-            args = (*args, expected_binding)
-
-        lookup_sql = self._query(
-            "SELECT * FROM {table} WHERE request_id=%s"
-            + (" AND tenant_id=%s" if tenant_id is not None else "")
-        )
-        lookup_args = (
-            (request_id, tenant_id) if tenant_id is not None else (request_id,)
-        )
+                    request_id, RequestStatus.PENDING.value, tenant_id,
+                    expected_binding, now)
+            lookup_sql = self._query(
+                "SELECT * FROM {table} WHERE request_id=%s AND tenant_id=%s"
+            )
+            lookup_args = (request_id, tenant_id)
 
         def _fn(cur):
             self._apply_scope(cur, tenant_id)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +24,7 @@ LINUX_INSTALLER = (
 )
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows PowerShell")
 def test_windows_boundary_installer_parses_without_execution():
     command = (
         "$errors=$null; $tokens=$null; "

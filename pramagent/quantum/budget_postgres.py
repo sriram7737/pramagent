@@ -43,6 +43,7 @@ class PostgresQuantumBudgetLedger:
             raise ValueError(f"unsafe table name: {table!r}")
         self.dsn = str(dsn)
         self.table = table
+        self._table_identifier = '"' + table + '"'
         self._connect_factory = connect_factory or pg_connect
         self._run(self._create_schema)
 
@@ -83,8 +84,8 @@ class PostgresQuantumBudgetLedger:
 
     def _create_schema(self, cursor: Any) -> None:
         cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self.table} (
+            self._query("""
+            CREATE TABLE IF NOT EXISTS {table} (
                 reservation_id TEXT PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
@@ -100,13 +101,19 @@ class PostgresQuantumBudgetLedger:
                 created_at DOUBLE PRECISION NOT NULL,
                 updated_at DOUBLE PRECISION NOT NULL
             )
-            """
+            """)
         )
         cursor.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_{self.table}_session
-            ON {self.table} (tenant_id, session_id, status)
-            """
+            self._query("""
+            CREATE INDEX IF NOT EXISTS {session_index}
+            ON {table} (tenant_id, session_id, status)
+            """)
+        )
+
+    def _query(self, template: str) -> str:
+        """Compose static SQL with the constructor-validated identifier only."""
+        return template.replace("{table}", self._table_identifier).replace(
+            "{session_index}", '"idx_' + self.table + '_session"'
         )
 
     def _lock_scope(self, cursor: Any, tenant_id: str, session_id: str) -> None:
@@ -119,7 +126,7 @@ class PostgresQuantumBudgetLedger:
         self, cursor: Any, tenant_id: str, session_id: str
     ) -> QuantumBudgetSnapshot:
         cursor.execute(
-            f"""
+            self._query("""
             SELECT
                 COALESCE(SUM(CASE
                     WHEN status = 'reconciled' THEN actual_shots
@@ -129,10 +136,10 @@ class PostgresQuantumBudgetLedger:
                     WHEN status = 'reconciled' THEN actual_cost_usd
                     ELSE estimated_cost_usd
                 END), 0.0)
-            FROM {self.table}
+            FROM {table}
             WHERE tenant_id = %s AND session_id = %s
               AND status IN (%s, %s, %s)
-            """,
+            """),
             (tenant_id, session_id, *_ACTIVE_STATUSES),
         )
         row = cursor.fetchone()
@@ -182,13 +189,13 @@ class PostgresQuantumBudgetLedger:
             reservation_id = uuid.uuid4().hex
             now = time.time()
             cursor.execute(
-                f"""
-                INSERT INTO {self.table} (
+                self._query("""
+                INSERT INTO {table} (
                     reservation_id, tenant_id, session_id, circuit_name,
                     estimated_shots, estimated_cost_usd, status,
                     created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, 'reserved', %s, %s)
-                """,
+                """),
                 (
                     reservation_id,
                     tenant_id,
@@ -213,11 +220,11 @@ class PostgresQuantumBudgetLedger:
     def release(self, reservation_id: str) -> bool:
         def operation(cursor: Any) -> bool:
             cursor.execute(
-                f"""
-                UPDATE {self.table}
+                self._query("""
+                UPDATE {table}
                 SET status = 'released', updated_at = %s
                 WHERE reservation_id = %s AND status = 'reserved'
-                """,
+                """),
                 (time.time(), reservation_id),
             )
             return cursor.rowcount == 1
@@ -227,11 +234,11 @@ class PostgresQuantumBudgetLedger:
     def mark_uncertain(self, reservation_id: str) -> bool:
         def operation(cursor: Any) -> bool:
             cursor.execute(
-                f"""
-                UPDATE {self.table}
+                self._query("""
+                UPDATE {table}
                 SET status = 'uncertain', updated_at = %s
                 WHERE reservation_id = %s AND status = 'reserved'
-                """,
+                """),
                 (time.time(), reservation_id),
             )
             return cursor.rowcount == 1
@@ -250,12 +257,12 @@ class PostgresQuantumBudgetLedger:
 
         def operation(cursor: Any) -> QuantumBudgetReconciliation:
             cursor.execute(
-                f"""
+                self._query("""
                 SELECT tenant_id, session_id, status
-                FROM {self.table}
+                FROM {table}
                 WHERE reservation_id = %s
                 FOR UPDATE
-                """,
+                """),
                 (reservation_id,),
             )
             row = cursor.fetchone()
@@ -267,12 +274,12 @@ class PostgresQuantumBudgetLedger:
             self._lock_scope(cursor, tenant_id, session_id)
             before = self._snapshot(cursor, tenant_id, session_id)
             cursor.execute(
-                f"""
-                UPDATE {self.table}
+                self._query("""
+                UPDATE {table}
                 SET actual_shots = %s, actual_cost_usd = %s,
                     status = 'reconciled', updated_at = %s
                 WHERE reservation_id = %s
-                """,
+                """),
                 (shots, cost, time.time(), reservation_id),
             )
             after = self._snapshot(cursor, tenant_id, session_id)
