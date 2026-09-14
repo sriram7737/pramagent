@@ -224,6 +224,7 @@ def test_demo_routes_disabled_by_default(monkeypatch):
     local_client = TestClient(create_app())
 
     assert local_client.get("/demo").status_code == 404
+    assert local_client.get("/demo/quantum-evidence").status_code == 404
     assert local_client.post("/demo/run", json={}).status_code == 404
 
 
@@ -239,6 +240,10 @@ def test_demo_options_disabled_returns_method_not_allowed(monkeypatch):
 
 
 def test_demo_page_enabled(monkeypatch):
+    import base64
+    import hashlib
+    import re
+
     monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
     local_client = TestClient(create_app())
 
@@ -249,6 +254,35 @@ def test_demo_page_enabled(monkeypatch):
     assert "NVIDIA NIM" in resp.text
     assert "Financial HITL wedge" in resp.text
     assert "Leave blank for the deterministic zero-config demo" in resp.text
+    assert "Guarded quantum execution, with receipts." in resp.text
+    csp = resp.headers["content-security-policy"]
+    for tag in ("style", "script"):
+        block = re.search(rf"<{tag}>([\s\S]*?)</{tag}>", resp.text)
+        assert block is not None
+        digest = base64.b64encode(
+            hashlib.sha256(block.group(1).encode("utf-8")).digest()
+        ).decode("ascii")
+        assert f"'sha256-{digest}'" in csp
+
+
+def test_demo_quantum_evidence_is_recorded_physical_hardware(monkeypatch):
+    monkeypatch.setenv("PRAMAGENT_DEMO_ENABLED", "1")
+    local_client = TestClient(create_app())
+
+    resp = local_client.get("/demo/quantum-evidence")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "ibm_quantum_platform"
+    assert body["backend"] == "ibm_fez"
+    assert body["job_id"] == "dajho5hhvn6c73cueht0"
+    assert body["provider_status"] == "DONE"
+    assert body["shots_observed"] == body["shots_requested"] == 256
+    assert body["counts"] == {"00": 134, "01": 2, "10": 5, "11": 115}
+    assert body["passed"] is True
+    assert "does not establish quantum advantage" in body["claim_scope"]
+    assert body["audit_authentication"] == "unkeyed_sha256_test_chain"
+    assert body["live_submission_enabled"] is False
 
 
 def test_demo_zero_config_financial_hold_before_provider(monkeypatch):

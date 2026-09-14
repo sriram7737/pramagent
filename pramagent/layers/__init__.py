@@ -465,7 +465,9 @@ class HITLLayer:
         ctx_tenant = context.get("tenant") or context.get("tenant_id")
         req = QueuedRequest.new(
             action, context,
-            tenant_id=str(ctx_tenant) if ctx_tenant else "")
+            tenant_id=str(ctx_tenant) if ctx_tenant else "",
+            ttl_s=self.timeout_s,
+        )
         tenant_id = req.tenant_id
         self.store.enqueue(req)
 
@@ -483,12 +485,19 @@ class HITLLayer:
                     exc,
                 )
 
-        deadline = (time.time() + self.timeout_s) if self.timeout_s else None
+        deadline = req.expires_at
 
         while True:
             row = self.store.get(req.request_id, tenant_id=tenant_id)
             if row is not None and row.status != RequestStatus.PENDING.value:
                 if row.status == RequestStatus.APPROVED.value:
+                    if (row.binding_hash != req.binding_hash
+                            or not row.binding_is_valid()):
+                        log.error(
+                            "HITL approval binding mismatch for request %s",
+                            req.request_id,
+                        )
+                        return HITLStatus.IDLE
                     return HITLStatus.APPROVED
                 if row.status == RequestStatus.DENIED.value:
                     return HITLStatus.DENIED
@@ -505,12 +514,14 @@ class HITLLayer:
                     if answer is True:
                         self.store.decide(req.request_id, approved=True,
                                           decided_by="approver",
-                                          tenant_id=tenant_id)
+                                          tenant_id=tenant_id,
+                                          expected_binding=req.binding_hash)
                         return HITLStatus.APPROVED
                     if answer is False:
                         self.store.decide(req.request_id, approved=False,
                                           decided_by="approver",
-                                          tenant_id=tenant_id)
+                                          tenant_id=tenant_id,
+                                          expected_binding=req.binding_hash)
                         return HITLStatus.DENIED
                 except asyncio.TimeoutError:
                     pass  # keep polling the store

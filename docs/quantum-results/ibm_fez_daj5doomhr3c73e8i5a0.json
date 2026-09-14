@@ -1,0 +1,69 @@
+{
+  "claim_scope": "Physical IBM QPU execution and retrieval evidence; not a quantum-advantage claim",
+  "circuit": {
+    "depth": 8,
+    "operations": {
+      "barrier": 1,
+      "cz": 1,
+      "measure": 2,
+      "rz": 6,
+      "sx": 3
+    },
+    "qasm3_bytes": 221,
+    "register_qubits": 156,
+    "size": 12
+  },
+  "derived": {
+    "different_bit_shots": 9,
+    "same_bit_correlation": 0.9296875,
+    "same_bit_shots": 119
+  },
+  "evidence": {
+    "actual_cost_usd": null,
+    "backend": "ibm_fez",
+    "circuit_hash": "38fc2dedab2bf05083eaa803ba8a5fb746d13c336f6733881b34c87174e640d3",
+    "completed_at": 1789286123.358941,
+    "counts": {
+      "00": 71,
+      "01": 8,
+      "10": 1,
+      "11": 48
+    },
+    "device_kind": "hardware",
+    "estimated_cost_usd": null,
+    "evidence_hash": "9f49b583075ac1f7e08e58893eb52030a06aac7642bfc7a858b8951b4c76866c",
+    "execution_id": "daj5doomhr3c73e8i5a0",
+    "pricing_model": "ibm_qpu_time_unpriced",
+    "provider": "ibm_quantum",
+    "queue_seconds": 1.5052809715270996,
+    "schema_version": "1.0",
+    "shots_observed": 128,
+    "shots_requested": 128,
+    "status": "completed",
+    "submitted_at": 1789286115.437603,
+    "usage_seconds": 1.156423427,
+    "workload": "bell_attestation"
+  },
+  "limitations": [
+    "The original run used an in-memory local audit chain, so its local chain was not retained.",
+    "The provider job was retrieved read-only from IBM Runtime to verify these values.",
+    "A single computational-basis Bell-circuit run is not a complete entanglement witness.",
+    "This result does not demonstrate quantum advantage or hybrid-VLM quality improvement."
+  ],
+  "provider_metrics": {
+    "circuit_execution_seconds": 0.032850432,
+    "qiskit_version": "qiskit_ibm_runtime-0.49.0,qiskit-2.5.2*",
+    "qpu_charge_time_seconds": 2,
+    "timestamps": {
+      "created": "2026-09-13T07:55:15.437603Z",
+      "finished": "2026-09-13T07:55:23.358941Z",
+      "running": "2026-09-13T07:55:16.942884Z"
+    }
+  },
+  "retrieval": {
+    "method": "QiskitRuntimeService.job read-only provider lookup",
+    "retrieved_at": "2026-09-13T19:53:25.5669438Z"
+  },
+  "record_type": "pramagent.ibm_hardware_attestation",
+  "record_version": "1.0"
+}

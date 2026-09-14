@@ -38,7 +38,8 @@ def test_import_driver_exposes_sql_submodule():
 
 # fake psycopg driver
 _COLUMNS = ["request_id", "action", "context", "tenant_id", "created_at",
-            "decided_at", "status", "decided_by", "notes"]
+            "decided_at", "status", "decided_by", "notes", "expires_at",
+            "binding_hash"]
 
 
 def _render(sql) -> str:
@@ -101,15 +102,29 @@ class _FakeCursor:
             if is_decide:
                 new_status, _ts, decided_by, notes = params[0:4]
                 req_id, pending = params[4], params[5]
-                tenant = params[6] if len(params) > 6 else None
+                offset = 6
+                tenant = params[offset] if "tenant_id=%s" in s else None
+                if tenant is not None:
+                    offset += 1
+                now = params[offset]
+                offset += 1
+                expected_binding = params[offset] if "binding_hash=%s" in s else None
             else:
                 new_status, _ts = params[0:2]
                 req_id, pending = params[2], params[3]
-                tenant = params[4] if len(params) > 4 else None
+                tenant = params[4] if "tenant_id=%s" in s else None
+                now = params[5] if tenant is not None and len(params) > 5 else (
+                    params[4] if "expires_at" in s and len(params) > 4 else None
+                )
                 decided_by = notes = None
+                expected_binding = None
             row = self.db.rows.get(req_id)
             if (row is None or row["status"] != pending
-                    or (tenant is not None and row["tenant_id"] != tenant)):
+                    or (tenant is not None and row["tenant_id"] != tenant)
+                    or (expected_binding is not None
+                        and row["binding_hash"] != expected_binding)
+                    or (is_decide and row["expires_at"] is not None
+                        and row["expires_at"] <= now)):
                 self.rowcount = 0
                 return
             row["status"] = new_status

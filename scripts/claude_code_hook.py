@@ -26,12 +26,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from pramagent.hook_scan import scan_injection, scan_pii
+from pramagent.hook_scan import scan_injection, scan_pii, shell_command_risk
 from pramagent.hook_state import is_enabled as _hook_enabled
 from pramagent.hook_state import get_policies as _central_policies
 from pramagent.hook_state import tool_enabled as _tool_enabled
 from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
 from pramagent.hook_state import targets_protected_path as _targets_protected_path
+from pramagent.hook_state import targets_sensitive_path as _targets_sensitive_path
 
 # The local tenant is unrestricted until it is added to the admin console.
 _TENANT_ID = os.environ.get("PRAMAGENT_TENANT_ID", "claude-code-local")
@@ -94,46 +95,84 @@ def _decision_output(permission_decision: str, reason: str) -> dict:
     }
 
 
-# Policy registration
-# ToolGuard denies names that are not registered here.
+# ToolGuard denies names and fields that are not registered here.
 _GUARD = ToolGuardLayer()
 
-_GUARD.register(ToolPolicy(
-    name="Bash",
-    schema={
+def _schema(properties: dict, required: tuple[str, ...] = ()) -> dict:
+    return {
         "type": "object",
-        "properties": {"command": {"type": "string"}},
-        "required": ["command"],
-    },
-    side_effect=SideEffect.DESTRUCTIVE,
-    escalate_if_severity_gte=SideEffect.WRITE,
-    detail="Shell commands can delete or modify anything on disk. Escalate by default.",
-))
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": False,
+    }
+
+
+_PATH = {"type": "string", "minLength": 1}
+_TEXT = {"type": "string"}
+_BOOL = {"type": "boolean"}
+_INT = {"type": "integer", "minimum": 0}
+
+for _shell_tool in ("Bash", "PowerShell"):
+    _GUARD.register(ToolPolicy(
+        name=_shell_tool,
+        schema=_schema({
+            "command": _TEXT,
+            "timeout": _INT,
+            "description": _TEXT,
+            "run_in_background": _BOOL,
+            "dangerouslyDisableSandbox": _BOOL,
+        }, ("command",)),
+        side_effect=SideEffect.DESTRUCTIVE,
+        escalate_if_severity_gte=SideEffect.WRITE,
+        detail="Shell commands are risk-tiered before execution.",
+    ))
 
 _GUARD.register(ToolPolicy(
     name="Write",
-    schema={
-        "type": "object",
-        "properties": {"file_path": {"type": "string"}},
-        "required": ["file_path"],
-    },
+    schema=_schema({"file_path": _PATH, "content": _TEXT}, ("file_path", "content")),
     side_effect=SideEffect.WRITE,
 ))
-
 _GUARD.register(ToolPolicy(
     name="Edit",
-    schema={
-        "type": "object",
-        "properties": {"file_path": {"type": "string"}},
-        "required": ["file_path"],
-    },
+    schema=_schema({
+        "file_path": _PATH,
+        "old_string": _TEXT,
+        "new_string": _TEXT,
+        "replace_all": _BOOL,
+    }, ("file_path", "old_string", "new_string")),
+    side_effect=SideEffect.WRITE,
+))
+_GUARD.register(ToolPolicy(
+    name="MultiEdit",
+    schema=_schema({
+        "file_path": _PATH,
+        "edits": {
+            "type": "array",
+            "items": _schema({
+                "old_string": _TEXT,
+                "new_string": _TEXT,
+                "replace_all": _BOOL,
+            }, ("old_string", "new_string")),
+        },
+    }, ("file_path", "edits")),
     side_effect=SideEffect.WRITE,
 ))
 
-for _read_tool in ("Read", "Grep", "Glob"):
+_READ_SCHEMAS = {
+    "Read": _schema({"file_path": _PATH, "offset": _INT, "limit": _INT, "pages": _TEXT}, ("file_path",)),
+    "LS": _schema({"path": _PATH}),
+    "Grep": _schema({
+        "pattern": _TEXT, "path": _PATH, "glob": _TEXT, "type": _TEXT,
+        "output_mode": _TEXT, "-i": _BOOL, "-n": _BOOL,
+        "context": _INT, "multiline": _BOOL, "head_limit": _INT,
+        "offset": _INT,
+    }, ("pattern",)),
+    "Glob": _schema({"pattern": _TEXT, "path": _PATH}, ("pattern",)),
+}
+for _read_tool, _read_schema in _READ_SCHEMAS.items():
     _GUARD.register(ToolPolicy(
         name=_read_tool,
-        schema={"type": "object"},
+        schema=_read_schema,
         side_effect=SideEffect.READ,
     ))
 
@@ -171,6 +210,13 @@ def evaluate_event(event: dict) -> dict:
             f"Pramagent hook self-protection: tool '{tool_name}' may not modify "
             f"the hook control plane ({protected_hit}). Change hook settings "
             f"through the admin console instead.")
+
+    sensitive_hit = _targets_sensitive_path(tool_name, tool_input)
+    if sensitive_hit:
+        return _decision_output(
+            "deny",
+            f"Pramagent path policy: tool '{tool_name}' may not modify a "
+            f"credential or system location ({sensitive_hit}).")
 
     # Missing or invalid state keeps enforcement enabled.
     if not _hook_enabled("claude"):
@@ -219,6 +265,13 @@ def evaluate_event(event: dict) -> dict:
             f"({labels}). Review before proceeding."
         )
         return _decision_output("ask", reason)
+
+    if tool_name in {"Bash", "PowerShell"}:
+        shell_risk, shell_reason = shell_command_risk(tool_input.get("command"))
+        if shell_risk == "deny":
+            return _decision_output("deny", f"Pramagent shell policy: {shell_reason}.")
+        if shell_risk == "allow":
+            return {}
 
     if decision.verdict == Verdict.ESCALATE:
         if _HITL_ENABLED:

@@ -204,6 +204,46 @@ def test_resolve_signing_key_ring_single_key_fallback(monkeypatch):
     assert cfg["active_kid"] is None
 
 
+def test_quantum_signing_ring_prefers_dedicated_namespace(monkeypatch):
+    from pramagent.secrets import resolve_quantum_signing_key_ring
+
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEYS", "api-v1:api-key")
+    monkeypatch.setenv(
+        "PRAMAGENT_QUANTUM_SIGNING_KEYS",
+        "quantum-v1:old-key,quantum-v2:new-key",
+    )
+    monkeypatch.setenv("PRAMAGENT_QUANTUM_SIGNING_ACTIVE_KID", "quantum-v2")
+
+    cfg = resolve_quantum_signing_key_ring()
+
+    assert cfg["signing_key"] == ""
+    assert cfg["signing_keys"] == {
+        "quantum-v1": "old-key",
+        "quantum-v2": "new-key",
+    }
+    assert cfg["active_kid"] == "quantum-v2"
+
+
+def test_quantum_signing_ring_falls_back_to_main_configuration(monkeypatch):
+    from pramagent.secrets import resolve_quantum_signing_key_ring
+
+    for name in (
+        "PRAMAGENT_QUANTUM_SIGNING_KEYS",
+        "PRAMAGENT_QUANTUM_SIGNING_ACTIVE_KID",
+        "PRAMAGENT_QUANTUM_SIGNING_KEY",
+        "PRAMAGENT_QUANTUM_SIGNING_KEY_AWS_SECRET_ID",
+        "PRAMAGENT_QUANTUM_SIGNING_KEY_VAULT_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEYS", "api-v1:api-key")
+    monkeypatch.setenv("PRAMAGENT_SIGNING_ACTIVE_KID", "api-v1")
+
+    cfg = resolve_quantum_signing_key_ring()
+
+    assert cfg["signing_keys"] == {"api-v1": "api-key"}
+    assert cfg["active_kid"] == "api-v1"
+
+
 def test_cli_store_verifies_rotated_chain_via_signing_keys_env(tmp_path, monkeypatch):
     """7.2: a chain written across a key rotation (rows tagged v1 then v2) must
     verify when the CLI store is built from PRAMAGENT_SIGNING_KEYS holding the

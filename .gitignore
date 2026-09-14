@@ -46,6 +46,11 @@ patient_note*.txt
 pramagent_*_hook.log
 .test*.txt
 test-results/
+/tmp/
+
+# Local investigation notes and one-off harness output. Existing tracked
+# scratchpad harnesses remain versioned; new files stay out of release commits.
+/scratchpad/
 
 # OS/editor
 .DS_Store

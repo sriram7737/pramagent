@@ -1,0 +1,14 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "plugins/pramagent-guard/hooks/hooks.json": "ff8becf1357ac0bb78293aeceb6dba13efb02f99271e378a44824e612784428c",
+    "plugins/pramagent-guard/hooks/scripts/pramagent_guard.py": "f1d12058b8a2433304148a35b11a34eb98247dd66b6fb24de59d81f7039bdf06",
+    "plugins/pramagent-guard/policies.json": "e553cc90ef0341a27643cf8777a99332723b054ee051fc29933e3148d1577941",
+    "pramagent/hook_scan.py": "afe308fe8e1abd686453473f10f81fcee004f58ed2888707777ab5ba966ccbaa",
+    "pramagent/hook_state.py": "9c39c7dcb1f21fe0965275696b79d1a3760aefeef1e408f579f902e11ad41b14",
+    "scripts/claude_code_hook.py": "12eed11e8f0f9085a39494df40635f3aef78f889e7958bc4cbe849c2f2895968",
+    "scripts/codex_tool_hook.py": "172fae722277914de429488dce2d9ab7e4f893e09d3fb7254524e2e36b5e1464",
+    "scripts/gemini_cli_hook.py": "a8ab39188c82a256d28648aa16df716eb2d5965aa5d967db4e845e51e0c48f40",
+    "scripts/hook_bootstrap.py": "01a2940136792a2b337bde14334306f786569ed8fb2f6a5a94492f8fbc11d399"
+  }
+}

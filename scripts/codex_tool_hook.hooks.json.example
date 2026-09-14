@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "pre_tool_use": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "scripts/hook_bootstrap.py",
+              "--host",
+              "pretool",
+              "--script",
+              "scripts/codex_tool_hook.py"
+            ],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

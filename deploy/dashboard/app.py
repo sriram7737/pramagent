@@ -1233,6 +1233,29 @@ async def hooks_bind_integrity(
     return RedirectResponse("/hooks", status_code=303)
 
 
+@app.post("/hooks/rollback")
+async def hooks_rollback(
+    request: Request,
+    target_hash: str = Form(...),
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        hook_admin.rollback_config(
+            target_hash,
+            actor=f"dashboard:{ctx.username or 'admin'}",
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RedirectResponse(
+            f"/hooks?error={quote_plus(str(exc))}", status_code=303
+        )
+    return RedirectResponse("/hooks", status_code=303)
+
+
 @app.post("/hooks/policy")
 async def hooks_upsert_policy(
     request: Request,

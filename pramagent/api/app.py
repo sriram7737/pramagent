@@ -1439,8 +1439,8 @@ def create_app(armor: Optional[Pramagent] = None,
         "object-src 'none'; "
         "frame-ancestors 'none'; "
         "img-src 'self' data:; "
-        "style-src 'self' 'sha256-iKSq6o6K61AlCgDYs3+exAWFG7cw7zBCoPG2cFPlX6M='; "
-        "script-src 'self' 'sha256-tOs3xBGIOdc/4HwSnPzLdiUeM4VoPRCpvteaM3FHjwM='; "
+        "style-src 'self' 'sha256-Xqyf7N9m/fHAA69RudfmFm+Kopg1hSsbMMOoId/tyUM='; "
+        "script-src 'self' 'sha256-fDCDv8UvCLtfAgky6s+kZki0QVI6v0MBOMBdkwa8CWc='; "
         "connect-src 'self'"
     )
     # Enforce by default. Report-only remains an explicit diagnostic option.
@@ -2223,6 +2223,22 @@ def create_app(armor: Optional[Pramagent] = None,
             },
             headers=_demo_cors_headers(),
         )
+
+    @app.get("/demo/quantum-evidence")
+    async def demo_quantum_evidence():
+        if not _demo_enabled():
+            _demo_not_found()
+        evidence_path = Path(__file__).with_name("quantum_demo_evidence.json")
+        try:
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log.error("packaged quantum demo evidence is unavailable")
+            return JSONResponse(
+                {"detail": "quantum evidence is temporarily unavailable"},
+                status_code=503,
+                headers=_demo_cors_headers(),
+            )
+        return JSONResponse(evidence, headers=_demo_cors_headers())
 
     @app.post("/demo/run")
     async def demo_run(request: Request):

@@ -2,8 +2,13 @@
 
 This example treats PennyLane QNode execution as a guarded Pramagent tool call.
 
-`guarded_qnode.py` wraps QNode execution with shot, cost, input, circuit, and
-result policies. `hybrid_router_demo.py` shows the governance pattern on top:
+For the packaged IBM Runtime hardware attestation and operator commands, see
+[`docs/QUANTUM.md`](../../docs/QUANTUM.md). The hardware command records a real
+provider job ID and measured counts but does not claim quantum advantage.
+
+`pramagent.quantum.GuardedQNode` wraps QNode execution with shot, cost, input,
+circuit, and result policies. `guarded_qnode.py` preserves the original import
+path, while `hybrid_router_demo.py` shows the governance pattern on top:
 use the classical path by default, try the guarded quantum path only for
 high-difficulty inputs, and fall back to classical when budget or HITL policy
 does not allow the quantum call.
@@ -17,7 +22,7 @@ can undercount real spend. Pass `meter_func=pennylane_tracker_meter` to
 `GuardedQNode` to execute under `qml.Tracker` and record the measured shots:
 
 ```python
-from guarded_qnode import GuardedQNode, pennylane_tracker_meter
+from pramagent.quantum import GuardedQNode, pennylane_tracker_meter
 
 guarded = GuardedQNode(qnode, armor, meter_func=pennylane_tracker_meter)
 ```
@@ -29,10 +34,41 @@ estimate-only behavior unchanged. `meter_func` is any
 `(qnode, *args, **kwargs) -> (result, {"shots", "executions"})` callable, so a
 stub can stand in where PennyLane is not installed.
 
+For concurrent workers, add the atomic ledger instead of relying only on audit
+reconstruction:
+
+```python
+from pramagent.quantum import QuantumBudgetLedger, QuantumBudgetLimits
+
+ledger = QuantumBudgetLedger(".pramagent/quantum.db")
+guarded = GuardedQNode(
+    qnode,
+    armor,
+    budget_ledger=ledger,
+    budget_limits=QuantumBudgetLimits(max_shots=5_000, max_cost_usd=0.0),
+)
+```
+
+For workers on different hosts, use the same interface with PostgreSQL:
+
+```python
+from pramagent.quantum import PostgresQuantumBudgetLedger
+
+ledger = PostgresQuantumBudgetLedger(
+    "postgresql://pramagent@db/pramagent",
+)
+```
+
+The PostgreSQL backend uses a transaction-scoped lock per tenant and session,
+so two workers cannot both spend the same remaining quota. See
+[`docs/QUANTUM.md`](../../docs/QUANTUM.md) for the calibration-canary workflow
+that binds a recent hardware check to later workload evidence.
+
+Executed and reconciled events include sealed provider-neutral quantum evidence.
+
 ## Run it
 
 ```bash
-python examples/quantum/guarded_qnode.py
 python examples/quantum/hybrid_router_demo.py
 python -m pytest tests/test_quantum_guarded_qnode.py tests/test_quantum_hybrid_router_demo.py
 ```

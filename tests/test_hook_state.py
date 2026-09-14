@@ -193,3 +193,36 @@ def test_legacy_config_requires_deliberate_binding():
 def test_empty_audit_actor_is_refused():
     with pytest.raises(ValueError, match="authenticated actor"):
         hook_admin.set_surface_enabled("claude", False, actor="")
+
+
+def test_rollback_restores_snapshot_without_rewriting_history():
+    hook_admin.set_surface_enabled("claude", False, actor="alice")
+    target = hook_admin.read_audit(1)[0]
+    hook_admin.set_surface_enabled("claude", True, actor="bob")
+
+    result = hook_admin.rollback_config(target["this_hash"], actor="carol")
+
+    assert result["state"]["surfaces"]["claude"] is False
+    latest = hook_admin.read_audit(1)[0]
+    assert latest["action"] == "rollback_config"
+    assert latest["actor"] == "carol"
+    assert latest["detail"]["target_chain_hash"] == target["this_hash"]
+    assert hook_admin.verify_chain() is True
+    assert len(hook_admin.read_audit(10)) == 3
+
+
+def test_rollback_rejects_unknown_target():
+    hook_admin.set_surface_enabled("claude", False, actor="alice")
+    with pytest.raises(ValueError, match="restorable state"):
+        hook_admin.rollback_config("not-a-real-hash", actor="carol")
+
+
+def test_stale_control_plane_update_is_rejected():
+    first = hook_state._state_for_update()
+    stale = hook_state._state_for_update()
+    first["surfaces"]["claude"] = False
+    hook_admin._commit(first, action="test", actor="alice", detail={})
+    stale["surfaces"]["gemini"] = False
+
+    with pytest.raises(RuntimeError, match="changed during this update"):
+        hook_admin._commit(stale, action="test", actor="bob", detail={})

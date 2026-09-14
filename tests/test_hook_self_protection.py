@@ -17,6 +17,7 @@ the unit level and across all four hook surfaces.
 from __future__ import annotations
 
 import importlib.util
+import builtins
 import json
 import os
 import sys
@@ -68,6 +69,10 @@ def _is_deny(output: dict) -> bool:
     return "deny" in blob and "self-protection" in blob
 
 
+def _permission_is_deny(output: dict) -> bool:
+    return "deny" in json.dumps(output).lower()
+
+
 # -- unit: targets_protected_path -----------------------------------------
 
 def test_unit_write_to_config_by_basename_is_flagged():
@@ -109,6 +114,119 @@ def test_unit_read_only_tool_targeting_config_is_not_flagged():
 
 def test_unit_ordinary_write_is_not_flagged():
     assert hook_state.targets_protected_path("Write", {"file_path": "src/app.py"}) is None
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "command"),
+    [
+        ("Bash", "ls pramagent/quantum"),
+        ("PowerShell", "Get-ChildItem pramagent/quantum"),
+        ("Bash", "git status --porcelain pramagent/quantum"),
+        ("PowerShell", r".venv\Scripts\python.exe -m pytest -q"),
+    ],
+)
+def test_unit_shell_reads_of_nested_paths_do_not_trigger_self_protection(
+    tool_name, command
+):
+    assert hook_state.targets_protected_path(tool_name, {"command": command}) is None
+
+
+def test_unit_ordinary_write_content_may_discuss_protected_paths():
+    assert hook_state.targets_protected_path(
+        "Write",
+        {
+            "file_path": "docs/hook-review.md",
+            "content": "Review scripts/hook_bootstrap.py and .pramagent/audit.db",
+        },
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "command"),
+    [
+        ("Bash", "echo disabled > scripts/claude_code_hook.py"),
+        ("PowerShell", "Set-Content scripts/hook_bootstrap.py disabled"),
+        ("Bash", "rm pramagent/hook_state.py"),
+    ],
+)
+def test_unit_shell_writes_to_control_plane_remain_blocked(tool_name, command):
+    assert hook_state.targets_protected_path(tool_name, {"command": command}) is not None
+
+
+@pytest.mark.parametrize(
+    ("hook", "event_name", "tool_name", "command"),
+    [
+        (CLAUDE, "PreToolUse", "Bash", "ls pramagent/quantum"),
+        (GEMINI, "BeforeTool", "run_shell_command", "git status --porcelain pramagent/quantum"),
+        (CODEX, "PreToolUse", "PowerShell", "Get-ChildItem pramagent/quantum"),
+        (PLUGIN, "PreToolUse", "PowerShell", "Get-ChildItem pramagent/quantum"),
+    ],
+)
+def test_each_surface_does_not_mislabel_nested_read_as_control_plane_write(
+    hook, event_name, tool_name, command
+):
+    output = hook.evaluate_event({
+        "hook_event_name": event_name,
+        "tool_name": tool_name,
+        "tool_input": {"command": command},
+        "session_id": "pytest",
+    })
+    assert "self-protection" not in json.dumps(output).lower()
+
+
+@pytest.mark.parametrize("target", [
+    _REPO_ROOT / "scripts" / "claude_code_hook.py",
+    _REPO_ROOT / "scripts" / "gemini_cli_hook.py",
+    _REPO_ROOT / "scripts" / "codex_tool_hook.py",
+    _REPO_ROOT / ".claude" / "settings.json",
+    _REPO_ROOT / ".codex" / "hooks.json",
+    _REPO_ROOT / ".gemini" / "settings.json",
+    _REPO_ROOT / "plugins" / "pramagent-guard" / "policies.json",
+    _REPO_ROOT / "pramagent" / "layers" / "tool_guard.py",
+])
+def test_unit_control_plane_assets_are_protected(target):
+    hit = hook_state.targets_protected_path(
+        "Write", {"file_path": str(target), "content": "disabled"}
+    )
+    assert hit is not None
+
+
+def test_unit_hook_python_environment_is_protected():
+    target = Path(sys.prefix) / "Lib" / "site-packages" / "jsonschema" / "__init__.py"
+    assert hook_state.targets_protected_path(
+        "Write", {"file_path": str(target), "content": "disabled"}
+    ) is not None
+
+
+def test_unit_installed_claude_launcher_and_settings_are_protected():
+    assert hook_state.targets_protected_path(
+        "Write", {"file_path": "~/.claude/hooks/claude_code_hook.py"}
+    ) is not None
+    assert hook_state.targets_protected_path(
+        "Edit", {"file_path": "~/.claude/settings.json"}
+    ) is not None
+
+
+def test_unit_relative_traversal_to_launcher_is_protected():
+    target = Path("tests") / ".." / "scripts" / "claude_code_hook.py"
+    assert hook_state.targets_protected_path(
+        "Write", {"file_path": str(target), "content": "disabled"}
+    ) is not None
+
+
+def test_unit_sensitive_credential_path_is_denied():
+    hit = hook_state.targets_sensitive_path(
+        "Write", {"file_path": "~/.ssh/config", "content": "changed"}
+    )
+    assert hit is not None
+
+
+def test_unit_extra_protected_path_is_honored(monkeypatch, tmp_path):
+    target = tmp_path / "company-hook-wrapper.ps1"
+    monkeypatch.setenv("PRAMAGENT_HOOK_PROTECTED_PATHS", str(target))
+    assert hook_state.targets_protected_path(
+        "PowerShell", {"command": f"Set-Content {target} disabled"}
+    ) is not None
 
 
 # -- claude surface --------------------------------------------------------
@@ -190,3 +308,61 @@ def test_plugin_write_to_config_is_denied():
         "session_id": "pytest",
     })
     assert _is_deny(out)
+
+
+@pytest.mark.parametrize(
+    ("hook", "event_name", "tool_name", "target"),
+    [
+        (CLAUDE, "PreToolUse", "Write", _REPO_ROOT / "scripts" / "claude_code_hook.py"),
+        (GEMINI, "BeforeTool", "write_file", _REPO_ROOT / "scripts" / "gemini_cli_hook.py"),
+        (CODEX, "PreToolUse", "Write", _REPO_ROOT / "scripts" / "codex_tool_hook.py"),
+        (PLUGIN, "PreToolUse", "Write", _PLUGIN_PATH),
+    ],
+)
+def test_each_surface_protects_its_launcher(hook, event_name, tool_name, target):
+    out = hook.evaluate_event({
+        "hook_event_name": event_name,
+        "tool_name": tool_name,
+        "tool_input": {"file_path": str(target), "content": "print('{}')"},
+        "session_id": "pytest",
+    })
+    assert _is_deny(out)
+
+
+@pytest.mark.parametrize(
+    ("hook", "event_name", "tool_name"),
+    [
+        (CLAUDE, "PreToolUse", "Write"),
+        (GEMINI, "BeforeTool", "write_file"),
+        (CODEX, "PreToolUse", "Write"),
+        (PLUGIN, "PreToolUse", "Write"),
+    ],
+)
+def test_each_surface_blocks_sensitive_credential_writes(hook, event_name, tool_name):
+    out = hook.evaluate_event({
+        "hook_event_name": event_name,
+        "tool_name": tool_name,
+        "tool_input": {"file_path": "~/.ssh/config", "content": "changed"},
+        "session_id": "pytest",
+    })
+    assert _permission_is_deny(out)
+    assert "path policy" in json.dumps(out).lower()
+
+
+def test_plugin_self_protection_import_failure_denies(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "pramagent.hook_state":
+            raise ImportError("simulated startup failure")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    out = PLUGIN.evaluate_event({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "README.md"},
+        "session_id": "pytest",
+    })
+    assert _is_deny(out)
+    assert "failed closed" in json.dumps(out).lower()

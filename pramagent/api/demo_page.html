@@ -116,7 +116,7 @@
     .err { display: none; margin-top: 11px; color: var(--red-dark); font-size: 13px; font-weight: 600; }
     .err.show { display: block; }
     .mini-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-    .mini-chip { font: 700 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 6px 8px; }
+    .mini-chip { max-width: 100%; overflow-wrap: anywhere; font: 700 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 6px 8px; }
     .lead-grid { display: grid; gap: 9px; }
     .lead-btn { border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--ink); font: 700 12.5px/1 var(--sans); padding: 10px 12px; border-radius: 8px; cursor: pointer; }
     .lead-btn:hover { border-color: var(--ink-2); }
@@ -197,21 +197,56 @@
     .conf .k { font: 700 10px/1 var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
     .conf .v { margin-top: 5px; font: 700 12px/1.2 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 
+    /* recorded physical-QPU evidence */
+    .quantum-band { margin-top: 30px; padding: 24px 0; border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); }
+    .quantum-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .quantum-head h2 { margin: 5px 0 0; font-size: 22px; line-height: 1.2; }
+    .quantum-head p { margin: 8px 0 0; max-width: 68ch; color: var(--muted); font-size: 13.5px; }
+    .qpu-state { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; border: 1px solid var(--ok-line); background: var(--ok-bg); color: var(--teal-dark); border-radius: 7px; padding: 7px 9px; font: 700 11px/1 var(--mono); text-transform: uppercase; }
+    .qpu-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+    .qpu-state.loading { border-color: var(--line); background: var(--panel-2); color: var(--muted); }
+    .qpu-state.loading::before { background: var(--dim); }
+    .qpu-state.error { border-color: var(--bad-line); background: var(--bad-bg); color: var(--red-dark); }
+    .qpu-state.error::before { background: var(--red); }
+    .quantum-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr); gap: 24px; margin-top: 20px; align-items: start; }
+    .qpu-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+    .qpu-metric { min-width: 0; padding: 13px 12px; border-right: 1px solid var(--line); }
+    .qpu-metric:last-child { border-right: 0; }
+    .qpu-metric .k { color: var(--muted); font: 700 10px/1.2 var(--mono); text-transform: uppercase; }
+    .qpu-metric .v { margin-top: 6px; font: 800 15px/1.2 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+    .qpu-ledger { margin-top: 12px; display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 5px 12px; font: 12px/1.5 var(--mono); }
+    .qpu-ledger dt { color: var(--muted); }
+    .qpu-ledger dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+    .counts { display: grid; gap: 8px; }
+    .count-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) 34px; gap: 9px; align-items: center; font: 700 11px/1 var(--mono); }
+    .count-track { height: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+    .count-fill { height: 100%; background: var(--blue); }
+    .count-row.same .count-fill { background: var(--teal); }
+    .quantum-note { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+    .quantum-note strong { color: var(--ink-2); }
+
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; vertical-align: -2px; margin-right: 8px; animation: spin .75s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* footer */
     .foot { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
     .foot code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--ink-2); font-family: var(--mono); cursor: pointer; }
+    .foot > * { max-width: 100%; overflow-wrap: anywhere; }
 
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
     @media (max-width: 900px) {
       .main { grid-template-columns: 1fr; }
       .topmeta { display: none; }
+      .quantum-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 480px) {
+    @media (max-width: 640px) {
       .pol { grid-template-columns: 1fr; }
       .lede { font-size: 28px; }
+      .quantum-head { display: grid; }
+      .qpu-state { justify-self: start; }
+      .qpu-metrics { grid-template-columns: 1fr 1fr; }
+      .qpu-metric:nth-child(2) { border-right: 0; }
+      .qpu-metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
     }
   </style>
 </head>
@@ -329,6 +364,40 @@
         </div>
       </div>
     </div>
+
+    <section class="quantum-band" aria-labelledby="quantumTitle">
+      <div class="quantum-head">
+        <div>
+          <div class="eyebrow">Recorded hardware evidence</div>
+          <h2 id="quantumTitle">Guarded quantum execution, with receipts.</h2>
+          <p>This public view reads a packaged result from a completed IBM Quantum job. It demonstrates policy-gated submission, shot accounting, calibration-aware layout selection, and evidence capture. It never submits a paid QPU job from the browser.</p>
+        </div>
+        <span id="qpuState" class="qpu-state loading">Loading evidence</span>
+      </div>
+      <div id="quantumEvidence" class="quantum-grid" aria-live="polite">
+        <div>
+          <div class="qpu-metrics">
+            <div class="qpu-metric"><div class="k">Backend</div><div class="v" id="qpuBackend">-</div></div>
+            <div class="qpu-metric"><div class="k">Correlation</div><div class="v" id="qpuCorrelation">-</div></div>
+            <div class="qpu-metric"><div class="k">Shots</div><div class="v" id="qpuShots">-</div></div>
+            <div class="qpu-metric"><div class="k">QPU usage</div><div class="v" id="qpuUsage">-</div></div>
+          </div>
+          <dl class="qpu-ledger">
+            <dt>Job</dt><dd id="qpuJob">-</dd>
+            <dt>Layout</dt><dd id="qpuLayout">-</dd>
+            <dt>Depth</dt><dd id="qpuDepth">-</dd>
+            <dt>Policy</dt><dd id="qpuPolicy">-</dd>
+            <dt>Audit</dt><dd id="qpuAudit">-</dd>
+            <dt>Evidence</dt><dd id="qpuHash">-</dd>
+          </dl>
+        </div>
+        <div>
+          <div class="step-label">Observed bitstrings</div>
+          <div id="qpuCounts" class="counts"></div>
+          <p id="qpuScope" class="quantum-note"><strong>Claim boundary:</strong> Loading the recorded scope.</p>
+        </div>
+      </div>
+    </section>
 
     <div class="foot">
       <code id="copyInstall">pip install pramagent</code>
@@ -620,6 +689,40 @@
       }
     }
 
+    async function loadQuantumEvidence() {
+      const state = $("qpuState");
+      try {
+        const res = await fetch("/demo/quantum-evidence", { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Evidence unavailable");
+        $("qpuBackend").textContent = data.backend || "unknown";
+        $("qpuCorrelation").textContent = Number(data.same_bit_correlation || 0).toFixed(4);
+        $("qpuShots").textContent = `${Number(data.shots_observed || 0)}/${Number(data.shots_requested || 0)}`;
+        $("qpuUsage").textContent = `${Number(data.usage_seconds || 0).toFixed(0)} s`;
+        $("qpuJob").textContent = data.job_id || "unknown";
+        $("qpuLayout").textContent = `[${(data.physical_qubits || []).join(", ")}] at optimization level ${data.optimization_level}`;
+        $("qpuDepth").textContent = `${data.logical_depth} logical -> ${data.transpiled_depth} ISA`;
+        $("qpuPolicy").textContent = `layout proxy ${Number(data.layout_error_proxy || 0).toFixed(6)} <= ${Number(data.layout_error_policy_ceiling || 0).toFixed(2)}`;
+        $("qpuAudit").textContent = data.audit_authentication === "unkeyed_sha256_test_chain" ? "valid unkeyed capture; versioned signing enabled for new runs" : (data.audit_authentication || "unknown");
+        $("qpuHash").textContent = data.execution_evidence_hash || "unknown";
+        const counts = data.counts || {};
+        const total = Math.max(1, Number(data.shots_observed || 0));
+        $("qpuCounts").innerHTML = ["00", "01", "10", "11"].map((bits) => {
+          const count = Number(counts[bits] || 0);
+          const width = Math.min(100, Math.max(1, (count / total) * 100));
+          const same = bits === "00" || bits === "11" ? " same" : "";
+          return `<div class="count-row${same}"><span>${bits}</span><div class="count-track"><div class="count-fill" style="width:${width.toFixed(2)}%"></div></div><span>${count}</span></div>`;
+        }).join("");
+        $("qpuScope").innerHTML = `<strong>Claim boundary:</strong> ${esc(data.claim_scope || "No claim supplied.")}`;
+        state.textContent = `${data.provider_status || "recorded"} on physical QPU`;
+        state.className = "qpu-state";
+      } catch (err) {
+        state.textContent = "Evidence unavailable";
+        state.className = "qpu-state error";
+        $("qpuScope").innerHTML = `<strong>Evidence error:</strong> ${esc(err.message || "Unable to load the recorded run.")}`;
+      }
+    }
+
     $("runBtn").addEventListener("click", runDemo);
     $("leadBtn").addEventListener("click", async () => {
       $("leadResult").textContent = "";
@@ -662,6 +765,7 @@
     setPolicies(activeScenario.policies);
     renderScenarios();
     renderResting();
+    loadQuantumEvidence();
   </script>
 </body>
 </html>

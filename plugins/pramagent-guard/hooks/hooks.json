@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|run_shell_command|Write|Edit|MultiEdit|apply_patch|write_file|replace|Read|LS|Grep|Glob|read_file|list_directory|glob|grep_search|search_file_content",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
@@ -18,7 +18,7 @@
     ],
     "BeforeTool": [
       {
-        "matcher": "run_shell_command|write_file|replace|read_file|list_directory|glob|grep_search|search_file_content",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",

@@ -41,12 +41,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from pramagent.hook_scan import scan_injection, scan_pii
+from pramagent.hook_scan import scan_injection, scan_pii, shell_command_risk
 from pramagent.hook_state import is_enabled as _hook_enabled
 from pramagent.hook_state import get_policies as _central_policies
 from pramagent.hook_state import tool_enabled as _tool_enabled
 from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
 from pramagent.hook_state import targets_protected_path as _targets_protected_path
+from pramagent.hook_state import targets_sensitive_path as _targets_sensitive_path
 
 # The local tenant is unrestricted until it is managed in the console.
 _TENANT_ID = os.environ.get("PRAMAGENT_TENANT_ID", "gemini-cli-local")
@@ -111,46 +112,71 @@ def _decision_output(decision: str, reason: str) -> dict:
     return {"decision": decision, "reason": reason}
 
 
-# Policy registration
 # These names follow Gemini CLI's built-in tool surface. Unknown names deny.
 _GUARD = ToolGuardLayer()
 
+def _schema(properties: dict, required: tuple[str, ...] = ()) -> dict:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": False,
+    }
+
+
+_PATH = {"type": "string", "minLength": 1}
+_TEXT = {"type": "string"}
+_BOOL = {"type": "boolean"}
+_INT = {"type": "integer", "minimum": 0}
+
 _GUARD.register(ToolPolicy(
     name="run_shell_command",
-    schema={
-        "type": "object",
-        "properties": {"command": {"type": "string"}},
-        "required": ["command"],
-    },
+    schema=_schema({
+        "command": _TEXT,
+        "description": _TEXT,
+        "directory": _PATH,
+        "is_background": _BOOL,
+    }, ("command",)),
     side_effect=SideEffect.DESTRUCTIVE,
     escalate_if_severity_gte=SideEffect.WRITE,
-    detail="Shell commands can delete or modify anything on disk. Escalate by default.",
+    detail="Shell commands are risk-tiered before execution.",
 ))
 
 _GUARD.register(ToolPolicy(
     name="write_file",
-    schema={
-        "type": "object",
-        "properties": {"file_path": {"type": "string"}},
-        "required": ["file_path"],
-    },
+    schema=_schema({"file_path": _PATH, "content": _TEXT}, ("file_path", "content")),
     side_effect=SideEffect.WRITE,
 ))
 
 _GUARD.register(ToolPolicy(
     name="replace",
-    schema={
-        "type": "object",
-        "properties": {"file_path": {"type": "string"}},
-        "required": ["file_path"],
-    },
+    schema=_schema({
+        "file_path": _PATH,
+        "old_string": _TEXT,
+        "new_string": _TEXT,
+        "instruction": _TEXT,
+        "expected_replacements": _INT,
+    }, ("file_path",)),
     side_effect=SideEffect.WRITE,
 ))
 
-for _read_tool in ("read_file", "list_directory", "glob", "grep_search", "search_file_content"):
+_READ_SCHEMAS = {
+    "read_file": _schema({"file_path": _PATH, "offset": _INT, "limit": _INT}, ("file_path",)),
+    "list_directory": _schema({"path": _PATH, "ignore": {"type": "array", "items": _TEXT}}),
+    "glob": _schema({"pattern": _TEXT, "path": _PATH}, ("pattern",)),
+    "grep_search": _schema({
+        "pattern": _TEXT, "path": _PATH, "glob": _TEXT,
+        "case_sensitive": _BOOL, "max_results": _INT,
+    }, ("pattern",)),
+    "search_file_content": _schema({
+        "pattern": _TEXT, "path": _PATH, "include": _TEXT,
+        "case_sensitive": _BOOL, "max_results": _INT,
+    }, ("pattern",)),
+}
+for _read_tool, _read_schema in _READ_SCHEMAS.items():
     _GUARD.register(ToolPolicy(
         name=_read_tool,
-        schema={"type": "object"},
+        schema=_read_schema,
         side_effect=SideEffect.READ,
     ))
 
@@ -196,6 +222,13 @@ def evaluate_event(event: dict) -> dict:
             f"Pramagent hook self-protection: tool '{tool_name}' may not modify "
             f"the hook control plane ({protected_hit}). Change hook settings "
             f"through the admin console instead.")
+
+    sensitive_hit = _targets_sensitive_path(tool_name, tool_input)
+    if sensitive_hit:
+        return _decision_output(
+            "deny",
+            f"Pramagent path policy: tool '{tool_name}' may not modify a "
+            f"credential or system location ({sensitive_hit}).")
 
     # Missing or invalid state keeps enforcement enabled.
     if not _hook_enabled("gemini"):
@@ -243,6 +276,13 @@ def evaluate_event(event: dict) -> dict:
             f"({labels}). Blocked pending review."
         )
         return _decision_output("deny", reason)
+
+    if tool_name == "run_shell_command":
+        shell_risk, shell_reason = shell_command_risk(tool_input.get("command"))
+        if shell_risk == "deny":
+            return _decision_output("deny", f"Pramagent shell policy: {shell_reason}.")
+        if shell_risk == "allow":
+            return {}
 
     if decision.verdict == Verdict.ESCALATE:
         if _HITL_ENABLED:

@@ -16,13 +16,23 @@ pramagent audit-export  Bulk-export a tenant's stored TRACE rows as JSONL
                         the tamper-evident chain — see audit-verify-watch).
 pramagent test-inject   Run built-in injection detection against a prompt.
 pramagent redteam       Run the built-in prompt-injection benchmark.
+pramagent quantum-status
+                        Inspect IBM quantum dependency and credential readiness.
+pramagent quantum-run   Submit a guarded Bell-pair hardware attestation.
+pramagent evidence-v2-verify
+                        Verify a portable evidence envelope offline.
+pramagent evidence-v2-anchor
+                        Timestamp and publish a V2 checkpoint externally.
+pramagent hooks-doctor  Verify hook wiring, hashes, and control-plane integrity.
 pramagent version       Print version.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
+import os
 import sys
 
 
@@ -521,6 +531,436 @@ def cmd_version(args) -> int:
     return 0
 
 
+def cmd_quantum_status(args) -> int:
+    from .quantum import quantum_status
+
+    try:
+        status = quantum_status(connect=args.connect)
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(status, indent=2, sort_keys=True))
+        return 0
+    print("Pramagent quantum status")
+    print(f"  qiskit:              {status['qiskit_version'] or 'not installed'}")
+    print(
+        "  qiskit-ibm-runtime:  "
+        f"{status['qiskit_ibm_runtime_version'] or 'not installed'}"
+    )
+    print(
+        "  IBM credentials:     "
+        f"{'configured' if status['credentials_configured'] else 'not visible'}"
+    )
+    print(f"  credential mode:     {status['credential_mode']}")
+    if status["credentials_configured"]:
+        print(f"  token source:        {status['token_source']}")
+        print(f"  instance source:     {status['instance_source']}")
+        if status["saved_account_names"]:
+            print(f"  saved accounts:      {', '.join(status['saved_account_names'])}")
+    if status["connected"] is not None:
+        print(f"  provider connected:  {status['connected']}")
+        print(f"  physical backends:   {status['backend_count']}")
+        plans = ", ".join(status["instance_plans"]) or "not reported"
+        print(f"  instance plans:      {plans}")
+    return 0
+
+
+def _parse_qubit_pair(value: str) -> tuple[int, int]:
+    try:
+        pair = tuple(int(item.strip()) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("layout must be Q0,Q1") from exc
+    if len(pair) != 2 or pair[0] < 0 or pair[1] < 0 or pair[0] == pair[1]:
+        raise argparse.ArgumentTypeError("layout must contain two distinct qubit IDs")
+    return pair
+
+
+def cmd_quantum_run(args) -> int:
+    from pathlib import Path
+
+    from .core import Pramagent
+    from .quantum import (
+        IBMQuantumRuntime,
+        PostgresQuantumBudgetLedger,
+        QuantumBudgetLedger,
+        make_ibm_hardware_policy,
+    )
+    from .secrets import resolve_quantum_signing_key_ring
+    from .store import SQLiteStore
+
+    audit_path = Path(args.audit_db).expanduser().resolve()
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_store = SQLiteStore(
+        str(audit_path), **resolve_quantum_signing_key_ring()
+    )
+    budget_dsn = getattr(args, "budget_postgres_dsn", "").strip()
+    budget_ledger = None
+    try:
+        budget_ledger = (
+            PostgresQuantumBudgetLedger(
+                budget_dsn,
+                table=getattr(
+                    args,
+                    "budget_postgres_table",
+                    "pramagent_quantum_budget_reservations",
+                ),
+            )
+            if budget_dsn
+            else QuantumBudgetLedger(audit_path)
+        )
+        armor = Pramagent(audit=audit_store)
+        armor.tool_guard.register(
+            make_ibm_hardware_policy(max_shots_per_call=args.max_shots_per_call)
+        )
+        runner = IBMQuantumRuntime(
+            armor,
+            tenant_id=args.tenant_id,
+            session_id=args.session_id,
+            max_shots_per_call=args.max_shots_per_call,
+            max_shots_per_session=args.max_shots_per_session,
+            budget_ledger=budget_ledger,
+        )
+        result = runner.run_hardware_attestation(
+            shots=args.shots,
+            backend_name=args.backend,
+            confirm_hardware=args.submit_hardware,
+            allow_unpriced_hardware=args.allow_unpriced_hardware,
+            minimum_correlation=args.minimum_correlation,
+            optimization_level=args.optimization_level,
+            initial_layout=getattr(args, "initial_layout", None),
+            max_layout_error_proxy=getattr(
+                args, "max_layout_error_proxy", 0.05
+            ),
+            calibration_valid_for_seconds=getattr(
+                args, "calibration_valid_for_seconds", 900.0
+            ),
+        )
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    finally:
+        if budget_ledger is not None:
+            budget_ledger.close()
+        audit_store.close()
+    payload = result.to_dict()
+    payload["audit_db"] = str(audit_path)
+    payload["budget_backend"] = "postgres" if budget_dsn else "sqlite"
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("IBM Quantum hardware attestation")
+        print(f"  backend:             {result.backend}")
+        print(f"  job id:              {result.job_id}")
+        print(f"  shots:               {result.shots_observed}/{result.shots_requested}")
+        print(f"  counts:              {json.dumps(result.counts, sort_keys=True)}")
+        print(f"  Bell correlation:    {result.bell_correlation:.3f}")
+        if result.layout_error_profile:
+            print(
+                "  layout error proxy:  "
+                f"{result.layout_error_profile['total_error_proxy']:.6f}"
+            )
+        print(f"  attestation passed:  {result.passed}")
+        print(f"  audit chain valid:   {result.audit_chain_valid}")
+        print(f"  audit database:      {audit_path}")
+        print("  cost estimate:       unavailable (IBM meters QPU time, not shots)")
+    return 0 if result.passed else 1
+
+
+def cmd_evidence_v2_verify(args) -> int:
+    from pathlib import Path
+
+    from .quantum import (
+        AssuranceLevel,
+        EvidenceEnvelopeV2,
+        VerificationKey,
+    )
+
+    def reject_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON property {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        envelope = EvidenceEnvelopeV2.from_json(
+            Path(args.envelope).read_bytes()
+        )
+        key_payload = json.loads(
+            Path(args.keys).read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicates,
+        )
+        if isinstance(key_payload, list):
+            key_items = key_payload
+        elif isinstance(key_payload, dict):
+            key_items = key_payload.get("keys", key_payload.get("verification_keys"))
+        else:
+            key_items = None
+        if not isinstance(key_items, list) or not key_items:
+            raise ValueError(
+                "key registry must be a non-empty list or an object containing "
+                "a non-empty 'keys' list"
+            )
+        trusted_keys = {}
+        for item in key_items:
+            key = VerificationKey.from_dict(item)
+            identity = (key.algorithm, key.key_id)
+            if identity in trusted_keys:
+                raise ValueError(f"duplicate verification key {identity}")
+            trusted_keys[identity] = key.public_key
+        anchor_verifiers = None
+        anchor_trust = getattr(args, "anchor_trust", "none")
+        if anchor_trust != "none":
+            from .quantum import SigstoreAnchorProvider
+
+            provider = SigstoreAnchorProvider.production(
+                offline=anchor_trust == "sigstore-offline"
+            )
+            anchor_verifiers = provider.verifiers()
+        report = envelope.verify(
+            trusted_keys=trusted_keys,
+            anchor_verifiers=anchor_verifiers,
+            required_assurance=AssuranceLevel(args.require_assurance),
+        )
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+
+    payload = report.to_dict()
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("Pramagent Evidence Envelope V2 verification")
+        print(f"  valid:                 {report.valid}")
+        print(f"  assurance:             {report.assurance_level}")
+        print(f"  record assurance:      {report.record_assurance}")
+        print(f"  checkpoint assurance:  {report.checkpoint_assurance}")
+        algorithms = ", ".join(report.checkpoint.verified_algorithms) or "none"
+        print(f"  signatures verified:   {algorithms}")
+        print(f"  inclusion proof:       {report.inclusion_valid}")
+        print(f"  TSA verified:          {report.tsa_valid}")
+        print(f"  publication verified:  {report.publication_valid}")
+        for warning in report.warnings:
+            print(f"  [warn] {warning}")
+        for error in report.errors:
+            print(f"  [fail] {error}")
+    return 0 if report.valid else 1
+
+
+def cmd_evidence_v2_anchor(args) -> int:
+    """Queue and process external anchors for one V2 envelope."""
+    from pathlib import Path
+
+    from .quantum import (
+        EvidenceEnvelopeV2,
+        PostgresAnchorOutbox,
+        SQLiteAnchorOutbox,
+        SigstoreAnchorProvider,
+        attach_anchors,
+        canonicalize_jcs,
+    )
+
+    try:
+        envelope = EvidenceEnvelopeV2.from_json(Path(args.envelope).read_bytes())
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        outbox_dsn = getattr(args, "outbox_postgres_dsn", "") or os.environ.get(
+            "PRAMAGENT_ANCHOR_POSTGRES_DSN", ""
+        )
+        if outbox_dsn:
+            outbox_context = PostgresAnchorOutbox(
+                outbox_dsn,
+                table=getattr(
+                    args, "outbox_table", "pramagent_evidence_anchor_jobs"
+                ),
+            )
+            outbox_description = "postgres"
+        else:
+            outbox_context = SQLiteAnchorOutbox(args.outbox)
+            outbox_description = str(Path(args.outbox).expanduser().resolve())
+        with outbox_context as outbox:
+            outbox.enqueue(envelope.checkpoint)
+            target = outbox.get(envelope.checkpoint.checkpoint_hash)
+            for _ in range(args.max_jobs):
+                if target is not None and target.status == "complete":
+                    break
+                processed = outbox.process_one(provider)
+                if processed is None:
+                    break
+                target = outbox.get(envelope.checkpoint.checkpoint_hash)
+            if target is None:
+                raise RuntimeError("anchor job was not persisted")
+            if target.status != "complete":
+                detail = target.last_error or "anchor job remains queued"
+                raise RuntimeError(f"external anchoring incomplete: {detail}")
+            anchored = attach_anchors(envelope, target.anchors)
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonicalize_jcs(anchored.to_dict()) + b"\n")
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+
+    payload = {
+        "checkpoint_hash": envelope.checkpoint.checkpoint_hash,
+        "output": str(output),
+        "outbox": outbox_description,
+        "anchors": [anchor.to_dict() for anchor in target.anchors],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print("Pramagent Evidence Envelope V2 anchored")
+        print(f"  checkpoint:          {payload['checkpoint_hash']}")
+        print("  RFC 3161 timestamp:  verified")
+        print("  Rekor publication:   verified")
+        print(f"  output:              {output}")
+        print(f"  retry outbox:        {payload['outbox']}")
+    return 0
+
+
+def cmd_evidence_archive_create(args) -> int:
+    """Create an RFC 4998 archive bundle from an anchored V2 envelope."""
+    from pathlib import Path
+
+    from .quantum import (
+        EvidenceEnvelopeV2,
+        SigstoreAnchorProvider,
+        canonicalize_jcs,
+        create_archive_bundle,
+    )
+
+    try:
+        envelope = EvidenceEnvelopeV2.from_json(Path(args.envelope).read_bytes())
+        tsa_anchors = [
+            anchor for anchor in envelope.anchors if anchor.anchor_type == "RFC3161"
+        ]
+        if len(tsa_anchors) != 1:
+            raise ValueError("envelope must contain exactly one RFC 3161 anchor")
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        bundle = create_archive_bundle(
+            envelope.checkpoint.checkpoint_hash,
+            tsa_anchors[0],
+            anchor_verifier=provider.verify_rfc3161,
+        )
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonicalize_jcs(bundle.to_dict()) + b"\n")
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "bundle_hash": bundle.bundle_hash,
+        "checkpoint_hash": bundle.checkpoint_hash,
+        "output": str(output),
+        "timestamp_count": len(bundle.timestamp_anchors),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else (
+        "Pramagent RFC 4998 archive created\n"
+        f"  checkpoint:  {bundle.checkpoint_hash}\n"
+        f"  timestamps:  {len(bundle.timestamp_anchors)}\n"
+        f"  output:      {output}"
+    ))
+    return 0
+
+
+def cmd_evidence_archive_renew(args) -> int:
+    """Append a live RFC 3161 timestamp renewal to an archive bundle."""
+    from pathlib import Path
+
+    from .quantum import (
+        RFC4998ArchiveBundle,
+        SigstoreAnchorProvider,
+        canonicalize_jcs,
+        renew_archive_bundle,
+        timestamp_renewal_payload,
+    )
+
+    try:
+        bundle = RFC4998ArchiveBundle.from_json(Path(args.bundle).read_bytes())
+        record = base64.b64decode(bundle.evidence_record_der_b64, validate=True)
+        payload_to_timestamp = timestamp_renewal_payload(record)
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        anchor = provider.issue_archive_timestamp(payload_to_timestamp)
+        renewed = renew_archive_bundle(
+            bundle,
+            anchor,
+            anchor_verifier=lambda value: provider.verify_archive_timestamp(
+                value, payload_to_timestamp
+            ),
+        )
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonicalize_jcs(renewed.to_dict()) + b"\n")
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "bundle_hash": renewed.bundle_hash,
+        "checkpoint_hash": renewed.checkpoint_hash,
+        "output": str(output),
+        "timestamp_count": len(renewed.timestamp_anchors),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else (
+        "Pramagent RFC 4998 archive renewed\n"
+        f"  checkpoint:  {renewed.checkpoint_hash}\n"
+        f"  timestamps:  {len(renewed.timestamp_anchors)}\n"
+        f"  output:      {output}"
+    ))
+    return 0
+
+
+def cmd_evidence_archive_verify(args) -> int:
+    """Verify an RFC 4998 archive bundle against Sigstore trust material."""
+    from pathlib import Path
+
+    from .quantum import (
+        RFC4998ArchiveBundle,
+        SigstoreAnchorProvider,
+        verify_archive_bundle,
+    )
+
+    try:
+        bundle = RFC4998ArchiveBundle.from_json(Path(args.bundle).read_bytes())
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        report = verify_archive_bundle(
+            bundle,
+            initial_anchor_verifier=provider.verify_rfc3161,
+            renewal_anchor_verifier=provider.verify_archive_timestamp,
+        )
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "errors": list(report.errors),
+        "external_timestamps_valid": report.external_timestamps_valid,
+        "structural_valid": report.structural_valid,
+        "timestamp_count": report.timestamp_count,
+        "valid": report.valid,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else (
+        "Pramagent RFC 4998 archive verification\n"
+        f"  valid:                {report.valid}\n"
+        f"  structure:            {report.structural_valid}\n"
+        f"  external timestamps:  {report.external_timestamps_valid}\n"
+        f"  timestamp count:      {report.timestamp_count}"
+    ))
+    return 0 if report.valid else 1
+
+
 def cmd_backtest(args) -> int:
     from .policies import PolicyLoadError, backtest_policy_file
 
@@ -576,6 +1016,28 @@ def cmd_demo(args) -> int:
         reload=args.reload,
     )
     return 0
+
+
+def cmd_hooks_doctor(args) -> int:
+    """Report whether coding-agent hooks are installed and tamper-evident."""
+    from .hook_doctor import inspect_hooks
+
+    report = inspect_hooks(repo_root=args.repo_root or None)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    else:
+        for check in report.checks:
+            label = {"ok": "ok", "warn": "warn", "fail": "fail"}[check.status]
+            suffix = f" ({check.path})" if check.path else ""
+            print(f"  [{label}] {check.name}: {check.detail}{suffix}")
+        print(
+            "Hook integrity: "
+            + ("hardened" if report.hardened else "healthy with warnings"
+               if report.healthy else "failed")
+        )
+    if not report.healthy:
+        return 1
+    return 1 if args.strict and not report.hardened else 0
 
 
 def main():
@@ -716,6 +1178,193 @@ def main():
         help="Emit machine-readable JSON",
     )
 
+    p_quantum_status = sub.add_parser(
+        "quantum-status",
+        help="Inspect IBM quantum dependency and credential readiness",
+    )
+    p_quantum_status.add_argument(
+        "--connect",
+        action="store_true",
+        help="Authenticate and query physical backends without submitting a job",
+    )
+    p_quantum_status.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_quantum_run = sub.add_parser(
+        "quantum-run",
+        help="Submit a guarded Bell-pair attestation to an IBM physical QPU",
+    )
+    p_quantum_run.add_argument("--shots", type=int, default=128)
+    p_quantum_run.add_argument("--backend", default="", help="Backend name; default is least busy")
+    p_quantum_run.add_argument("--tenant-id", default="local-operator")
+    p_quantum_run.add_argument("--session-id", default="ibm-attestation")
+    p_quantum_run.add_argument(
+        "--audit-db",
+        default=os.environ.get(
+            "PRAMAGENT_QUANTUM_AUDIT_DB", ".pramagent/quantum-audit.db"
+        ),
+        help="Persistent SQLite audit-chain database",
+    )
+    p_quantum_run.add_argument("--max-shots-per-call", type=int, default=1024)
+    p_quantum_run.add_argument("--max-shots-per-session", type=int, default=4096)
+    p_quantum_run.add_argument("--minimum-correlation", type=float, default=0.60)
+    p_quantum_run.add_argument("--optimization-level", type=int, choices=range(4), default=3)
+    p_quantum_run.add_argument(
+        "--initial-layout",
+        type=_parse_qubit_pair,
+        default=None,
+        metavar="Q0,Q1",
+        help="Force a physical qubit pair; default uses error-aware auto layout",
+    )
+    p_quantum_run.add_argument(
+        "--max-layout-error-proxy",
+        type=float,
+        default=0.05,
+        help="Reject the selected ISA layout above this calibration-error proxy",
+    )
+    p_quantum_run.add_argument(
+        "--calibration-valid-for-seconds",
+        type=float,
+        default=900.0,
+        help="Maximum age advertised by the sealed calibration canary",
+    )
+    p_quantum_run.add_argument(
+        "--budget-postgres-dsn",
+        default=os.environ.get("PRAMAGENT_QUANTUM_BUDGET_POSTGRES_DSN", ""),
+        help="Use a shared Postgres quantum budget ledger (env supported)",
+    )
+    p_quantum_run.add_argument(
+        "--budget-postgres-table",
+        default="pramagent_quantum_budget_reservations",
+        help="Validated table name for the shared quantum budget ledger",
+    )
+    p_quantum_run.add_argument(
+        "--submit-hardware",
+        action="store_true",
+        help="Explicitly authorize submission to a physical QPU",
+    )
+    p_quantum_run.add_argument(
+        "--allow-unpriced-hardware",
+        action="store_true",
+        help="Acknowledge that IBM QPU-time cost cannot be estimated per shot",
+    )
+    p_quantum_run.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_evidence_verify = sub.add_parser(
+        "evidence-v2-verify",
+        help="Verify a V2 evidence envelope with a trusted public-key registry",
+    )
+    p_evidence_verify.add_argument("--envelope", required=True, help="Envelope JSON path")
+    p_evidence_verify.add_argument("--keys", required=True, help="Trusted key registry JSON path")
+    p_evidence_verify.add_argument(
+        "--require-assurance",
+        choices=(
+            "checksum_only",
+            "hmac_authenticated",
+            "asymmetric_checkpointed",
+            "tsa_anchored",
+        ),
+        default="asymmetric_checkpointed",
+        help="Minimum accepted assurance level",
+    )
+    p_evidence_verify.add_argument(
+        "--anchor-trust",
+        choices=("none", "sigstore-offline", "sigstore-production"),
+        default="none",
+        help=(
+            "Verify external anchors with cached or TUF-refreshed Sigstore "
+            "production trust material"
+        ),
+    )
+    p_evidence_verify.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_evidence_anchor = sub.add_parser(
+        "evidence-v2-anchor",
+        help="Timestamp and publish a V2 checkpoint through Sigstore services",
+    )
+    p_evidence_anchor.add_argument("--envelope", required=True, help="Envelope JSON path")
+    p_evidence_anchor.add_argument("--output", required=True, help="Anchored envelope output path")
+    p_evidence_anchor.add_argument(
+        "--outbox",
+        default=".pramagent/evidence_anchor_outbox.sqlite3",
+        help="Durable SQLite retry queue used when Postgres is not configured",
+    )
+    p_evidence_anchor.add_argument(
+        "--outbox-postgres-dsn",
+        default="",
+        help=(
+            "Distributed Postgres retry queue DSN; may also be set with "
+            "PRAMAGENT_ANCHOR_POSTGRES_DSN"
+        ),
+    )
+    p_evidence_anchor.add_argument(
+        "--outbox-table",
+        default="pramagent_evidence_anchor_jobs",
+        help="Postgres anchor outbox table name",
+    )
+    p_evidence_anchor.add_argument(
+        "--trust-cache-only",
+        action="store_true",
+        help="Use cached Sigstore TUF trust metadata without refreshing it",
+    )
+    p_evidence_anchor.add_argument(
+        "--timeout",
+        type=int,
+        default=15,
+        help="Per-service network timeout in seconds",
+    )
+    p_evidence_anchor.add_argument(
+        "--max-jobs",
+        type=int,
+        default=100,
+        help="Maximum queued jobs to process while waiting for this checkpoint",
+    )
+    p_evidence_anchor.add_argument("--json", action="store_true", help="Emit JSON")
+
+    p_archive_create = sub.add_parser(
+        "evidence-archive-create",
+        help="Create an RFC 4998 archive bundle from an anchored V2 envelope",
+    )
+    p_archive_create.add_argument("--envelope", required=True)
+    p_archive_create.add_argument("--output", required=True)
+    p_archive_create.add_argument("--trust-cache-only", action="store_true")
+    p_archive_create.add_argument("--timeout", type=int, default=15)
+    p_archive_create.add_argument("--json", action="store_true")
+
+    p_archive_renew = sub.add_parser(
+        "evidence-archive-renew",
+        help="Append an RFC 3161 timestamp renewal to an RFC 4998 bundle",
+    )
+    p_archive_renew.add_argument("--bundle", required=True)
+    p_archive_renew.add_argument("--output", required=True)
+    p_archive_renew.add_argument("--trust-cache-only", action="store_true")
+    p_archive_renew.add_argument("--timeout", type=int, default=15)
+    p_archive_renew.add_argument("--json", action="store_true")
+
+    p_archive_verify = sub.add_parser(
+        "evidence-archive-verify",
+        help="Verify an RFC 4998 bundle and every retained TSA artifact",
+    )
+    p_archive_verify.add_argument("--bundle", required=True)
+    p_archive_verify.add_argument("--trust-cache-only", action="store_true")
+    p_archive_verify.add_argument("--timeout", type=int, default=15)
+    p_archive_verify.add_argument("--json", action="store_true")
+
+    p_hooks_doctor = sub.add_parser(
+        "hooks-doctor",
+        help="Verify coding-agent hook wiring and runtime integrity",
+    )
+    p_hooks_doctor.add_argument(
+        "--repo-root",
+        default="",
+        help="Repository containing scripts/ and plugins/ (default: installed source root)",
+    )
+    p_hooks_doctor.add_argument(
+        "--strict",
+        action="store_true",
+        help="Return non-zero for warnings such as writable hook files",
+    )
+    p_hooks_doctor.add_argument("--json", action="store_true", help="Emit JSON")
+
     sub.add_parser("version", help="Print version")
 
     p_demo = sub.add_parser(
@@ -738,6 +1387,14 @@ def main():
         "test-inject": cmd_test_inject,
         "redteam":     cmd_redteam,
         "backtest":    cmd_backtest,
+        "quantum-status": cmd_quantum_status,
+        "quantum-run": cmd_quantum_run,
+        "evidence-v2-verify": cmd_evidence_v2_verify,
+        "evidence-v2-anchor": cmd_evidence_v2_anchor,
+        "evidence-archive-create": cmd_evidence_archive_create,
+        "evidence-archive-renew": cmd_evidence_archive_renew,
+        "evidence-archive-verify": cmd_evidence_archive_verify,
+        "hooks-doctor": cmd_hooks_doctor,
         "version":     cmd_version,
         "demo":        cmd_demo,
     }

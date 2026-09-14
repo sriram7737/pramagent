@@ -29,6 +29,10 @@ For local development inside this repo, use editable mode:
 python -m pip install -e .
 ```
 
+The Python wheel supplies the policy engine. The host hook files in this
+directory are distributed through the repository marketplace/plugin source;
+installing the wheel alone does not register a coding-agent hook.
+
 If the hook fails closed with an import error, check which interpreter the host
 resolves for `python`. On Windows especially, you may need to edit
 `hooks/hooks.json` so `command` points at a project venv such as
@@ -39,13 +43,16 @@ resolves for `python`. On Windows especially, you may need to edit
 - `hooks/hooks.json` registers Claude/Codex/Grok-compatible tool-call hooks.
 - `hooks/scripts/pramagent_guard.py` evaluates each matched tool event.
 - `policies.json` contains conservative starter policies:
-  - shell tools are destructive and route to human confirmation;
+  - known read-only shell inspection is allowed;
+  - destructive, publish, and deploy shell forms are denied;
+  - other shell commands route to human confirmation or deny when the host has
+    no interactive approval result;
   - write/edit tools route to human confirmation;
   - read/list/search tools are allowed unless ToolGuard detects injection or
     schema problems.
 
-Unknown tools are not matched by default. To guard custom host tools, add their
-names to `hooks/hooks.json` and add matching entries to `policies.json`.
+All tools are matched by default. Unknown tools are denied until a matching
+entry is added to `policies.json` or through the admin console.
 
 ## Claude Code
 
@@ -100,12 +107,14 @@ echo '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_pat
   | PRAMAGENT_PLUGIN_ROOT=plugins/pramagent-guard python plugins/pramagent-guard/hooks/scripts/pramagent_guard.py
 ```
 
-Escalation path:
+Read-only shell path:
 
 ```bash
 echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"},"session_id":"smoke"}' \
   | PRAMAGENT_PLUGIN_ROOT=plugins/pramagent-guard python plugins/pramagent-guard/hooks/scripts/pramagent_guard.py
 ```
+
+Review path: replace `ls -la` above with `npm install`.
 
 Block path:
 
@@ -120,3 +129,8 @@ This plugin is a guardrail and approval router. It is not a sandbox. It does
 not isolate processes, network access, filesystem access, credentials, or
 kernel-level behavior. Use it with OS sandboxing, least-privilege credentials,
 and host-agent permission controls.
+
+The in-hook self-protection blocks tool-mediated changes to the hook control
+plane and common credential paths. It does not make same-user files immutable.
+For a strong trust boundary, install the hook under a separate account or apply
+OS permissions that the agent identity cannot change.

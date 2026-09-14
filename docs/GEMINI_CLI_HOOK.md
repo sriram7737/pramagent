@@ -32,9 +32,8 @@ interpreter path from:
     '{"hook_event_name":"BeforeTool","tool_name":"run_shell_command","tool_input":{"command":"ls -la"},"session_id":"test1"}' |
       python scripts\gemini_cli_hook.py
 
-Expected result: a JSON decision with "decision":"deny" (see Current
-Policy below for why there is no "ask" outcome in this hook's contract,
-unlike Claude Code's).
+Expected result: `{}` because `ls` is in the read-only shell tier. Commands that
+need review return `"decision":"deny"` unless a real HITL approver is wired.
 
 Read-only tools such as read_file, list_directory, glob, grep_search, and
 search_file_content return {} when their arguments match the expected
@@ -43,21 +42,18 @@ them.
 
 ## Matcher Choices
 
-The example matcher covers Gemini CLI's built-in local tools:
+The example uses a strict matcher:
 
-    run_shell_command|write_file|replace|read_file|list_directory|glob|grep_search|search_file_content
+    .*
 
-For strict fail-closed host-tool experiments, change the matcher to a broad
-regular expression such as ".*". This is not native MCP support; it only means
-Gemini CLI will send more matched tool names through this hook. With a broad
-matcher, any unregistered tool name is denied by ToolGuardLayer instead of
-silently passing through.
+This sends every host tool through the hook. Any unregistered name is denied by
+ToolGuardLayer instead of silently passing through.
 
 ## Current Policy
 
 | Tool | Side effect | Hook behavior |
 | --- | --- | --- |
-| run_shell_command | destructive | escalates internally, then denies by default (no HITL wired) |
+| run_shell_command | destructive | allow known read-only commands, deny destructive forms, deny review-required commands unless HITL is wired |
 | write_file, replace | write | allow when schema, injection, and PII checks pass |
 | read_file, list_directory, glob, grep_search, search_file_content | read | allow when schema and injection checks pass |
 | unregistered tools | unknown | deny |

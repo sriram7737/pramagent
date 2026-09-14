@@ -202,7 +202,7 @@
   {% if audit %}
   <div class="table-wrap">
     <table class="trace-table">
-      <thead><tr><th>When</th><th>Actor</th><th>Change</th><th>Detail</th><th>Chain hash</th></tr></thead>
+      <thead><tr><th>When</th><th>Actor</th><th>Change</th><th>Detail</th><th>Chain hash</th><th></th></tr></thead>
       <tbody>
       {% for a in audit %}
         <tr>
@@ -211,6 +211,15 @@
           <td class="mono">{{ a.action }}</td>
           <td class="mono" style="font-size:12px">{{ a.detail }}</td>
           <td class="mono">{{ (a.this_hash or "")[:12] }}</td>
+          <td>
+            {% if a.restorable %}
+            <form method="post" action="/hooks/rollback">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="target_hash" value="{{ a.this_hash }}">
+              <button class="button" type="submit">Restore</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
       {% endfor %}
       </tbody>

@@ -1,13 +1,23 @@
 {
+  "hooksConfig": {
+    "enabled": true
+  },
   "hooks": {
     "BeforeTool": [
       {
-        "matcher": "run_shell_command|write_file|replace|read_file|list_directory|glob|grep_search|search_file_content",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/gemini_cli_hook.py",
-            "timeout": 10000
+            "command": "python",
+            "args": [
+              "scripts/hook_bootstrap.py",
+              "--host",
+              "gemini",
+              "--script",
+              "scripts/gemini_cli_hook.py"
+            ],
+            "timeout": 20000
           }
         ]
       }

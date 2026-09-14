@@ -11,23 +11,72 @@ import hashlib
 import hmac
 import json
 import os
+import re
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
 
-from .hook_scan import iter_strings
+from .hook_scan import iter_strings, shell_command_risk
 
 # Hook adapters that can be toggled independently.
 SURFACES: tuple[str, ...] = ("claude", "gemini", "codex", "plugin")
 
-# Mutating tools cannot target the configuration or its audit database.
+# File and shell tools must not be able to rewrite the guard that evaluates them.
 _MUTATING_FILE_TOOLS: frozenset[str] = frozenset({
-    "Write", "Edit", "MultiEdit", "apply_patch", "write_file", "replace",
+    "write", "edit", "multiedit", "apply_patch", "write_file", "replace",
+    "notebookedit", "create_file", "delete_file", "move_file",
 })
 _SHELL_TOOLS: frozenset[str] = frozenset({
-    "Bash", "PowerShell", "run_shell_command",
+    "bash", "powershell", "run_shell_command", "exec_command", "shell",
+    "terminal",
 })
+
+_PATH_ARGUMENT_KEYS: frozenset[str] = frozenset({
+    "file_path", "filepath", "path", "target", "destination", "directory",
+    "notebook_path", "old_path", "new_path",
+})
+
+_SHELL_WRITE_SIGNAL = re.compile(
+    r"(?:"
+    r"(?<!<)>{1,2}|"
+    r"\b(?:tee|rm|mv|cp|install|unlink|shred|truncate|touch|chmod|chown)\b|"
+    r"\b(?:Set|Add|Clear)-Content\b|\bOut-File\b|"
+    r"\b(?:New|Remove|Move|Copy|Rename)-Item\b|"
+    r"\b(?:del|erase|rmdir|rd|copy|move|ren)\b|"
+    r"\bsed\s+(?:-[A-Za-z]*i[A-Za-z]*|--in-place)\b|"
+    r"\bperl\s+-[A-Za-z]*i[A-Za-z]*\b|"
+    r"\b(?:git\s+(?:apply|checkout|restore|clean|reset)|patch)\b|"
+    r"\.(?:write_text|write_bytes|unlink|rename|replace)\s*\(|"
+    r"\bopen\s*\([^\r\n]{0,300},\s*['\"](?:w|a|x)[bt+]*['\"]"
+    r")",
+    re.IGNORECASE,
+)
+
+_HOST_CONFIGS: tuple[tuple[str, ...], ...] = (
+    (".claude", "settings.json"),
+    (".claude", "settings.local.json"),
+    (".codex", "hooks.json"),
+    (".codex", "config.toml"),
+    (".gemini", "settings.json"),
+    (".gemini", "config", "settings.json"),
+)
+
+_HOOK_LAUNCHERS: tuple[tuple[str, ...], ...] = (
+    ("scripts", "hook_bootstrap.py"),
+    ("scripts", "claude_code_hook.py"),
+    ("scripts", "gemini_cli_hook.py"),
+    ("scripts", "codex_tool_hook.py"),
+)
+
+_PLUGIN_FILES: tuple[tuple[str, ...], ...] = (
+    ("hooks", "hooks.json"),
+    ("hooks", "scripts", "pramagent_guard.py"),
+    ("policies.json",),
+    (".claude-plugin", "plugin.json"),
+    (".codex-plugin", "plugin.json"),
+)
 
 
 def _repo_root() -> Path:
@@ -47,6 +96,32 @@ def audit_path() -> Path:
     return Path(override) if override else state_path().with_name(
         "pramagent_hook_admin_audit.db"
     )
+
+
+def _plugin_roots() -> tuple[Path, ...]:
+    roots = [_repo_root() / "plugins" / "pramagent-guard"]
+    for name in (
+        "PRAMAGENT_PLUGIN_ROOT",
+        "CLAUDE_PLUGIN_ROOT",
+        "PLUGIN_ROOT",
+        "GROK_PLUGIN_ROOT",
+    ):
+        value = os.environ.get(name)
+        if value:
+            roots.append(Path(value).expanduser())
+    return tuple(roots)
+
+
+def _extra_protected_paths() -> tuple[Path, ...]:
+    raw = os.environ.get("PRAMAGENT_HOOK_PROTECTED_PATHS", "")
+    return tuple(Path(value).expanduser() for value in raw.split(os.pathsep) if value)
+
+
+def _resolve(candidate: Path) -> Path:
+    try:
+        return candidate.expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return candidate.expanduser()
 
 
 def _normalize(raw: Any) -> dict[str, Any]:
@@ -166,10 +241,12 @@ def _state_for_update() -> dict[str, Any]:
     """Return mutable state for an admin operation, refusing unbound legacy state."""
     state, readable = _read_state()
     if not readable and not state_path().exists():
+        state["_base_state_hash"] = state_digest(state)
         return state
     valid, reason = integrity_status(state)
     if not valid:
         raise RuntimeError(f"hook config integrity check failed: {reason}")
+    state["_base_state_hash"] = state_digest(state)
     return state
 
 
@@ -218,16 +295,146 @@ def tenant_tool_allowed(
 
 
 def protected_paths() -> tuple[Path, ...]:
-    """Return resolved paths for the config and its admin audit database."""
-    cfg = state_path()
-    audit = audit_path()
-    resolved: list[Path] = []
-    for candidate in (cfg, audit):
+    """Return files that can disable or weaken an installed hook."""
+    repo = _repo_root()
+    home = Path.home()
+    candidates = [
+        state_path(),
+        audit_path(),
+        repo / "pramagent" / "hook_integrity.json",
+        Path(os.environ.get(
+            "PRAMAGENT_GEMINI_HOOK_AUDIT_DB",
+            repo / "pramagent_gemini_hook_audit.db",
+        )),
+        *(repo.joinpath(*parts) for parts in _HOST_CONFIGS),
+        *(home.joinpath(*parts) for parts in _HOST_CONFIGS),
+        *(repo.joinpath(*parts) for parts in _HOOK_LAUNCHERS),
+        *(
+            home / ".claude" / "hooks" / Path(*parts).name
+            for parts in _HOOK_LAUNCHERS
+        ),
+    ]
+    for root in _plugin_roots():
+        candidates.extend(root.joinpath(*parts) for parts in _PLUGIN_FILES)
+    policy_override = os.environ.get("PRAMAGENT_GUARD_POLICY")
+    if policy_override:
+        candidates.append(Path(policy_override))
+    candidates.extend(_extra_protected_paths())
+
+    unique: dict[str, Path] = {}
+    for candidate in candidates:
+        resolved = _resolve(candidate)
+        unique[os.path.normcase(str(resolved))] = resolved
+    return tuple(unique.values())
+
+
+def protected_roots() -> tuple[Path, ...]:
+    """Return code roots whose contents participate in hook enforcement."""
+    roots = [
+        _resolve(Path(__file__).parent),
+        _resolve(Path(sys.prefix)),
+        *map(_resolve, _plugin_roots()),
+    ]
+    unique = {os.path.normcase(str(root)): root for root in roots}
+    return tuple(unique.values())
+
+
+def _tool_kind(tool_name: str) -> str:
+    leaf = str(tool_name).replace("::", ".").replace("/", ".").split(".")[-1]
+    return leaf.casefold()
+
+
+def _shell_may_modify_paths(command: str) -> bool:
+    """Return whether a shell command contains an observable write primitive."""
+    risk, _reason = shell_command_risk(command)
+    if risk == "allow":
+        return False
+    return bool(_SHELL_WRITE_SIGNAL.search(command))
+
+
+def _candidate_strings(kind: str, arguments: dict[str, Any]):
+    for leaf_path, text in iter_strings(arguments):
+        key = leaf_path.rsplit(".", 1)[-1].split("[", 1)[0].casefold()
+        if kind in _SHELL_TOOLS:
+            if key not in {"command", "cmd"} or not _shell_may_modify_paths(text):
+                continue
+        elif kind != "apply_patch" and key not in _PATH_ARGUMENT_KEYS:
+            continue
+        yield text
+
+
+def _path_aliases(path: Path) -> set[str]:
+    aliases = {str(path), path.as_posix()}
+    for base in (_repo_root(), Path.cwd(), Path.home()):
         try:
-            resolved.append(candidate.resolve())
-        except (OSError, ValueError):
-            resolved.append(candidate)
-    return tuple(resolved)
+            relative = path.relative_to(_resolve(base))
+        except ValueError:
+            continue
+        aliases.add(str(relative))
+        aliases.add(relative.as_posix())
+        if base == Path.home():
+            aliases.add("~/" + relative.as_posix())
+    return {
+        alias.replace("\\", "/").casefold()
+        for alias in aliases
+        if alias not in {"", "."}
+    }
+
+
+def _is_in_root(candidate: Path, roots: tuple[Path, ...]) -> bool:
+    key = os.path.normcase(str(candidate))
+    for root in roots:
+        root_key = os.path.normcase(str(root))
+        if key == root_key or key.startswith(root_key.rstrip("\\/") + os.sep):
+            return True
+    return False
+
+
+def sensitive_write_roots() -> tuple[Path, ...]:
+    """Return user and system locations that coding hooks may not modify."""
+    home = Path.home()
+    candidates = [
+        home / name
+        for name in (".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker")
+    ]
+    candidates.extend((Path("/etc"), Path("/root")))
+    system_root = os.environ.get("SystemRoot")
+    if system_root:
+        candidates.append(Path(system_root))
+    return tuple(_resolve(path) for path in candidates)
+
+
+def sensitive_write_paths() -> tuple[Path, ...]:
+    home = Path.home()
+    return tuple(
+        _resolve(home / name)
+        for name in (".git-credentials", ".npmrc", ".pypirc", ".netrc")
+    )
+
+
+def targets_sensitive_path(tool_name: str, arguments: Any) -> Optional[str]:
+    """Return a credential or system path targeted by a mutating call."""
+    kind = _tool_kind(tool_name)
+    if kind not in _MUTATING_FILE_TOOLS and kind not in _SHELL_TOOLS:
+        return None
+    if not isinstance(arguments, dict):
+        return None
+
+    roots = sensitive_write_roots()
+    files = sensitive_write_paths()
+    aliases = set().union(*(_path_aliases(path) for path in (*roots, *files)))
+    root_aliases = {alias.rstrip("/") + "/" for alias in aliases}
+    for text in _candidate_strings(kind, arguments):
+        if not text:
+            continue
+        normalized = os.path.expandvars(text).replace("\\", "/").casefold()
+        if any(alias in normalized for alias in aliases | root_aliases):
+            return text if len(text) <= 200 else "sensitive path"
+        if kind not in _SHELL_TOOLS:
+            candidate = _resolve(Path(os.path.expandvars(text)))
+            if candidate in files or _is_in_root(candidate, roots):
+                return text
+    return None
 
 
 def targets_protected_path(tool_name: str, arguments: Any) -> Optional[str]:
@@ -237,25 +444,32 @@ def targets_protected_path(tool_name: str, arguments: Any) -> Optional[str]:
     redirections cannot bypass the path check. Call this before reading the
     surface switch.
     """
-    if tool_name not in _MUTATING_FILE_TOOLS and tool_name not in _SHELL_TOOLS:
+    kind = _tool_kind(tool_name)
+    if kind not in _MUTATING_FILE_TOOLS and kind not in _SHELL_TOOLS:
         return None
     if not isinstance(arguments, dict):
         return None
 
     protected = protected_paths()
-    protected_names = {p.name for p in protected}
+    roots = protected_roots()
+    aliases = set().union(*(_path_aliases(path) for path in protected))
+    root_aliases = {
+        alias.rstrip("/") + "/"
+        for root in roots
+        for alias in _path_aliases(root)
+    }
 
-    for _leaf_path, text in iter_strings(arguments):
+    for text in _candidate_strings(kind, arguments):
         if not text:
             continue
-        for name in protected_names:
-            if name in text:
-                return text if len(text) <= 200 else name
+        normalized = os.path.expandvars(text).replace("\\", "/").casefold()
+        if any(alias in normalized for alias in aliases | root_aliases):
+            return text if len(text) <= 200 else "protected hook path"
         try:
-            resolved = Path(text).resolve()
-        except (OSError, ValueError):
+            resolved = _resolve(Path(os.path.expandvars(text)))
+        except (OSError, RuntimeError, ValueError):
             continue
-        if resolved in protected:
+        if resolved in protected or _is_in_root(resolved, roots):
             return text
     return None
 

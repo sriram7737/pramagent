@@ -325,6 +325,15 @@ request through deterministic policy, pauses it at HITL, and returns the trace
 plus `this_hash` / `prev_hash`. This is the five-minute wedge: financial
 side-effect safety before the model is trusted.
 
+The same page includes a read-only quantum evidence band backed by completed
+physical IBM Quantum job `dajho5hhvn6c73cueht0`. It shows the backend, physical
+layout, observed shots and counts, correlation, QPU usage, layout-policy proxy,
+and execution-evidence hash. The public endpoint never receives IBM
+credentials or submits paid hardware work. The displayed run is real hardware
+evidence, while its original local audit capture is explicitly labeled as an
+unkeyed test chain; new local runs use a separate versioned quantum signing
+ring.
+
 Visitors can optionally bring a provider key on each run: `nvapi-*` for NVIDIA
 NIM models, `sk-*` / `sk-proj-*` for OpenAI `gpt-4o-mini`, or an AI Studio
 Gemini key for `gemini-2.5-flash`. Pramagent uses that key only for the current
@@ -594,6 +603,11 @@ hitl = HITLLayer(
 `InMemoryHITLQueue`, `SQLiteHITLQueue`, and `PostgresHITLQueue` are available
 under `pramagent.queue`.
 
+Persistent requests carry an expiry and a SHA-256 binding over the tenant,
+action, and canonical context. Queue backends enforce expiry at decision time,
+accept only the first decision, and reject duplicate request IDs, so a stale or
+replayed approval cannot authorize a different action.
+
 ## Framework Adapters
 
 Pramagent is meant to sit under existing agent frameworks, not replace them.
@@ -628,6 +642,13 @@ calls:
 
 ## Coding-Agent Hooks
 
+For deployments where the agent must not be able to rewrite its own hook,
+install the runtime and host configuration under an OS-owned permission
+boundary. The Windows and Linux installers, threat boundary, and verification
+steps are documented in
+[Hook Deployment Boundary](docs/HOOK_DEPLOYMENT_BOUNDARY.md). In-process path
+checks alone do not protect files writable by the same OS identity.
+
 Pramagent also ships a publishable hook plugin for coding agents:
 
 - Claude Code `PreToolUse`
@@ -639,6 +660,23 @@ The plugin lives in `plugins/pramagent-guard/`, with publishing notes in
 [`docs/AGENT_HOOK_PUBLISHING.md`](docs/AGENT_HOOK_PUBLISHING.md). It is not an
 MCP server/client/proxy; it is a host-agent lifecycle hook that evaluates
 proposed tool calls before execution.
+
+Hook registrations use a broad matcher and deny unregistered tools. The shared
+control-plane check runs before policy toggles and protects host settings, hook
+launchers, plugin policy files, the guard package, and audit stores from
+tool-mediated edits. A bootstrap wrapper converts import, syntax, timeout, and
+invalid-output failures into explicit denials. These checks protect the agent
+tool path; production deployments still need OS permissions or a separate
+service account so the guarded process cannot rewrite its own installation.
+
+From the source checkout that provides the hook/plugin files, run
+`pramagent hooks-doctor --repo-root .` to verify host wiring, approved runtime
+hashes, and control-plane integrity. The PyPI wheel provides the shared policy
+engine and doctor command; host hook bundles are installed from this repository
+or its plugin marketplace. `--strict` also fails when hook files remain writable
+by the current OS account. The admin console records field-level changes and can
+restore an audited snapshot by appending a rollback event; history is never
+rewritten.
 
 ## Compliance Evidence
 
@@ -758,8 +796,16 @@ The reusable reviewer prompt for this is in
 - Redis/Postgres support exists, but the stack has not been chaos-tested or
   load-tested for high-stakes deployments.
 - No external penetration test or formal compliance certification has been run.
-- QuantumLayer is future research only. It is not implemented, advertised as a
-  feature, or exposed as a production API.
+- Portable Evidence Envelope V2 now includes integer-only RFC 8785
+  canonicalization, Merkle proofs, and strict hybrid Ed25519 plus ML-DSA-65
+  checkpoint signatures. Its optional Sigstore adapter obtains live RFC 3161
+  timestamps and Rekor inclusion receipts using TUF-authenticated trust
+  material, with a durable local retry outbox. Managed signing keys, archive
+  timestamp renewal, QRNG mixing, and a complete QuantumLayer remain roadmap
+  work. The IBM Runtime path submits a guarded
+  Bell-pair hardware attestation with explicit consent, bounded shots, provider
+  job evidence, and hash-chained audit records. It is not a quantum-advantage
+  claim or a production VLM by itself.
 
 ## Optional Anchoring And Archive
 
@@ -793,24 +839,192 @@ should stay additive here: keep the public `Pramagent`, `ToolGuardLayer`,
 then document newer controls in this repo.
 
 Recent additions include the local hook control plane, per-tenant hook
-permissions, HMAC-chained hook-admin audit records, and the guarded PennyLane
-QNode example under `examples/quantum/`. Existing hook-control files created
+permissions, HMAC-chained hook-admin audit records, and installable guarded
+PennyLane QNode and hybrid-router APIs under `pramagent.quantum`. Existing hook-control files created
 before state binding must be reviewed and bound once from the admin console;
 until then, hook enforcement stays on. Users coming from the cookbook or
 LangChain listing can upgrade Pramagent from PyPI and follow the docs in this
 repository without changing either upstream link.
+
+The optional IBM hardware path is installed with
+`pip install "pramagent[quantum-ibm]"`. Run `pramagent quantum-status` before
+using `pramagent quantum-run`; real submissions require explicit hardware and
+unpriced-QPU-time acknowledgements. See the quantum guide for the exact trust
+boundary and current limitations.
+
+Quantum budgets can use an opt-in SQLite ledger on one host or a PostgreSQL
+ledger across workers and hosts. Both atomically reserve shots and estimated
+cost before execution and reconcile measured use afterward. IBM attestations
+also emit a sealed, time-bounded calibration canary. Applications can require a
+fresh canary for the same provider and backend, then bind it to the completed
+workload evidence in the audit chain. IBM and PennyLane paths emit the same
+sealed `QuantumExecutionEvidence` shape. Unknown IBM QPU-time cost remains
+`None`, not `$0`.
+
+Portable evidence signing is installed separately with
+`pip install "pramagent[evidence-v2]"`. It writes additive V2 envelopes while
+leaving issued V1 hashes unchanged, requires both Ed25519 and ML-DSA-65 under a
+versioned policy, and reports `record_assurance`, `checkpoint_assurance`, and
+the effective `assurance_level` on every verification. See the
+[Evidence Envelope V2 specification](docs/EVIDENCE_ENVELOPE_V2.md); the
+`evidence-v2-verify` CLI accepts trusted public keys from a separate registry.
+
+Install `pramagent[evidence-anchors]` to timestamp a signed checkpoint with the
+Sigstore production RFC 3161 service and publish its digest to Rekor. Anchoring
+runs after checkpoint creation. SQLite is the local default; multi-worker
+deployments use the PostgreSQL outbox with transactional `SKIP LOCKED` claims
+and lease fencing:
+
+```bash
+pramagent evidence-v2-anchor \
+  --envelope evidence.json \
+  --output evidence.anchored.json \
+  --outbox .pramagent/evidence_anchor_outbox.sqlite3
+
+# Multi-worker deployment; the DSN may instead come from
+# PRAMAGENT_ANCHOR_POSTGRES_DSN.
+pramagent evidence-v2-anchor \
+  --envelope evidence.json \
+  --output evidence.anchored.json \
+  --outbox-postgres-dsn "$PRAMAGENT_ANCHOR_POSTGRES_DSN"
+
+pramagent evidence-v2-verify \
+  --envelope evidence.anchored.json \
+  --keys verification-keys.json \
+  --anchor-trust sigstore-production \
+  --require-assurance tsa_anchored
+```
+
+The verifier checks the RFC 3161 message imprint, nonce, TSA chain, Rekor
+artifact signature, Merkle inclusion proof, and signed log checkpoint. The
+production and cache-only trust modes obtain roots from Sigstore's TUF trust
+configuration. This establishes externally witnessed time and publication; it
+does not make the underlying event truthful or turn two services in the same
+operator ecosystem into two independent organizations. The anchor captures
+and verifies OCSP/CRL responses when the TSA certificate advertises them; a
+signed certificate without either endpoint receives an explicit
+`no_endpoint_advertised` record. Pramagent also supports the RFC 4998
+single-object/SHA-256 timestamp-renewal profile:
+
+```bash
+pramagent evidence-archive-create \
+  --envelope evidence.anchored.json \
+  --output evidence.archive.json
+
+pramagent evidence-archive-renew \
+  --bundle evidence.archive.json \
+  --output evidence.archive.renewed.json
+
+pramagent evidence-archive-verify \
+  --bundle evidence.archive.renewed.json
+```
+
+The archive bundle retains each TSA response, certificate chain, and available
+revocation artifact. Hash-tree renewal, immutable archive storage, automated
+renewal scheduling, and a seven-year operational validation drill remain
+release requirements; timestamp-renewal support alone is not a seven-year
+guarantee. The
+PostgreSQL outbox provides at-least-once delivery: a crash after a witness
+accepts a request can repeat that external request, while lease fencing keeps
+stale workers from overwriting the authoritative stored receipt.
+
+## Verified IBM Hardware Results
+
+On September 13, 2026, the updated Pramagent CLI submitted two guarded
+Bell-pair attestations to the physical IBM Quantum backend `ibm_fez`. Both used
+atomic shot reservation, explicit hardware consent, sealed execution evidence,
+and the persistent HMAC audit chain. IBM Runtime and the local audit database
+were independently read again after each completion.
+
+| Field | Optimization 1 | Optimization 3 |
+| --- | --- | --- |
+| IBM Runtime job | `dajg0i1hvn6c73cuckbg` | `dajg4l1hvn6c73cucon0` |
+| Physical qubits | `[0, 1]` | `[146, 147]` |
+| Requested / observed shots | `128 / 128` | `128 / 128` |
+| Counts (`00`, `01`, `10`, `11`) | `68, 2, 3, 55` | `74, 1, 1, 52` |
+| Same-bit correlation | `0.9609375` | `0.984375` |
+| Wilson 95% interval | `[0.9118, 0.9832]` | `[0.9448, 0.9957]` |
+| Two-sided Fisher exact comparison | reference | `p = 0.4466`; not significant at `0.05` |
+| Logical / ISA depth | `3 / 8` | `3 / 7` |
+| ISA operations | `12` | `11` |
+| SWAP operations | `0` | `0` |
+| IBM QPU charge time | `2 s` (billing granularity, not a differentiator) | `2 s` |
+| Audit chain | valid | valid |
+
+The PostgreSQL budget and calibration-binding path was subsequently validated
+with another physical `ibm_fez` job, `dajgtnphvn6c73cudlf0`: 128/128 observed
+shots, counts `00=48, 01=8, 10=4, 11=68`, same-bit correlation `0.90625`, and
+2 seconds of provider-reported QPU usage. The budget reservation reconciled
+from 128 estimated to 128 actual shots. Its sealed canary was bound to the
+earlier same-backend hardware job `dajgs2b9k43c73ah7730` at an age of
+183.639432 seconds, and the destination audit chain remained valid. The clean
+validation database used an unkeyed SHA-256 test chain because no audit signing
+key was visible to that process; deployments should configure the versioned
+signing-key ring. See the
+[control-plane validation record](docs/quantum-results/ibm_fez_dajgtnphvn6c73cudlf0.json).
+
+The calibration-aware layout guard was then enabled and validated on physical
+hardware. Job `dajho5hhvn6c73cueht0` used level 3, automatically selected
+`[147,146]`, and passed a complete layout error proxy of `0.011177` against the
+`0.05` ceiling before submission. It observed 249 same-bit outcomes in 256
+shots, for correlation `0.972656` and Wilson 95% interval
+`[0.9446, 0.9867]`. This was higher than the degraded `[0,1]` run at the raw
+shot-count level (two-sided Fisher exact `p=0.0102`) and statistically
+indistinguishable from the earlier `0.984375` optimized result (`p=0.7236`).
+The runs differ in calibration time and shot count, so this validates the
+selection and enforcement workflow rather than isolating a causal fidelity
+effect. Record: [calibration-aware hardware validation](docs/quantum-results/ibm_fez_dajho5hhvn6c73cueht0.json).
+
+This verifies a one-layer ISA reduction from optimization level 3, not the
+suggested SWAP-removal explanation. Physical qubits `[0, 1]` were already
+directly connected and the first ISA circuit contained no SWAP. For the current
+Qiskit Runtime API, layout belongs on `generate_preset_pass_manager`; `SamplerV2`
+does not expose `options.transpilation.initial_layout`. Calibration-aware auto
+layout selected `[146, 147]` for the optimized run.
+
+Because the two hardware runs changed optimization level and qubit pair
+together, the depth attribution was re-tested offline over the full grid -
+optimization level `1` and `3` crossed with layouts `[0, 1]`, `[146, 147]`, and
+auto, across 10 transpiler seeds each. Transpilation consumes no QPU time.
+
+| Optimization level | Layout `[0, 1]` | Layout `[146, 147]` | Auto layout |
+| --- | --- | --- | --- |
+| `1` | depth `8`, size `12` | depth `8`, size `12` | depth `8`, size `12` |
+| `3` | depth `7`, size `11` | depth `7`, size `11` | depth `7`, size `11` |
+
+Depth and size were identical across all 10 seeds in every cell. For this Bell
+circuit, backend snapshot, and tested layouts, ISA depth and size varied only
+with optimization level. This settles the observed depth attribution only. The
+hardware correlation comparison remains confounded by layout and is not
+statistically significant (two-sided Fisher exact `p = 0.4466`). Record:
+[transpiler depth attribution](docs/quantum-results/transpiler_depth_attribution.json).
+
+Machine-readable records are available for the
+[optimization-1 run](docs/quantum-results/ibm_fez_dajg0i1hvn6c73cuckbg.json),
+[optimization-3 run](docs/quantum-results/ibm_fez_dajg4l1hvn6c73cucon0.json),
+and [earlier provider-only run](docs/quantum-results/ibm_fez_daj5doomhr3c73e8i5a0.json).
+They contain no API key or instance CRN. The three records are not
+schema-identical and should not be parsed interchangeably: the provider-only run
+predates the guarded path and carries no `audit`, `pramagent_execution`, or
+`same_bit_correlation_wilson_95` fields, and only the optimization-3 record
+carries `isa_circuit` in place of `circuit`. The optimized sample had higher
+observed correlation, but the confidence intervals overlap and the runs used
+different calibrated qubit pairs. The result does not establish a causal
+fidelity improvement, a complete entanglement witness, quantum advantage, or
+hybrid-VLM improvement.
 
 ## Docs
 
 - [Getting started](https://github.com/sriram7737/pramagent/blob/main/docs/GETTING_STARTED.md)
 - [LangGraph integration](https://github.com/sriram7737/pramagent/blob/main/docs/integrations/langgraph.md)
 - [Implementation status](https://github.com/sriram7737/pramagent/blob/main/docs/IMPLEMENTATION_STATUS.md)
+- [Quantum integration](https://github.com/sriram7737/pramagent/blob/main/docs/QUANTUM.md)
 - [Conformance map](https://github.com/sriram7737/pramagent/blob/main/docs/CONFORMANCE.md)
 - [Design decisions](https://github.com/sriram7737/pramagent/blob/main/docs/DESIGN_DECISIONS.md)
 - [Overreach corpus](https://github.com/sriram7737/pramagent/tree/main/corpus/overreach)
 - [Live test results](https://github.com/sriram7737/pramagent/blob/main/docs/LIVE_TEST_RESULTS.md)
 - [Hardening guide](https://github.com/sriram7737/pramagent/blob/main/docs/HARDENING_GUIDE.md)
-- [Incident-response runbook](https://github.com/sriram7737/pramagent/blob/main/docs/INCIDENT_RESPONSE_RUNBOOK.md) — key/credential compromise, audit-chain tamper response, and the security CLI: `pramagent auth-revoke` (revoke a leaked API key), `pramagent audit-verify-watch` (automated tamper detection), `pramagent audit-export` (export a tenant's trace rows)
+- [Incident-response runbook](https://github.com/sriram7737/pramagent/blob/main/docs/INCIDENT_RESPONSE_RUNBOOK.md) - key/credential compromise, audit-chain tamper response, and the security CLI: `pramagent auth-revoke` (revoke a leaked API key), `pramagent audit-verify-watch` (automated tamper detection), `pramagent audit-export` (export a tenant's trace rows)
 - [Google Dev Library submission draft](https://github.com/sriram7737/pramagent/blob/main/docs/GOOGLE_DEV_LIBRARY_SUBMISSION.md)
 - [Cookbook submission plan](https://github.com/sriram7737/pramagent/blob/main/docs/COOKBOOK_SUBMISSIONS.md)
 - [Security test results](https://github.com/sriram7737/pramagent/blob/main/docs/audits/pramagent_security_test_results.md)

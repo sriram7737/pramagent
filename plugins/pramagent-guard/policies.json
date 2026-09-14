@@ -5,7 +5,7 @@
       "side_effect": "destructive",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "detail": "Shell commands can modify the local machine; ask before running.",
+      "detail": "Shell commands are risk-tiered before execution.",
       "schema": {
         "type": "object",
         "properties": {
@@ -13,10 +13,14 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 20000
-          }
+          },
+          "timeout": {"type": "integer", "minimum": 0},
+          "description": {"type": "string"},
+          "run_in_background": {"type": "boolean"},
+          "dangerouslyDisableSandbox": {"type": "boolean"}
         },
         "required": ["command"],
-        "additionalProperties": true
+        "additionalProperties": false
       }
     },
     {
@@ -24,7 +28,7 @@
       "side_effect": "destructive",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "detail": "PowerShell commands can modify the local machine; ask before running.",
+      "detail": "PowerShell commands are risk-tiered before execution.",
       "schema": {
         "type": "object",
         "properties": {
@@ -32,10 +36,14 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 20000
-          }
+          },
+          "timeout": {"type": "integer", "minimum": 0},
+          "description": {"type": "string"},
+          "run_in_background": {"type": "boolean"},
+          "dangerouslyDisableSandbox": {"type": "boolean"}
         },
         "required": ["command"],
-        "additionalProperties": true
+        "additionalProperties": false
       }
     },
     {
@@ -43,7 +51,7 @@
       "side_effect": "destructive",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "detail": "Shell commands can modify the local machine; ask before running.",
+      "detail": "Shell commands are risk-tiered before execution.",
       "schema": {
         "type": "object",
         "properties": {
@@ -51,10 +59,41 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 20000
-          }
+          },
+          "description": {"type": "string"},
+          "directory": {"type": "string"},
+          "is_background": {"type": "boolean"}
         },
         "required": ["command"],
-        "additionalProperties": true
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "exec_command",
+      "side_effect": "destructive",
+      "action": "allow",
+      "escalate_if_severity_gte": "write",
+      "detail": "Shell commands are risk-tiered before execution.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string", "minLength": 1, "maxLength": 20000},
+          "cmd": {"type": "string", "minLength": 1, "maxLength": 20000},
+          "workdir": {"type": "string"},
+          "yield_time_ms": {"type": "integer", "minimum": 0},
+          "max_output_tokens": {"type": "integer", "minimum": 0},
+          "login": {"type": "boolean"},
+          "shell": {"type": "string"},
+          "tty": {"type": "boolean"},
+          "justification": {"type": "string"},
+          "prefix_rule": {"type": "array", "items": {"type": "string"}},
+          "sandbox_permissions": {"type": "string"}
+        },
+        "anyOf": [
+          {"required": ["command"]},
+          {"required": ["cmd"]}
+        ],
+        "additionalProperties": false
       }
     },
     {
@@ -62,96 +101,96 @@
       "side_effect": "write",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "content": {"type": "string"}}, "required": ["file_path", "content"], "additionalProperties": false}
     },
     {
       "name": "Edit",
       "side_effect": "write",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "old_string": {"type": "string"}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}}, "required": ["file_path", "old_string", "new_string"], "additionalProperties": false}
     },
     {
       "name": "MultiEdit",
       "side_effect": "write",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "edits": {"type": "array", "items": {"type": "object", "properties": {"old_string": {"type": "string"}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}}, "required": ["old_string", "new_string"], "additionalProperties": false}}}, "required": ["file_path", "edits"], "additionalProperties": false}
     },
     {
       "name": "apply_patch",
       "side_effect": "write",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"input": {"type": "string"}, "patch": {"type": "string"}}, "additionalProperties": false}
     },
     {
       "name": "write_file",
       "side_effect": "write",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "content": {"type": "string"}}, "required": ["file_path", "content"], "additionalProperties": false}
     },
     {
       "name": "replace",
       "side_effect": "write",
       "action": "allow",
       "escalate_if_severity_gte": "write",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "old_string": {"type": "string"}, "new_string": {"type": "string"}, "instruction": {"type": "string"}, "expected_replacements": {"type": "integer", "minimum": 0}}, "required": ["file_path"], "additionalProperties": false}
     },
     {
       "name": "Read",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 0}, "pages": {"type": "string"}}, "required": ["file_path"], "additionalProperties": false}
     },
     {
       "name": "LS",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"path": {"type": "string"}}, "additionalProperties": false}
     },
     {
       "name": "Grep",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"}, "type": {"type": "string"}, "output_mode": {"type": "string"}, "-i": {"type": "boolean"}, "-n": {"type": "boolean"}, "context": {"type": "integer", "minimum": 0}, "multiline": {"type": "boolean"}, "head_limit": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}}, "required": ["pattern"], "additionalProperties": false}
     },
     {
       "name": "Glob",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"], "additionalProperties": false}
     },
     {
       "name": "read_file",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"file_path": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 0}}, "required": ["file_path"], "additionalProperties": false}
     },
     {
       "name": "list_directory",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"path": {"type": "string"}, "ignore": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false}
     },
     {
       "name": "glob",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"], "additionalProperties": false}
     },
     {
       "name": "grep_search",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"}, "case_sensitive": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}}, "required": ["pattern"], "additionalProperties": false}
     },
     {
       "name": "search_file_content",
       "side_effect": "read",
       "action": "allow",
-      "schema": {"type": "object", "additionalProperties": true}
+      "schema": {"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}, "include": {"type": "string"}, "case_sensitive": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}}, "required": ["pattern"], "additionalProperties": false}
     }
   ]
 }

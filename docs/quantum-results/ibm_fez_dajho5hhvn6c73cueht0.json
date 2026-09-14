@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "record_type": "pramagent_calibration_aware_layout_validation",
+  "recorded_on": "2026-09-13",
+  "provider": "ibm_quantum_platform",
+  "backend": "ibm_fez",
+  "job_id": "dajho5hhvn6c73cueht0",
+  "provider_status_rechecked": "DONE",
+  "shots_requested": 256,
+  "shots_observed": 256,
+  "counts": {
+    "00": 134,
+    "01": 2,
+    "10": 5,
+    "11": 115
+  },
+  "same_bit_correlation": 0.972656,
+  "same_bit_correlation_wilson_95": [
+    0.9446442920775395,
+    0.9866928436448787
+  ],
+  "minimum_correlation": 0.6,
+  "passed": true,
+  "physical_qubits": [
+    147,
+    146
+  ],
+  "optimization_level": 3,
+  "logical_depth": 3,
+  "transpiled_depth": 7,
+  "usage_seconds": 2.0,
+  "layout_error_profile": {
+    "complete": true,
+    "gate_error_proxy": 0.003284486,
+    "readout_error_proxy": 0.007918924,
+    "total_error_proxy": 0.011177401,
+    "gate_terms": 9,
+    "readout_terms": 2,
+    "unknown_terms": [],
+    "policy_ceiling": 0.05,
+    "policy_result": "allowed"
+  },
+  "circuit_hash": "5eefc53ccdd2ba2a269df671533b070f36e8e9b204a5467143c31021c8bb7ecf",
+  "execution_evidence_hash": "b9d85ea30b1b1672d1ada4b156cecd659838e38afe409b126575ec6c356fa3fd",
+  "calibration_canary_hash": "19f436cb9fba6ed11406a6a924ba6cbf4068c3fc3b4b41a90b9f3839b8679a4e",
+  "audit": {
+    "chain_valid": true,
+    "authentication": "unkeyed_sha256_test_chain",
+    "note": "No PRAMAGENT_SIGNING_KEY or versioned signing ring was visible to the validation process."
+  },
+  "comparisons": {
+    "degraded_layout_job": {
+      "job_id": "dajgtnphvn6c73cudlf0",
+      "physical_qubits": [
+        0,
+        1
+      ],
+      "correlation": 0.90625,
+      "two_sided_fisher_exact_p": 0.010182383058731887
+    },
+    "earlier_optimized_job": {
+      "job_id": "dajg4l1hvn6c73cucon0",
+      "physical_qubits": [
+        146,
+        147
+      ],
+      "correlation": 0.984375,
+      "two_sided_fisher_exact_p": 0.7236178256975361
+    }
+  },
+  "claim_scope": "The calibration-aware level-3 path improved this run relative to the degraded level-1 layout and recovered performance statistically consistent with the earlier optimized run. Layout, calibration time, and shot count differ, so this does not isolate a causal effect or establish quantum advantage."
+}

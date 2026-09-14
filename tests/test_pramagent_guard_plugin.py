@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 _HOOK_PATH = (
     Path(__file__).resolve().parents[1]
     / "plugins" / "pramagent-guard" / "hooks" / "scripts" / "pramagent_guard.py"
 )
+_PLUGIN_ROOT = _HOOK_PATH.parents[2]
 
 
 def _load_hook():
@@ -110,12 +114,48 @@ def test_pii_is_now_caught(monkeypatch):
 
 def test_shell_escalates_by_side_effect_severity(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_HOOK_ESCALATE_DECISION", "ask")
-    output = HOOK.evaluate_event(_event("Bash", {"command": "ls -la"}))
+    output = HOOK.evaluate_event(_event("Bash", {"command": "npm install"}))
     assert _decision(output) == "ask"
     assert "escalation" in _reason(output).lower()
+
+
+def test_read_only_shell_command_is_allowed_without_approval():
+    assert HOOK.evaluate_event(_event("Bash", {"command": "git status --short"})) == {}
+
+
+def test_before_tool_uses_gemini_decision_shape_and_denies_review():
+    event = _event("run_shell_command", {"command": "npm install"})
+    event["hook_event_name"] = "BeforeTool"
+    output = HOOK.evaluate_event(event)
+    assert output["decision"] == "deny"
+    assert "hookSpecificOutput" not in output
 
 
 def test_non_tool_event_is_ignored(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_HOOK_ESCALATE_DECISION", "ask")
     output = HOOK.evaluate_event({"hook_event_name": "SessionStart"})
     assert output == {}
+
+
+def test_all_shipped_plugin_schemas_reject_unknown_fields():
+    policies = json.loads(
+        (_PLUGIN_ROOT / "policies.json").read_text(encoding="utf-8")
+    )["policies"]
+    assert policies
+    assert all(
+        policy["schema"].get("additionalProperties") is False
+        for policy in policies
+    )
+
+
+def test_malformed_plugin_input_returns_a_universal_denial():
+    result = subprocess.run(
+        [sys.executable, str(_HOOK_PATH)],
+        input="not json",
+        capture_output=True,
+        text=True,
+    )
+    output = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert output["decision"] == "deny"
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
