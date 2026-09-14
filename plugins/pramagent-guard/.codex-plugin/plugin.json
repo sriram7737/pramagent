@@ -1,6 +1,6 @@
 {
   "name": "pramagent-guard",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Deterministic PreToolUse policy checks for coding agents, powered by Pramagent ToolGuard.",
   "author": {
     "name": "Sriram Rampelli",

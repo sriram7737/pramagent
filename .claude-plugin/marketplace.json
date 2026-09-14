@@ -9,7 +9,7 @@
     {
       "name": "pramagent-guard",
       "description": "Deterministic policy enforcement for proposed coding-agent tool calls.",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "source": "./plugins/pramagent-guard"
     }
   ]
