@@ -267,8 +267,9 @@ pip install -e ".[evidence-anchors]"
 
 The anchoring worker obtains production service endpoints and trust roots from
 Sigstore's TUF configuration. It verifies the TSA response and Rekor inclusion
-receipt before persisting either artifact. A SQLite outbox retains partial
-success and retries service failures outside the request path.
+receipt before persisting either artifact. SQLite is available for local
+operation. `PostgresAnchorOutbox` supports distributed workers with
+transactional claims, expiring leases, and stale-worker fencing.
 
 The complete wire specification and claim boundaries are in
 [Evidence Envelope V2](EVIDENCE_ENVELOPE_V2.md).
@@ -290,6 +291,8 @@ pramagent evidence-v2-anchor `
   --envelope evidence-envelope.json `
   --output evidence-envelope.anchored.json `
   --outbox .pramagent/evidence_anchor_outbox.sqlite3
+
+# Or set PRAMAGENT_ANCHOR_POSTGRES_DSN for a shared multi-worker outbox.
 
 pramagent evidence-v2-verify `
   --envelope evidence-envelope.anchored.json `

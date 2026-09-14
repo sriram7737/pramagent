@@ -754,6 +754,7 @@ def cmd_evidence_v2_anchor(args) -> int:
 
     from .quantum import (
         EvidenceEnvelopeV2,
+        PostgresAnchorOutbox,
         SQLiteAnchorOutbox,
         SigstoreAnchorProvider,
         attach_anchors,
@@ -766,7 +767,21 @@ def cmd_evidence_v2_anchor(args) -> int:
             offline=args.trust_cache_only,
             timeout_seconds=args.timeout,
         )
-        with SQLiteAnchorOutbox(args.outbox) as outbox:
+        outbox_dsn = getattr(args, "outbox_postgres_dsn", "") or os.environ.get(
+            "PRAMAGENT_ANCHOR_POSTGRES_DSN", ""
+        )
+        if outbox_dsn:
+            outbox_context = PostgresAnchorOutbox(
+                outbox_dsn,
+                table=getattr(
+                    args, "outbox_table", "pramagent_evidence_anchor_jobs"
+                ),
+            )
+            outbox_description = "postgres"
+        else:
+            outbox_context = SQLiteAnchorOutbox(args.outbox)
+            outbox_description = str(Path(args.outbox).expanduser().resolve())
+        with outbox_context as outbox:
             outbox.enqueue(envelope.checkpoint)
             target = outbox.get(envelope.checkpoint.checkpoint_hash)
             for _ in range(args.max_jobs):
@@ -792,7 +807,7 @@ def cmd_evidence_v2_anchor(args) -> int:
     payload = {
         "checkpoint_hash": envelope.checkpoint.checkpoint_hash,
         "output": str(output),
-        "outbox": str(Path(args.outbox).expanduser().resolve()),
+        "outbox": outbox_description,
         "anchors": [anchor.to_dict() for anchor in target.anchors],
     }
     if args.json:
@@ -1132,7 +1147,20 @@ def main():
     p_evidence_anchor.add_argument(
         "--outbox",
         default=".pramagent/evidence_anchor_outbox.sqlite3",
-        help="Durable SQLite retry queue",
+        help="Durable SQLite retry queue used when Postgres is not configured",
+    )
+    p_evidence_anchor.add_argument(
+        "--outbox-postgres-dsn",
+        default="",
+        help=(
+            "Distributed Postgres retry queue DSN; may also be set with "
+            "PRAMAGENT_ANCHOR_POSTGRES_DSN"
+        ),
+    )
+    p_evidence_anchor.add_argument(
+        "--outbox-table",
+        default="pramagent_evidence_anchor_jobs",
+        help="Postgres anchor outbox table name",
     )
     p_evidence_anchor.add_argument(
         "--trust-cache-only",

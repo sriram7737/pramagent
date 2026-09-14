@@ -127,15 +127,24 @@ validation guarantee.
 ## Operations
 
 External calls are kept off the protected request path. `SQLiteAnchorOutbox`
-stores the signed checkpoint, completed anchors, attempt count, next retry
-time, and bounded error text. It uses a lease to recover interrupted workers,
-retains a successful TSA token if Rekor fails, and retries with exponential
-backoff capped at one hour. Operators needing multiple anchor workers should
-replace this single-host SQLite queue with their shared database or queue.
+is the single-host development backend. `PostgresAnchorOutbox` is the
+multi-worker backend; it claims due rows with `FOR UPDATE SKIP LOCKED`, fences
+expired workers with unique lease IDs, retains a successful TSA token if Rekor
+fails, and retries with exponential backoff capped at one hour. Delivery is at
+least once because a process can fail after a witness accepts a request but
+before the receipt commits. The database stores one authoritative receipt per
+checkpoint and anchor type, but an external witness may observe a duplicate
+request after that failure window.
 
 ```bash
 pip install "pramagent[evidence-anchors]"
 
+pramagent evidence-v2-anchor \
+  --envelope evidence.json \
+  --output evidence.anchored.json
+
+# Distributed workers can share the same queue.
+PRAMAGENT_ANCHOR_POSTGRES_DSN=postgresql://... \
 pramagent evidence-v2-anchor \
   --envelope evidence.json \
   --output evidence.anchored.json

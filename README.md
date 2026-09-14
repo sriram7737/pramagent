@@ -864,13 +864,22 @@ the effective `assurance_level` on every verification. See the
 
 Install `pramagent[evidence-anchors]` to timestamp a signed checkpoint with the
 Sigstore production RFC 3161 service and publish its digest to Rekor. Anchoring
-runs after checkpoint creation and persists partial success in a SQLite outbox:
+runs after checkpoint creation. SQLite is the local default; multi-worker
+deployments use the PostgreSQL outbox with transactional `SKIP LOCKED` claims
+and lease fencing:
 
 ```bash
 pramagent evidence-v2-anchor \
   --envelope evidence.json \
   --output evidence.anchored.json \
   --outbox .pramagent/evidence_anchor_outbox.sqlite3
+
+# Multi-worker deployment; the DSN may instead come from
+# PRAMAGENT_ANCHOR_POSTGRES_DSN.
+pramagent evidence-v2-anchor \
+  --envelope evidence.json \
+  --output evidence.anchored.json \
+  --outbox-postgres-dsn "$PRAMAGENT_ANCHOR_POSTGRES_DSN"
 
 pramagent evidence-v2-verify \
   --envelope evidence.anchored.json \
@@ -885,7 +894,10 @@ production and cache-only trust modes obtain roots from Sigstore's TUF trust
 configuration. This establishes externally witnessed time and publication; it
 does not make the underlying event truthful or turn two services in the same
 operator ecosystem into two independent organizations. Long-term revocation
-capture and RFC 4998 archive-timestamp renewal are not implemented yet.
+capture and RFC 4998 archive-timestamp renewal are not implemented yet. The
+PostgreSQL outbox provides at-least-once delivery: a crash after a witness
+accepts a request can repeat that external request, while lease fencing keeps
+stale workers from overwriting the authoritative stored receipt.
 
 ## Verified IBM Hardware Results
 

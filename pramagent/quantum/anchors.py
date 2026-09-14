@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from .evidence_v2 import (
     EvidenceEnvelopeV2,
@@ -584,6 +584,27 @@ class AnchorJob:
     anchors: tuple[ExternalAnchorV2, ...]
 
 
+@runtime_checkable
+class AnchorOutboxBackend(Protocol):
+    """Storage contract shared by local and distributed anchor workers."""
+
+    def close(self) -> None: ...
+
+    def enqueue(
+        self, checkpoint: SignedCheckpointV2, *, now_us: int | None = None
+    ) -> None: ...
+
+    def process_one(
+        self,
+        provider: SigstoreAnchorProvider,
+        *,
+        now_us: int | None = None,
+        lease_seconds: int = 60,
+    ) -> AnchorJob | None: ...
+
+    def get(self, checkpoint_hash: str) -> AnchorJob | None: ...
+
+
 class SQLiteAnchorOutbox:
     """Durable retry queue for off-path external anchoring."""
 
@@ -805,6 +826,7 @@ class SQLiteAnchorOutbox:
 
 __all__ = [
     "AnchorJob",
+    "AnchorOutboxBackend",
     "ExternalAnchorError",
     "RFC3161_ANCHOR_DOMAIN",
     "SQLiteAnchorOutbox",

@@ -33,11 +33,13 @@ from .calibration import (
 from .evidence import QuantumEvidenceError, QuantumExecutionEvidence
 from .anchors import (
     AnchorJob,
+    AnchorOutboxBackend,
     ExternalAnchorError,
     SQLiteAnchorOutbox,
     SigstoreAnchorProvider,
     attach_anchors,
 )
+from .anchors_postgres import AnchorLeaseLostError, PostgresAnchorOutbox
 from .evidence_v2 import (
     AnchorPolicy,
     AssuranceLevel,
@@ -96,10 +98,13 @@ __all__ = [
     "QuantumBudgetReconciliation",
     "QuantumBudgetSnapshot",
     "PostgresQuantumBudgetLedger",
+    "PostgresAnchorOutbox",
     "CalibrationBindingError",
     "CalibrationCanaryEvidence",
     "CalibrationWorkloadBinding",
     "AnchorJob",
+    "AnchorLeaseLostError",
+    "AnchorOutboxBackend",
     "AnchorPolicy",
     "AssuranceLevel",
     "CheckpointV2",

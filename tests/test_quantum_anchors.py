@@ -233,6 +233,57 @@ def test_anchor_cli_writes_completed_envelope(tmp_path, monkeypatch, capsys):
     )
 
 
+def test_anchor_cli_selects_postgres_without_printing_dsn(
+    tmp_path, monkeypatch, capsys
+):
+    from pramagent import cli
+    from pramagent.quantum import SQLiteAnchorOutbox
+
+    _, builder, checkpoint = _epoch()
+    envelope = builder.envelope(0, checkpoint)
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "anchored.json"
+    input_path.write_text(json.dumps(envelope.to_dict()), encoding="utf-8")
+    captured = {}
+
+    class Provider:
+        @classmethod
+        def production(cls, **_kwargs):
+            return cls()
+
+        def issue_rfc3161(self, signed):
+            return _anchor(signed.checkpoint_hash, "RFC3161")
+
+        def publish_transparency(self, signed):
+            return _anchor(signed.checkpoint_hash, "transparency-log")
+
+    class PostgresOutbox(SQLiteAnchorOutbox):
+        def __init__(self, dsn, *, table):
+            captured.update(dsn=dsn, table=table)
+            super().__init__(tmp_path / "postgres-double.sqlite3")
+
+    monkeypatch.setattr("pramagent.quantum.SigstoreAnchorProvider", Provider)
+    monkeypatch.setattr("pramagent.quantum.PostgresAnchorOutbox", PostgresOutbox)
+    secret_dsn = "postgresql://user:secret-password@db.example/evidence"
+    args = SimpleNamespace(
+        envelope=str(input_path),
+        output=str(output_path),
+        outbox=str(tmp_path / "unused.sqlite3"),
+        outbox_postgres_dsn=secret_dsn,
+        outbox_table="tenant_anchor_jobs",
+        trust_cache_only=False,
+        timeout=15,
+        max_jobs=10,
+        json=True,
+    )
+
+    assert cli.cmd_evidence_v2_anchor(args) == 0
+    output = capsys.readouterr().out
+    assert captured == {"dsn": secret_dsn, "table": "tenant_anchor_jobs"}
+    assert json.loads(output)["outbox"] == "postgres"
+    assert secret_dsn not in output
+
+
 @pytest.mark.skipif(
     os.environ.get("PRAMAGENT_RUN_LIVE_SIGSTORE") != "1",
     reason="set PRAMAGENT_RUN_LIVE_SIGSTORE=1 for public-service integration",
