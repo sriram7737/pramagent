@@ -46,6 +46,13 @@ Then install from the GitHub-hosted marketplace/plugin source and verify with:
 
 Use `claude --debug` and run a simple command to confirm the hook fires.
 
+From a terminal, the public marketplace can be installed directly:
+
+```bash
+claude plugin marketplace add sriram7737/pramagent@0.1.1
+claude plugin install pramagent-guard@pramagent
+```
+
 ## Codex
 
 Codex plugins are installable bundles discovered through marketplaces. This repo
@@ -76,7 +83,7 @@ repository source with:
 
 ```bash
 python -m pip install "pramagent==0.8.9"
-gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.0
+gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.1
 ```
 
 Restart Gemini CLI, then verify the installed extension with:

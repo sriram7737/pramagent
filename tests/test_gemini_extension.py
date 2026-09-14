@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_gemini_extension_manifest_uses_the_hook_bundle_version():
     manifest = json.loads((ROOT / "gemini-extension.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "pramagent"
-    assert manifest["version"] == "0.1.0"
+    assert manifest["version"] == "0.1.1"
 
 
 def test_gemini_extension_registers_the_fail_closed_bootstrap():

@@ -93,7 +93,7 @@ package:
 
 ```bash
 python -m pip install "pramagent==0.8.9"
-gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.0
+gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.1
 ```
 
 Restart Gemini CLI and run `gemini extensions list` to confirm that the
