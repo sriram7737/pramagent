@@ -41,7 +41,8 @@ resolves for `python`. On Windows especially, you may need to edit
 
 ## What ships by default
 
-- `hooks/hooks.json` registers Claude/Codex/Grok-compatible tool-call hooks.
+- `hooks/hooks.json` registers Claude/Grok-compatible tool-call hooks.
+- `hooks/codex_hooks.json` registers the Codex-specific tool-call hook.
 - `hooks/scripts/pramagent_guard.py` evaluates each matched tool event.
 - `policies.json` contains conservative starter policies:
   - known read-only shell inspection is allowed;
@@ -93,7 +94,7 @@ package:
 
 ```bash
 python -m pip install "pramagent==0.8.9"
-gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.1
+gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.3
 ```
 
 Restart Gemini CLI and run `gemini extensions list` to confirm that the

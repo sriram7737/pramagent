@@ -16,7 +16,8 @@ It contains:
 
 - `.codex-plugin/plugin.json` for Codex plugin discovery
 - `.claude-plugin/plugin.json` for Claude-compatible plugin metadata
-- `hooks/hooks.json` for PreToolUse/BeforeTool registration
+- `hooks/hooks.json` for Claude-compatible `PreToolUse` registration
+- `hooks/codex_hooks.json` for Codex `PreToolUse` registration
 - `hooks/scripts/pramagent_guard.py` for policy evaluation
 - `policies.json` for starter ToolGuard policies
 
@@ -49,7 +50,7 @@ Use `claude --debug` and run a simple command to confirm the hook fires.
 From a terminal, the public marketplace can be installed directly:
 
 ```bash
-claude plugin marketplace add sriram7737/pramagent@0.1.1
+claude plugin marketplace add sriram7737/pramagent@0.1.3
 claude plugin install pramagent-guard@pramagent
 ```
 
@@ -71,8 +72,9 @@ The marketplace entry points at:
 After pushing, add the repo as a marketplace source in Codex, install
 `pramagent-guard`, then review and trust the hook in `/hooks`.
 
-Codex plugin hooks pass `PLUGIN_ROOT` and `PLUGIN_DATA`; the guard script also
-accepts Claude-compatible `CLAUDE_PLUGIN_ROOT` for portability.
+Codex uses `hooks/codex_hooks.json`, including a Windows command override. Its
+plugin hooks pass `PLUGIN_ROOT` and `PLUGIN_DATA`; the guard script also accepts
+Claude-compatible `CLAUDE_PLUGIN_ROOT` for portability.
 
 ## Gemini CLI
 
@@ -83,7 +85,7 @@ repository source with:
 
 ```bash
 python -m pip install "pramagent==0.8.9"
-gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.1
+gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.3
 ```
 
 Restart Gemini CLI, then verify the installed extension with:

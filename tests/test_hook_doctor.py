@@ -18,6 +18,7 @@ _RUNTIME_FILES = (
     "scripts/gemini_cli_hook.py",
     "scripts/codex_tool_hook.py",
     "plugins/pramagent-guard/hooks/hooks.json",
+    "plugins/pramagent-guard/hooks/codex_hooks.json",
     "plugins/pramagent-guard/hooks/scripts/pramagent_guard.py",
     "plugins/pramagent-guard/policies.json",
 )

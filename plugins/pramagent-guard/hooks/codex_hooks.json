@@ -1,0 +1,19 @@
+{
+  "description": "Pramagent Guard checks each proposed Codex tool call before execution.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/scripts/pramagent_guard.py\"",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\scripts\\pramagent_guard.py\"",
+            "timeout": 15,
+            "statusMessage": "Checking tool call with Pramagent Guard"
+          }
+        ]
+      }
+    ]
+  }
+}

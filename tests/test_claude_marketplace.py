@@ -16,7 +16,7 @@ def test_marketplace_references_the_guard_plugin_inside_the_repository():
     entry = marketplace["plugins"][0]
     assert entry["name"] == "pramagent-guard"
     assert entry["source"] == "./plugins/pramagent-guard"
-    assert entry["version"] == "0.1.1"
+    assert entry["version"] == "0.1.3"
 
     plugin = json.loads(
         (ROOT / "plugins" / "pramagent-guard" / ".claude-plugin" / "plugin.json").read_text(
@@ -24,3 +24,4 @@ def test_marketplace_references_the_guard_plugin_inside_the_repository():
         )
     )
     assert plugin["version"] == entry["version"]
+    assert not (ROOT / "plugins" / "pramagent-guard" / ".claude-plugin" / "marketplace.json").exists()

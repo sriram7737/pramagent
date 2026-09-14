@@ -131,6 +131,25 @@ def test_before_tool_uses_gemini_decision_shape_and_denies_review():
     assert "hookSpecificOutput" not in output
 
 
+def test_claude_plugin_hook_configuration_only_uses_claude_events():
+    config = json.loads((_PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    assert set(config["hooks"]) == {"PreToolUse"}
+    handler = config["hooks"]["PreToolUse"][0]["hooks"][0]
+    assert "args" not in handler
+    assert "CLAUDE_PLUGIN_ROOT" in handler["command"]
+
+
+def test_codex_plugin_hook_configuration_uses_its_manifest_override():
+    manifest = json.loads(
+        (_PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    assert manifest["hooks"] == "./hooks/codex_hooks.json"
+    config = json.loads((_PLUGIN_ROOT / "hooks" / "codex_hooks.json").read_text(encoding="utf-8"))
+    handler = config["hooks"]["PreToolUse"][0]["hooks"][0]
+    assert "PLUGIN_ROOT" in handler["command"]
+    assert "commandWindows" in handler
+
+
 def test_non_tool_event_is_ignored(monkeypatch):
     monkeypatch.setenv("PRAMAGENT_HOOK_ESCALATE_DECISION", "ask")
     output = HOOK.evaluate_event({"hook_event_name": "SessionStart"})

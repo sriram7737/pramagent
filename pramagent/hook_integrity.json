@@ -1,7 +1,8 @@
 {
   "algorithm": "sha256",
   "files": {
-    "plugins/pramagent-guard/hooks/hooks.json": "ff8becf1357ac0bb78293aeceb6dba13efb02f99271e378a44824e612784428c",
+    "plugins/pramagent-guard/hooks/hooks.json": "7991f8a5a8995d2c9792e38fd4bc28f04b452af3ec63b7bab13dab17d76a72fd",
+    "plugins/pramagent-guard/hooks/codex_hooks.json": "8d02e934a139ec851ee5c77a9359ef10c53abd092d0f1180b27717312c9e1565",
     "plugins/pramagent-guard/hooks/scripts/pramagent_guard.py": "f1d12058b8a2433304148a35b11a34eb98247dd66b6fb24de59d81f7039bdf06",
     "plugins/pramagent-guard/policies.json": "e553cc90ef0341a27643cf8777a99332723b054ee051fc29933e3148d1577941",
     "pramagent/hook_scan.py": "afe308fe8e1abd686453473f10f81fcee004f58ed2888707777ab5ba966ccbaa",
