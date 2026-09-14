@@ -282,8 +282,10 @@ Actions is configured to run the same suite on Python 3.10, 3.11, 3.12, and
   broader QuantumLayer architecture. Evidence Envelope V2, hybrid checkpoint
   signing, Merkle proofs, golden vectors, production Sigstore RFC 3161/Rekor
   anchoring, SQLite and distributed PostgreSQL retry outboxes, and
-  online/cache-only verification are implemented. The current adapter does
-  not capture OCSP/CRL responses or provide RFC 4998 long-term renewal.
+  online/cache-only verification, signed OCSP/CRL capture when advertised,
+  and RFC 4998 single-object timestamp renewal are implemented. Hash-tree
+  renewal, immutable archive operations, and the seven-year validation drill
+  remain outstanding.
 - Real external penetration test (must be run by a third party)
 - 200-500 call run with full production side effects such as real email sends
   or third-party scraper providers. Current heavy run executes real read-only

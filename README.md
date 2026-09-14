@@ -893,8 +893,30 @@ artifact signature, Merkle inclusion proof, and signed log checkpoint. The
 production and cache-only trust modes obtain roots from Sigstore's TUF trust
 configuration. This establishes externally witnessed time and publication; it
 does not make the underlying event truthful or turn two services in the same
-operator ecosystem into two independent organizations. Long-term revocation
-capture and RFC 4998 archive-timestamp renewal are not implemented yet. The
+operator ecosystem into two independent organizations. The anchor captures
+and verifies OCSP/CRL responses when the TSA certificate advertises them; a
+signed certificate without either endpoint receives an explicit
+`no_endpoint_advertised` record. Pramagent also supports the RFC 4998
+single-object/SHA-256 timestamp-renewal profile:
+
+```bash
+pramagent evidence-archive-create \
+  --envelope evidence.anchored.json \
+  --output evidence.archive.json
+
+pramagent evidence-archive-renew \
+  --bundle evidence.archive.json \
+  --output evidence.archive.renewed.json
+
+pramagent evidence-archive-verify \
+  --bundle evidence.archive.renewed.json
+```
+
+The archive bundle retains each TSA response, certificate chain, and available
+revocation artifact. Hash-tree renewal, immutable archive storage, automated
+renewal scheduling, and a seven-year operational validation drill remain
+release requirements; timestamp-renewal support alone is not a seven-year
+guarantee. The
 PostgreSQL outbox provides at-least-once delivery: a crash after a witness
 accepts a request can repeat that external request, while lease fencing keeps
 stale workers from overwriting the authoritative stored receipt.

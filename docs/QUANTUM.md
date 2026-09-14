@@ -304,7 +304,9 @@ pramagent evidence-v2-verify `
 
 The CLI deliberately does not trust public keys carried beside an envelope.
 It also does not trust witness metadata carried by the envelope: Sigstore trust
-is loaded independently through TUF. Current anchoring does not capture
-contemporaneous revocation responses or perform RFC 4998 archive renewal, so
-`tsa_anchored` is a current verification result rather than a seven-year
-long-term-validation guarantee.
+is loaded independently through TUF. Current anchoring captures and verifies
+OCSP/CRL responses when the certificate advertises them and explicitly records
+when it does not. RFC 4998 DER timestamp renewal is available through the
+`evidence-archive-*` commands. Hash-tree renewal, immutable archive storage,
+and automated renewal operations are still required before claiming a
+seven-year long-term-validation service.

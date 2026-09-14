@@ -119,10 +119,18 @@ does not treat an operator-supplied timestamp field as trusted time.
 
 The current Sigstore adapter retains the complete RFC 3161 request, response,
 embedded signer certificate, TUF-provided certificate chain, and complete
-Rekor bundle. It does not yet fetch contemporaneous OCSP/CRL material and does
-not implement RFC 4998 renewal. Therefore `tsa_anchored` describes successful
-verification under current trust material, not a seven-year long-term
-validation guarantee.
+Rekor bundle. When a TSA certificate advertises OCSP or CRL endpoints, the
+worker verifies and stores the signed response. If neither endpoint exists,
+the bundle records `no_endpoint_advertised`; it never treats absence as a good
+certificate-status response.
+
+`RFC4998ArchiveBundle` implements DER Evidence Records for the
+single-object/SHA-256 timestamp-renewal profile. It retains every timestamp
+anchor and its validation material, and verifies that each renewal timestamps
+the previous `timeStamp` field. Hash-tree renewal is not implemented. Neither
+the format nor `tsa_anchored` alone is a seven-year operational guarantee;
+production still requires immutable storage, algorithm monitoring, scheduled
+renewal, restore drills, and retained trust-policy snapshots.
 
 ## Operations
 
@@ -154,6 +162,17 @@ pramagent evidence-v2-verify \
   --keys verification-keys.json \
   --anchor-trust sigstore-offline \
   --require-assurance tsa_anchored
+
+pramagent evidence-archive-create \
+  --envelope evidence.anchored.json \
+  --output evidence.archive.json
+
+pramagent evidence-archive-renew \
+  --bundle evidence.archive.json \
+  --output evidence.archive.renewed.json
+
+pramagent evidence-archive-verify \
+  --bundle evidence.archive.renewed.json
 ```
 
 `sigstore-production` refreshes trust metadata through TUF before verification.

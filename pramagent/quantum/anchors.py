@@ -168,6 +168,24 @@ class SigstoreAnchorProvider:
     def issue_rfc3161(self, checkpoint: SignedCheckpointV2) -> ExternalAnchorV2:
         """Timestamp a signed checkpoint and verify the response before use."""
         checkpoint.validate()
+        payload = _checkpoint_payload(
+            checkpoint.checkpoint_hash, RFC3161_ANCHOR_DOMAIN
+        )
+        return self._issue_rfc3161_payload(
+            payload, reference_hash=checkpoint.checkpoint_hash
+        )
+
+    def issue_archive_timestamp(self, payload: bytes) -> ExternalAnchorV2:
+        """Timestamp RFC 4998 renewal material outside checkpoint semantics."""
+        if not payload:
+            raise ExternalAnchorError("archive timestamp payload cannot be empty")
+        return self._issue_rfc3161_payload(
+            payload, reference_hash=hashlib.sha256(payload).hexdigest()
+        )
+
+    def _issue_rfc3161_payload(
+        self, payload: bytes, *, reference_hash: str
+    ) -> ExternalAnchorV2:
         from requests import Session
         from requests.exceptions import RequestException
         from rfc3161_client import (
@@ -176,9 +194,6 @@ class SigstoreAnchorProvider:
             decode_timestamp_response,
         )
 
-        payload = _checkpoint_payload(
-            checkpoint.checkpoint_hash, RFC3161_ANCHOR_DOMAIN
-        )
         request = (
             TimestampRequestBuilder()
             .hash_algorithm(HashAlgorithm.SHA256)
@@ -229,20 +244,45 @@ class SigstoreAnchorProvider:
         )
         certificates = set(timestamp.signed_data.certificates)
         certificates.update(self._tsa_trust_certificates())
+        certificate_chain = tuple(
+            _b64encode(item) for item in sorted(certificates)
+        )
+        from .revocation import capture_revocation_evidence
+
+        revocation_material = capture_revocation_evidence(
+            certificate_chain,
+            timeout_seconds=self.timeout_seconds,
+            max_response_bytes=self.max_response_bytes,
+        )
         return ExternalAnchorV2(
             anchor_type="RFC3161",
             witness_id=self.tsa_url,
-            checkpoint_hash=checkpoint.checkpoint_hash,
+            checkpoint_hash=reference_hash,
             issued_at_us=issued_at_us,
             artifact_b64=_b64encode(artifact),
-            certificate_chain_b64=tuple(
-                _b64encode(item) for item in sorted(certificates)
-            ),
+            certificate_chain_b64=certificate_chain,
+            revocation_material_b64=revocation_material,
             anchor_id=hashlib.sha256(encoded_response).hexdigest(),
         )
 
     def verify_rfc3161(self, anchor: ExternalAnchorV2) -> bool:
         """Verify an RFC 3161 artifact against TUF-authenticated TSA roots."""
+        payload = _checkpoint_payload(
+            anchor.checkpoint_hash, RFC3161_ANCHOR_DOMAIN
+        )
+        return self._verify_rfc3161_payload(anchor, payload)
+
+    def verify_archive_timestamp(
+        self, anchor: ExternalAnchorV2, payload: bytes
+    ) -> bool:
+        """Verify an archive timestamp and its payload-reference digest."""
+        if anchor.checkpoint_hash != hashlib.sha256(payload).hexdigest():
+            return False
+        return self._verify_rfc3161_payload(anchor, payload)
+
+    def _verify_rfc3161_payload(
+        self, anchor: ExternalAnchorV2, payload: bytes
+    ) -> bool:
         anchor.validate()
         if anchor.anchor_type != "RFC3161" or anchor.witness_id != self.tsa_url:
             return False
@@ -268,9 +308,6 @@ class SigstoreAnchorProvider:
                 artifact["response_b64"], "RFC 3161 response"
             )
             timestamp = decode_timestamp_response(encoded_response)
-            payload = _checkpoint_payload(
-                anchor.checkpoint_hash, RFC3161_ANCHOR_DOMAIN
-            )
             self._verify_timestamp(timestamp, payload=payload, nonce=nonce)
             if _datetime_to_us(timestamp.tst_info.gen_time) != anchor.issued_at_us:
                 return False

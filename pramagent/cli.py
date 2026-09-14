@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -822,6 +823,144 @@ def cmd_evidence_v2_anchor(args) -> int:
     return 0
 
 
+def cmd_evidence_archive_create(args) -> int:
+    """Create an RFC 4998 archive bundle from an anchored V2 envelope."""
+    from pathlib import Path
+
+    from .quantum import (
+        EvidenceEnvelopeV2,
+        SigstoreAnchorProvider,
+        canonicalize_jcs,
+        create_archive_bundle,
+    )
+
+    try:
+        envelope = EvidenceEnvelopeV2.from_json(Path(args.envelope).read_bytes())
+        tsa_anchors = [
+            anchor for anchor in envelope.anchors if anchor.anchor_type == "RFC3161"
+        ]
+        if len(tsa_anchors) != 1:
+            raise ValueError("envelope must contain exactly one RFC 3161 anchor")
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        bundle = create_archive_bundle(
+            envelope.checkpoint.checkpoint_hash,
+            tsa_anchors[0],
+            anchor_verifier=provider.verify_rfc3161,
+        )
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonicalize_jcs(bundle.to_dict()) + b"\n")
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "bundle_hash": bundle.bundle_hash,
+        "checkpoint_hash": bundle.checkpoint_hash,
+        "output": str(output),
+        "timestamp_count": len(bundle.timestamp_anchors),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else (
+        "Pramagent RFC 4998 archive created\n"
+        f"  checkpoint:  {bundle.checkpoint_hash}\n"
+        f"  timestamps:  {len(bundle.timestamp_anchors)}\n"
+        f"  output:      {output}"
+    ))
+    return 0
+
+
+def cmd_evidence_archive_renew(args) -> int:
+    """Append a live RFC 3161 timestamp renewal to an archive bundle."""
+    from pathlib import Path
+
+    from .quantum import (
+        RFC4998ArchiveBundle,
+        SigstoreAnchorProvider,
+        canonicalize_jcs,
+        renew_archive_bundle,
+        timestamp_renewal_payload,
+    )
+
+    try:
+        bundle = RFC4998ArchiveBundle.from_json(Path(args.bundle).read_bytes())
+        record = base64.b64decode(bundle.evidence_record_der_b64, validate=True)
+        payload_to_timestamp = timestamp_renewal_payload(record)
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        anchor = provider.issue_archive_timestamp(payload_to_timestamp)
+        renewed = renew_archive_bundle(
+            bundle,
+            anchor,
+            anchor_verifier=lambda value: provider.verify_archive_timestamp(
+                value, payload_to_timestamp
+            ),
+        )
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonicalize_jcs(renewed.to_dict()) + b"\n")
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "bundle_hash": renewed.bundle_hash,
+        "checkpoint_hash": renewed.checkpoint_hash,
+        "output": str(output),
+        "timestamp_count": len(renewed.timestamp_anchors),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else (
+        "Pramagent RFC 4998 archive renewed\n"
+        f"  checkpoint:  {renewed.checkpoint_hash}\n"
+        f"  timestamps:  {len(renewed.timestamp_anchors)}\n"
+        f"  output:      {output}"
+    ))
+    return 0
+
+
+def cmd_evidence_archive_verify(args) -> int:
+    """Verify an RFC 4998 archive bundle against Sigstore trust material."""
+    from pathlib import Path
+
+    from .quantum import (
+        RFC4998ArchiveBundle,
+        SigstoreAnchorProvider,
+        verify_archive_bundle,
+    )
+
+    try:
+        bundle = RFC4998ArchiveBundle.from_json(Path(args.bundle).read_bytes())
+        provider = SigstoreAnchorProvider.production(
+            offline=args.trust_cache_only,
+            timeout_seconds=args.timeout,
+        )
+        report = verify_archive_bundle(
+            bundle,
+            initial_anchor_verifier=provider.verify_rfc3161,
+            renewal_anchor_verifier=provider.verify_archive_timestamp,
+        )
+    except Exception as exc:
+        print(f"[fail] {exc}", file=sys.stderr)
+        return 2
+    payload = {
+        "errors": list(report.errors),
+        "external_timestamps_valid": report.external_timestamps_valid,
+        "structural_valid": report.structural_valid,
+        "timestamp_count": report.timestamp_count,
+        "valid": report.valid,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True) if args.json else (
+        "Pramagent RFC 4998 archive verification\n"
+        f"  valid:                {report.valid}\n"
+        f"  structure:            {report.structural_valid}\n"
+        f"  external timestamps:  {report.external_timestamps_valid}\n"
+        f"  timestamp count:      {report.timestamp_count}"
+    ))
+    return 0 if report.valid else 1
+
+
 def cmd_backtest(args) -> int:
     from .policies import PolicyLoadError, backtest_policy_file
 
@@ -1181,6 +1320,35 @@ def main():
     )
     p_evidence_anchor.add_argument("--json", action="store_true", help="Emit JSON")
 
+    p_archive_create = sub.add_parser(
+        "evidence-archive-create",
+        help="Create an RFC 4998 archive bundle from an anchored V2 envelope",
+    )
+    p_archive_create.add_argument("--envelope", required=True)
+    p_archive_create.add_argument("--output", required=True)
+    p_archive_create.add_argument("--trust-cache-only", action="store_true")
+    p_archive_create.add_argument("--timeout", type=int, default=15)
+    p_archive_create.add_argument("--json", action="store_true")
+
+    p_archive_renew = sub.add_parser(
+        "evidence-archive-renew",
+        help="Append an RFC 3161 timestamp renewal to an RFC 4998 bundle",
+    )
+    p_archive_renew.add_argument("--bundle", required=True)
+    p_archive_renew.add_argument("--output", required=True)
+    p_archive_renew.add_argument("--trust-cache-only", action="store_true")
+    p_archive_renew.add_argument("--timeout", type=int, default=15)
+    p_archive_renew.add_argument("--json", action="store_true")
+
+    p_archive_verify = sub.add_parser(
+        "evidence-archive-verify",
+        help="Verify an RFC 4998 bundle and every retained TSA artifact",
+    )
+    p_archive_verify.add_argument("--bundle", required=True)
+    p_archive_verify.add_argument("--trust-cache-only", action="store_true")
+    p_archive_verify.add_argument("--timeout", type=int, default=15)
+    p_archive_verify.add_argument("--json", action="store_true")
+
     p_hooks_doctor = sub.add_parser(
         "hooks-doctor",
         help="Verify coding-agent hook wiring and runtime integrity",
@@ -1223,6 +1391,9 @@ def main():
         "quantum-run": cmd_quantum_run,
         "evidence-v2-verify": cmd_evidence_v2_verify,
         "evidence-v2-anchor": cmd_evidence_v2_anchor,
+        "evidence-archive-create": cmd_evidence_archive_create,
+        "evidence-archive-renew": cmd_evidence_archive_renew,
+        "evidence-archive-verify": cmd_evidence_archive_verify,
         "hooks-doctor": cmd_hooks_doctor,
         "version":     cmd_version,
         "demo":        cmd_demo,
