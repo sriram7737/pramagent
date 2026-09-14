@@ -1,0 +1,5 @@
+{
+  "name": "pramagent",
+  "version": "0.1.0",
+  "description": "Pramagent Guard policy enforcement for Gemini CLI tool calls."
+}

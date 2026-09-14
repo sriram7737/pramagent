@@ -9,14 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "scripts/hook_bootstrap.py",
-              "--host",
-              "gemini",
-              "--script",
-              "scripts/gemini_cli_hook.py"
-            ],
+            "command": "python scripts/hook_bootstrap.py --host gemini --script scripts/gemini_cli_hook.py",
             "timeout": 20000
           }
         ]

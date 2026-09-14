@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "name": "pramagent-guard",
+            "type": "command",
+            "command": "python \"${extensionPath}${/}scripts${/}hook_bootstrap.py\" --host gemini --script \"${extensionPath}${/}scripts${/}gemini_cli_hook.py\"",
+            "timeout": 20000,
+            "description": "Evaluate each proposed tool call with Pramagent ToolGuard."
+          }
+        ]
+      }
+    ]
+  }
+}

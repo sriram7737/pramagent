@@ -8,6 +8,7 @@ Supported surfaces:
 
 - Claude Code plugin hooks
 - Codex plugin hooks
+- Gemini CLI through the repository-root `pramagent` extension
 - Grok Build plugin hooks, through Grok's Claude-compatible plugin/hook loading
 - Any local agent that can send a Claude-style `PreToolUse` JSON event on stdin
 
@@ -83,6 +84,21 @@ PRAMAGENT_HOOK_ESCALATE_DECISION=ask
 ```
 
 only if your Codex surface supports an interactive ask decision.
+
+## Gemini CLI
+
+Gemini CLI uses a native extension rather than this Claude/Codex plugin
+manifest. Install the repository-root extension after installing the Python
+package:
+
+```bash
+python -m pip install "pramagent==0.8.9"
+gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.0
+```
+
+Restart Gemini CLI and run `gemini extensions list` to confirm that the
+`pramagent` extension is enabled. Gemini maps policy escalations to a denial
+because its `BeforeTool` hook has no interactive approval result.
 
 ## Grok Build / xAI
 

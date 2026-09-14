@@ -1,8 +1,8 @@
 # Publishing Pramagent Guard Hooks
 
 Pramagent Guard packages the same policy idea for multiple coding-agent hosts:
-Claude Code, Codex, Grok Build, and other agents that expose a pre-tool-call
-hook.
+Claude Code, Codex, Gemini CLI, Grok Build, and other agents that expose a
+pre-tool-call hook.
 
 ## Current publish target
 
@@ -67,6 +67,29 @@ After pushing, add the repo as a marketplace source in Codex, install
 Codex plugin hooks pass `PLUGIN_ROOT` and `PLUGIN_DATA`; the guard script also
 accepts Claude-compatible `CLAUDE_PLUGIN_ROOT` for portability.
 
+## Gemini CLI
+
+Gemini CLI distributes hooks through extensions. The repository root is a
+native Gemini extension: `gemini-extension.json` identifies it and
+`hooks/hooks.json` registers a `BeforeTool` command hook. Install the pushed
+repository source with:
+
+```bash
+python -m pip install "pramagent==0.8.9"
+gemini extensions install https://github.com/sriram7737/pramagent --ref 0.1.0
+```
+
+Restart Gemini CLI, then verify the installed extension with:
+
+```bash
+gemini extensions list
+```
+
+The hook executes through `hook_bootstrap.py`, which verifies the approved
+hook-child hash before launching the Gemini adapter. The standalone
+`scripts/gemini_cli_hook.settings.json.example` remains available for an
+organization-managed settings deployment.
+
 ## Grok Build / xAI
 
 Grok Build plugins can include hooks. Grok discovers plugins from project and
@@ -111,7 +134,8 @@ for blocked/escalated calls.
 3. Run `python -m compileall -q plugins/pramagent-guard`.
 4. Validate the Codex plugin manifest with the local plugin validator.
 5. Push to GitHub.
-6. In each host, install the plugin and open `/hooks` to trust it.
+6. In Claude Code and Codex, install the plugin and open `/hooks` to trust it.
+7. In Gemini CLI, install the GitHub extension and restart the CLI.
 
 ## Security posture
 
