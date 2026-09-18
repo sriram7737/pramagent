@@ -244,10 +244,14 @@ def cmd_auth_revoke(args) -> int:
     return 0 if revoked else 1
 
 
-def _store_from_env():
+def _store_from_env(*, verification: bool = False):
     import os
 
-    from .secrets import resolve_secret, resolve_signing_key_ring
+    from .secrets import (
+        resolve_audit_verification_key_ring,
+        resolve_secret,
+        resolve_signing_key_ring,
+    )
     dsn = os.environ.get("PRAMAGENT_POSTGRES_DSN", "").strip()
     db_path = os.environ.get("PRAMAGENT_DB", "").strip()
     # Resolve signing and encryption keys through the same indirection layer
@@ -255,7 +259,11 @@ def _store_from_env():
     # single-key path here would report a
     # correctly-rotated chain (rows tagged with a newer kid) as tampered, so
     # `audit verify`/`audit-verify-watch`/`audit-export` fired false alarms.
-    key_cfg = resolve_signing_key_ring()
+    key_cfg = (
+        resolve_audit_verification_key_ring()
+        if verification
+        else resolve_signing_key_ring()
+    )
     if dsn:
         from .store_postgres import PostgresStore
         return PostgresStore.from_dsn(dsn, **key_cfg)
@@ -403,7 +411,7 @@ def cmd_audit_verify_watch(args) -> int:
 
     def _run_once() -> bool:
         try:
-            store = _store_from_env()
+            store = _store_from_env(verification=True)
         except Exception as exc:
             print(f"[fail] could not connect to store: {exc}", file=sys.stderr)
             return False

@@ -125,7 +125,7 @@ include-package-data = true
     "demo_signals_admin.html",
     "quantum_demo_evidence.json",
 ]
-"pramagent" = ["hook_integrity.json"]
+"pramagent" = ["hook_integrity.json", "default_hook_config.json"]
 "pramagent.quantum" = ["data/*.json"]
 
 [tool.setuptools.data-files]

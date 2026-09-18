@@ -44,6 +44,7 @@ if _REPO_ROOT not in sys.path:
 from pramagent.hook_scan import scan_injection, scan_pii, shell_command_risk
 from pramagent.hook_state import is_enabled as _hook_enabled
 from pramagent.hook_state import get_policies as _central_policies
+from pramagent.hook_state import get_policy_mode as _policy_mode
 from pramagent.hook_state import tool_enabled as _tool_enabled
 from pramagent.hook_state import tenant_tool_allowed as _tenant_tool_allowed
 from pramagent.hook_state import targets_protected_path as _targets_protected_path
@@ -186,6 +187,8 @@ def _apply_central_policy_overrides() -> None:
     helper in scripts/claude_code_hook.py). Invalid overrides are skipped."""
     try:
         from pramagent.policies import tool_policy_from_dict
+        if _policy_mode() == "replace":
+            _GUARD.policies.clear()
         for _policy in _central_policies() or []:
             try:
                 _GUARD.register(tool_policy_from_dict(_policy))

@@ -11,6 +11,7 @@ from pramagent.hook_doctor import inspect_hooks
 
 
 _RUNTIME_FILES = (
+    "pramagent/default_hook_config.json",
     "pramagent/hook_scan.py",
     "pramagent/hook_state.py",
     "scripts/hook_bootstrap.py",

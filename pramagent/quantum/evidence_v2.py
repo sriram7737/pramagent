@@ -223,7 +223,13 @@ class EvidenceLeafV2:
         observed_at_us: int,
         record: dict[str, Any],
         nonce: bytes | None = None,
+        source_assurance: AssuranceLevel = AssuranceLevel.CHECKSUM_ONLY,
     ) -> "EvidenceLeafV2":
+        if source_assurance not in {
+            AssuranceLevel.CHECKSUM_ONLY,
+            AssuranceLevel.HMAC_AUTHENTICATED,
+        }:
+            raise EvidenceV2Error("native source assurance must be checksum or HMAC")
         digest = hashlib.sha256(canonicalize_jcs(record)).hexdigest()
         return cls(
             record_id=record_id,
@@ -232,6 +238,7 @@ class EvidenceLeafV2:
             record_digest=digest,
             observed_at_us=observed_at_us,
             nonce_b64=_b64encode(nonce if nonce is not None else secrets.token_bytes(16)),
+            source_assurance=source_assurance.value,
         ).seal()
 
     @classmethod

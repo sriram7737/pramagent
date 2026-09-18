@@ -144,6 +144,53 @@ before the receipt commits. The database stores one authoritative receipt per
 checkpoint and anchor type, but an external witness may observe a duplicate
 request after that failure window.
 
+### Audit-pipeline integration
+
+`AuditEvidencePipeline` connects ordinary Pramagent audit appends to V2
+evidence. It stores an integer-safe V2 record containing the completed audit
+chain link, its predecessor, and non-sensitive routing metadata. The original
+audit backend remains the source of the full trace; this avoids putting floats
+or request text into the signed V2 format while still binding every leaf to the
+completed audit record.
+
+Wrap the application through the `Pramagent(evidence_pipeline=...)` option:
+
+```python
+from pramagent import Pramagent
+from pramagent.audit import HashChainBackend
+from pramagent.quantum import (
+    AuditEvidencePipeline,
+    HybridCheckpointSigner,
+    SQLiteAnchorOutbox,
+)
+
+signer = HybridCheckpointSigner.generate(
+    ed25519_key_id="audit-ed-2026-01",
+    ml_dsa_65_key_id="audit-pq-2026-01",
+)
+outbox = SQLiteAnchorOutbox(".pramagent/evidence-anchor-outbox.sqlite3")
+pipeline = AuditEvidencePipeline(
+    ".pramagent/evidence-pipeline.sqlite3",
+    signer=signer,
+    outbox=outbox,
+    epoch_max_leaves=1_000,
+    epoch_max_age_s=300,
+)
+armor = Pramagent(
+    audit=HashChainBackend(signing_key="load-from-secret-store"),
+    evidence_pipeline=pipeline,
+)
+```
+
+Call `pipeline.run_maintenance(provider=...)` from a worker or scheduler. A
+tick closes an aged epoch and processes due outbox jobs. A full epoch closes
+immediately after its final append; neither closure nor a witness outage
+blocks an application tool decision. `pipeline.get_envelope(audit_hash)`
+returns an inclusion proof for a closed audit record and adds completed outbox
+anchors when they are available. Use `PostgresAnchorOutbox` in multi-worker
+deployments; the pipeline journal itself is deliberately single-host SQLite in
+this release.
+
 ```bash
 pip install "pramagent[evidence-anchors]"
 

@@ -154,7 +154,12 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
 
     try:
         from pramagent.hook_scan import scan_injection, scan_pii, shell_command_risk
-        from pramagent.hook_state import get_policies, tool_enabled, tenant_tool_allowed
+        from pramagent.hook_state import (
+            get_policies,
+            get_policy_mode,
+            tool_enabled,
+            tenant_tool_allowed,
+        )
         from pramagent.layers import ComplianceLayer
         from pramagent.layers.isolation import IsolationLayer
         from pramagent.policies import load_tool_guard, tool_policy_from_dict
@@ -182,6 +187,8 @@ def evaluate_event(event: dict[str, Any]) -> dict[str, Any]:
 
     try:
         guard = load_tool_guard(policy_path)
+        if get_policy_mode() == "replace":
+            guard.policies.clear()
         # Merge admin-console policy overrides over the file-based defaults.
         for _policy in (get_policies() or []):
             try:

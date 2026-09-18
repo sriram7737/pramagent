@@ -661,6 +661,17 @@ The plugin lives in `plugins/pramagent-guard/`, with publishing notes in
 MCP server/client/proxy; it is a host-agent lifecycle hook that evaluates
 proposed tool calls before execution.
 
+Hooks use the packaged `pramagent/default_hook_config.json` baseline when no
+user configuration exists. An integrity-checked user config can override a
+default by policy name or add another tool policy; resetting that override
+restores the packaged default. The default `extend` mode applies that overlay;
+explicit `replace` mode uses only the user's policy list. Set
+`PRAMAGENT_HOOK_STATE_PATH` for user state and
+`PRAMAGENT_HOOK_DEFAULT_CONFIG` only when deploying a reviewed alternative
+baseline. Both files are part of the protected hook control plane. Installing
+the Python package supplies this foundation; installing/enabling the host
+plugin or extension registers the actual host hook.
+
 Hook registrations use a broad matcher and deny unregistered tools. The shared
 control-plane check runs before policy toggles and protects host settings, hook
 launchers, plugin policy files, the guard package, and audit stores from
@@ -868,6 +879,13 @@ versioned policy, and reports `record_assurance`, `checkpoint_assurance`, and
 the effective `assurance_level` on every verification. See the
 [Evidence Envelope V2 specification](docs/EVIDENCE_ENVELOPE_V2.md); the
 `evidence-v2-verify` CLI accepts trusted public keys from a separate registry.
+
+For application audit events, `AuditEvidencePipeline` is available through
+`Pramagent(evidence_pipeline=...)`: each completed audit append emits a durable
+V2 leaf, configured epochs are hybrid-signed, and closed checkpoints enter the
+anchor outbox. A scheduler calls `pipeline.run_maintenance(provider=...)`; no
+external anchor call is made from the request path. The integration guide has a
+[complete configuration example](docs/EVIDENCE_ENVELOPE_V2.md#audit-pipeline-integration).
 
 Install `pramagent[evidence-anchors]` to timestamp a signed checkpoint with the
 Sigstore production RFC 3161 service and publish its digest to Rekor. Anchoring

@@ -1281,6 +1281,28 @@ async def hooks_upsert_policy(
     return RedirectResponse("/hooks", status_code=303)
 
 
+@app.post("/hooks/policy-mode")
+async def hooks_set_policy_mode(
+    request: Request,
+    policy_mode: str = Form(...),
+    csrf_token: str = Form(""),
+    ctx: AuthContext = Depends(require_auth),
+):
+    require_csrf(request, ctx, supplied=csrf_token)
+    _require_admin_role(ctx)
+    from pramagent import hook_admin
+
+    try:
+        hook_admin.set_policy_mode(
+            policy_mode, actor=f"dashboard:{ctx.username or 'admin'}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RedirectResponse(
+            f"/hooks?error={quote_plus(str(exc))}", status_code=303
+        )
+    return RedirectResponse("/hooks", status_code=303)
+
+
 @app.post("/hooks/policy/{name}/delete")
 async def hooks_delete_policy(
     request: Request,

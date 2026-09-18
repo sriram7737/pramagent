@@ -626,6 +626,13 @@ def test_convenience_api_matches_documented_import_shape(monkeypatch):
 
 def test_quantum_run_cli_persists_audit_chain(monkeypatch, tmp_path, capsys):
     audit_db = tmp_path / "quantum-audit.db"
+    monkeypatch.setenv(
+        "PRAMAGENT_QUANTUM_SIGNING_KEYS",
+        "ibm-live-test-01:quantum-test-signing-key",
+    )
+    monkeypatch.setenv(
+        "PRAMAGENT_QUANTUM_SIGNING_ACTIVE_KID", "ibm-live-test-01"
+    )
 
     class _Runner:
         def __init__(self, armor, **_kwargs):
@@ -672,14 +679,16 @@ def test_quantum_run_cli_persists_audit_chain(monkeypatch, tmp_path, capsys):
     assert output["audit_db"] == str(audit_db.resolve())
     assert output["budget_backend"] == "sqlite"
 
-    from pramagent.store import SQLiteStore
-    from pramagent.secrets import resolve_signing_key_ring
-    store = SQLiteStore(str(audit_db), **resolve_signing_key_ring())
+    monkeypatch.setenv("PRAMAGENT_DB", str(audit_db))
+    store = cli._store_from_env(verification=True)
     try:
         assert store.verify_chain()
         assert store.records()[-1]["payload"]["job_id"] == "job-persisted"
     finally:
         store.close()
+    assert cli.cmd_audit_verify_watch(
+        SimpleNamespace(interval_s=0.0, json=True)
+    ) == 0
 
 
 def test_quantum_run_cli_selects_postgres_budget_ledger(

@@ -40,6 +40,7 @@ from .anchors import (
     attach_anchors,
 )
 from .anchors_postgres import AnchorLeaseLostError, PostgresAnchorOutbox
+from .audit_pipeline import AuditEvidencePipeline, EvidencePipelineAppend, V2AuditBackend
 from .evidence_v2 import (
     AnchorPolicy,
     AssuranceLevel,
@@ -125,6 +126,7 @@ __all__ = [
     "AnchorJob",
     "AnchorLeaseLostError",
     "AnchorOutboxBackend",
+    "AuditEvidencePipeline",
     "AnchorPolicy",
     "AssuranceLevel",
     "CheckpointV2",
@@ -136,6 +138,7 @@ __all__ = [
     "EvidenceLeafV2",
     "EvidenceV2DependencyError",
     "EvidenceV2Error",
+    "EvidencePipelineAppend",
     "EvidenceVerificationReport",
     "ExternalAnchorError",
     "ExternalAnchorV2",
@@ -160,6 +163,7 @@ __all__ = [
     "SQLiteAnchorOutbox",
     "SignedCheckpointV2",
     "VerificationKey",
+    "V2AuditBackend",
     "DifficultyScore",
     "DifficultyScorer",
     "RouterResult",

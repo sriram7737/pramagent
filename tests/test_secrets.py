@@ -244,6 +244,35 @@ def test_quantum_signing_ring_falls_back_to_main_configuration(monkeypatch):
     assert cfg["active_kid"] == "api-v1"
 
 
+def test_audit_verification_ring_includes_main_and_quantum_keys(monkeypatch):
+    from pramagent.secrets import resolve_audit_verification_key_ring
+
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEYS", "api-v1:api-key")
+    monkeypatch.setenv("PRAMAGENT_SIGNING_ACTIVE_KID", "api-v1")
+    monkeypatch.setenv(
+        "PRAMAGENT_QUANTUM_SIGNING_KEYS", "qpu-v1:quantum-key"
+    )
+    monkeypatch.setenv("PRAMAGENT_QUANTUM_SIGNING_ACTIVE_KID", "qpu-v1")
+
+    cfg = resolve_audit_verification_key_ring()
+
+    assert cfg["signing_keys"] == {
+        "api-v1": "api-key",
+        "qpu-v1": "quantum-key",
+    }
+    assert cfg["active_kid"] == "api-v1"
+
+
+def test_audit_verification_ring_rejects_conflicting_key_ids(monkeypatch):
+    from pramagent.secrets import resolve_audit_verification_key_ring
+
+    monkeypatch.setenv("PRAMAGENT_SIGNING_KEYS", "shared:api-key")
+    monkeypatch.setenv("PRAMAGENT_QUANTUM_SIGNING_KEYS", "shared:quantum-key")
+
+    with pytest.raises(ValueError, match="different values"):
+        resolve_audit_verification_key_ring()
+
+
 def test_cli_store_verifies_rotated_chain_via_signing_keys_env(tmp_path, monkeypatch):
     """7.2: a chain written across a key rotation (rows tagged v1 then v2) must
     verify when the CLI store is built from PRAMAGENT_SIGNING_KEYS holding the

@@ -11,6 +11,12 @@ import pytest
 from pramagent import hook_admin, hook_state
 
 _CLAUDE_HOOK = Path(__file__).resolve().parents[1] / "scripts" / "claude_code_hook.py"
+_CODEX_HOOK = Path(__file__).resolve().parents[1] / "scripts" / "codex_tool_hook.py"
+_GEMINI_HOOK = Path(__file__).resolve().parents[1] / "scripts" / "gemini_cli_hook.py"
+_PLUGIN_HOOK = (
+    Path(__file__).resolve().parents[1]
+    / "plugins" / "pramagent-guard" / "hooks" / "scripts" / "pramagent_guard.py"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +33,14 @@ def _load_claude_hook():
     return module
 
 
+def _load_hook(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def _event(tool_name, tool_input):
     return {
         "hook_event_name": "PreToolUse",
@@ -39,7 +53,116 @@ def _event(tool_name, tool_input):
 def test_missing_config_is_enforcement_on():
     assert hook_state.is_enabled("claude") is True
     assert hook_state.tool_enabled("Bash") is True
-    assert hook_state.get_policies() is None
+    policies = hook_state.get_policies()
+    assert policies
+    assert {policy["name"] for policy in policies} >= {"Bash", "Read", "Agent"}
+
+
+def test_default_policies_are_closed_and_valid():
+    from pramagent.policies import tool_policy_from_dict
+
+    policies = hook_state.get_default_policies()
+    assert len(policies) == len({policy["name"] for policy in policies})
+    assert all(policy["schema"]["additionalProperties"] is False for policy in policies)
+    assert all(tool_policy_from_dict(policy) for policy in policies)
+
+
+def test_user_policy_overrides_default_by_name():
+    hook_admin.upsert_policy(
+        {
+            "name": "Read",
+            "side_effect": "read",
+            "action": "block",
+            "schema": {"type": "object", "additionalProperties": False},
+        },
+        actor="t",
+    )
+    policies = {policy["name"]: policy for policy in hook_state.get_policies()}
+    assert policies["Read"]["action"] == "block"
+    assert len([policy for policy in hook_state.get_policies() if policy["name"] == "Read"]) == 1
+
+
+def test_new_user_policy_extends_defaults_and_delete_restores_default():
+    default_bash = {
+        policy["name"]: policy for policy in hook_state.get_default_policies()
+    }["Bash"]
+    hook_admin.upsert_policy(
+        {
+            "name": "MyCustomTool",
+            "side_effect": "read",
+            "schema": {"type": "object", "additionalProperties": False},
+        },
+        actor="t",
+    )
+    hook_admin.upsert_policy(
+        {
+            "name": "Bash",
+            "side_effect": "destructive",
+            "action": "block",
+            "schema": {"type": "object", "additionalProperties": False},
+        },
+        actor="t",
+    )
+    assert {policy["name"] for policy in hook_state.get_policies()} >= {
+        "Bash",
+        "MyCustomTool",
+    }
+
+    hook_admin.delete_policy("Bash", actor="t")
+    effective = {policy["name"]: policy for policy in hook_state.get_policies()}
+    assert effective["Bash"] == default_bash
+    assert {policy["name"] for policy in hook_state.get_policy_overrides()} == {
+        "MyCustomTool"
+    }
+
+
+def test_missing_custom_default_file_keeps_adapter_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "PRAMAGENT_HOOK_DEFAULT_CONFIG", str(tmp_path / "missing-default.json")
+    )
+    assert hook_state.get_default_policies() == []
+    assert hook_state.get_policies() == []
+
+
+def test_replace_mode_uses_only_user_policies_across_all_hooks(monkeypatch, tmp_path):
+    custom = {
+        "name": "MyCustomTool",
+        "side_effect": "read",
+        "schema": {"type": "object", "additionalProperties": False},
+    }
+    hook_admin.upsert_policy(custom, actor="t")
+    hook_admin.set_policy_mode("replace", actor="t")
+    monkeypatch.setenv("PRAMAGENT_GEMINI_HOOK_AUDIT_DB", str(tmp_path / "gemini.db"))
+
+    hooks = [
+        (_load_claude_hook(), "PreToolUse", "Read"),
+        (_load_hook(_CODEX_HOOK, "codex_replace"), "PreToolUse", "Read"),
+        (_load_hook(_GEMINI_HOOK, "gemini_replace"), "BeforeTool", "read_file"),
+        (_load_hook(_PLUGIN_HOOK, "plugin_replace"), "PreToolUse", "Read"),
+    ]
+    for hook, event_name, built_in_name in hooks:
+        allowed = hook.evaluate_event({
+            "hook_event_name": event_name,
+            "tool_name": "MyCustomTool",
+            "tool_input": {},
+            "session_id": "pytest",
+        })
+        denied = hook.evaluate_event({
+            "hook_event_name": event_name,
+            "tool_name": built_in_name,
+            "tool_input": {"file_path": "README.md"},
+            "session_id": "pytest",
+        })
+        assert allowed == {}
+        assert denied.get("decision") == "deny" or (
+            denied.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        )
+        assert "not registered" in str(denied)
+
+
+def test_invalid_policy_mode_is_rejected():
+    with pytest.raises(ValueError, match="policy mode"):
+        hook_admin.set_policy_mode("merge-ish", actor="t")
 
 
 def test_corrupt_config_fails_safe(tmp_path, monkeypatch):

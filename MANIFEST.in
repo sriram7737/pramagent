@@ -13,6 +13,7 @@ recursive-include examples/quantum *.py *.md
 recursive-include pramagent/quantum/data *.json
 include pramagent/api/demo_page.html
 include pramagent/api/demo_signals_admin.html
+include pramagent/default_hook_config.json
 include deploy/dashboard/Dockerfile
 recursive-include deploy/enforcement *.ps1 *.sh
 include docs/COMPLIANCE_MAPPING.md

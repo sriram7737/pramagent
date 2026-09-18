@@ -52,6 +52,22 @@ resolves for `python`. On Windows especially, you may need to edit
   - write/edit tools route to human confirmation;
   - read/list/search tools are allowed unless ToolGuard detects injection or
     schema problems.
+- `pramagent/default_hook_config.json` adds the shared baseline used by Claude,
+  Codex, Gemini, and the marketplace plugin. With no user config, this baseline
+  is active automatically. Policies saved through the admin console or
+  `PRAMAGENT_HOOK_STATE_PATH` replace matching names and add new names; removing
+  an override restores the shipped policy.
+
+The control console defaults to `extend` mode. Operators can switch to
+`replace` mode to clear every built-in/default registration and use only their
+audited policy list. An empty replacement list denies every tool as
+unregistered. Installing the Python wheel provides policy code and defaults;
+the Claude/Codex plugin or Gemini extension must still be enabled so the host
+actually invokes the hook.
+
+Set `PRAMAGENT_HOOK_DEFAULT_CONFIG` to a reviewed alternative baseline. This
+file is part of the hook control plane and should be read-only to the agent
+identity. User state remains separately integrity-checked and audit-chained.
 
 All tools are matched by default. Unknown tools are denied until a matching
 entry is added to `policies.json` or through the admin console.

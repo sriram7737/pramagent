@@ -304,7 +304,9 @@ class TestCLI:
             def verify(self):
                 return []
 
-        monkeypatch.setattr(cli, "_store_from_env", lambda: FakeStore())
+        monkeypatch.setattr(
+            cli, "_store_from_env", lambda **_kwargs: FakeStore()
+        )
         monkeypatch.delenv("PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL", raising=False)
         args = SimpleNamespace(interval_s=0.0, json=True)
 
@@ -335,7 +337,9 @@ class TestCLI:
                 def __exit__(self, *a): return False
             return _Resp()
 
-        monkeypatch.setattr(cli, "_store_from_env", lambda: FakeStore())
+        monkeypatch.setattr(
+            cli, "_store_from_env", lambda **_kwargs: FakeStore()
+        )
         monkeypatch.setenv("PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL", "http://localhost:9/alert")
         monkeypatch.setenv("PRAMAGENT_AUDIT_ALERT_WEBHOOK_SECRET", "s3cr3t")
         monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -363,7 +367,9 @@ class TestCLI:
         def failing_urlopen(req, timeout=None):
             raise urllib.error.URLError("connection refused")
 
-        monkeypatch.setattr(cli, "_store_from_env", lambda: FakeStore())
+        monkeypatch.setattr(
+            cli, "_store_from_env", lambda **_kwargs: FakeStore()
+        )
         monkeypatch.setenv("PRAMAGENT_AUDIT_ALERT_WEBHOOK_URL", "http://localhost:9/alert")
         monkeypatch.setattr("urllib.request.urlopen", failing_urlopen)
         args = SimpleNamespace(interval_s=0.0, json=True)

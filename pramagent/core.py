@@ -67,6 +67,7 @@ class Pramagent:
         mode=None,
         output_judge=None,
         agent_scope=None,
+        evidence_pipeline=None,
     ):
         """Create a Pramagent orchestrator.
 
@@ -85,7 +86,15 @@ class Pramagent:
         self.safety = safety or SafetyLayer()
         self.reliability = reliability or ReliabilityLayer()
         self.hitl = hitl or HITLLayer()
-        self.audit = audit or HashChainBackend()
+        base_audit = audit or HashChainBackend()
+        # V2 evidence is additive and opt-in.  The decorator emits a durable
+        # Merkle leaf after the ordinary audit backend accepts an event; epoch
+        # closure and external anchoring run separately from the request path.
+        if evidence_pipeline is not None:
+            from .quantum.audit_pipeline import V2AuditBackend
+            self.audit = V2AuditBackend(base_audit, evidence_pipeline)
+        else:
+            self.audit = base_audit
         self.isolation = isolation or IsolationLayer()
         self.observability = observability or ObservabilityLayer()
         self.store = store or MemoryStore()
@@ -93,6 +102,10 @@ class Pramagent:
         # via tool_guard=ToolGuardLayer(policies=[...]) or post-construction
         # via armor.tool_guard.register(policy).
         self.tool_guard = tool_guard or ToolGuardLayer(default_verdict=Verdict.BLOCK)
+        # Preserve one audit stream when a caller deliberately configured the
+        # standalone ToolGuard with the same backend supplied to Pramagent.
+        if evidence_pipeline is not None and getattr(self.tool_guard, "_audit", None) is base_audit:
+            self.tool_guard._audit = self.audit
         # Optional consent gate (GDPR Art. 5(1)(b)/7). When a ConsentRegistry
         # is supplied, run() refuses to process unless consent for the
         # tenant/subject covers `consent_purpose`. Absence of a registry

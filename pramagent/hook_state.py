@@ -91,6 +91,14 @@ def state_path() -> Path:
     return _repo_root() / "pramagent_hook_config.json"
 
 
+def default_config_path() -> Path:
+    """Return the shipped baseline config or an operator-selected baseline."""
+    override = os.environ.get("PRAMAGENT_HOOK_DEFAULT_CONFIG")
+    if override:
+        return Path(override)
+    return Path(__file__).with_name("default_hook_config.json")
+
+
 def audit_path() -> Path:
     override = os.environ.get("PRAMAGENT_HOOK_ADMIN_AUDIT_DB")
     return Path(override) if override else state_path().with_name(
@@ -159,7 +167,7 @@ def _normalize(raw: Any) -> dict[str, Any]:
             "denied_tools": denied,
         }
 
-    return {
+    normalized = {
         "surfaces": surfaces,
         "tools": tools,
         "policies": policies,
@@ -167,6 +175,13 @@ def _normalize(raw: Any) -> dict[str, Any]:
         "updated_at": disk.get("updated_at"),
         "updated_by": disk.get("updated_by"),
     }
+    # Omit the field for legacy state so its previously audited digest remains
+    # valid. New states may opt into replacement explicitly.
+    if "policy_mode" in disk:
+        normalized["policy_mode"] = (
+            "replace" if disk.get("policy_mode") == "replace" else "extend"
+        )
+    return normalized
 
 
 def _read_state() -> tuple[dict[str, Any], bool]:
@@ -261,10 +276,55 @@ def tool_enabled(tool_name: str, state: Optional[dict[str, Any]] = None) -> bool
     return st["tools"].get(tool_name, True)
 
 
-def get_policies() -> Optional[list[dict[str, Any]]]:
-    """The policy override list, or None when the hook should use its built-in
-    defaults."""
-    return get_state()["policies"]
+def get_policies() -> list[dict[str, Any]]:
+    """Return shipped policies with audited user overrides merged by name.
+
+    A user policy with the same ``name`` replaces the default in place. New
+    names are appended. Deleting an override therefore restores the shipped
+    default instead of silently removing protection for that tool.
+    """
+    defaults = get_default_policies()
+    overrides = get_state()["policies"] or []
+    if get_policy_mode() == "replace":
+        return [dict(policy) for policy in overrides]
+    positions = {
+        str(policy.get("name")): index
+        for index, policy in enumerate(defaults)
+        if policy.get("name")
+    }
+    merged = [dict(policy) for policy in defaults]
+    for policy in overrides:
+        name = str(policy.get("name", ""))
+        if not name:
+            continue
+        if name in positions:
+            merged[positions[name]] = dict(policy)
+        else:
+            positions[name] = len(merged)
+            merged.append(dict(policy))
+    return merged
+
+
+def get_default_policies() -> list[dict[str, Any]]:
+    """Load the packaged baseline. Invalid files fail safe to adapter defaults."""
+    try:
+        raw = json.loads(default_config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    policies = raw.get("policies") if isinstance(raw, dict) else None
+    if not isinstance(policies, list):
+        return []
+    return [dict(policy) for policy in policies if isinstance(policy, dict)]
+
+
+def get_policy_overrides() -> list[dict[str, Any]]:
+    """Return only policies stored in the audited user configuration."""
+    return [dict(policy) for policy in (get_state()["policies"] or [])]
+
+
+def get_policy_mode() -> str:
+    """Return ``extend`` (default foundation) or explicit full ``replace``."""
+    return str(get_state().get("policy_mode", "extend"))
 
 
 def get_tenants() -> dict[str, Any]:
@@ -300,6 +360,7 @@ def protected_paths() -> tuple[Path, ...]:
     home = Path.home()
     candidates = [
         state_path(),
+        default_config_path(),
         audit_path(),
         repo / "pramagent" / "hook_integrity.json",
         Path(os.environ.get(

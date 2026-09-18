@@ -6,6 +6,7 @@ import hashlib
 from typing import Sequence
 
 from .evidence_v2 import (
+    AssuranceLevel,
     DEFAULT_SIGNATURE_POLICY,
     GENESIS_CHECKPOINT_HASH,
     CheckpointV2,
@@ -232,6 +233,7 @@ class MerkleEpochBuilder:
                     observed_at_us=leaf.observed_at_us,
                     record=record,
                     nonce=base64.b64decode(leaf.nonce_b64, validate=True),
+                    source_assurance=AssuranceLevel(leaf.source_assurance),
                 )
                 if expected != leaf:
                     raise EvidenceV2Error("Merkle snapshot record does not match its leaf")
@@ -249,6 +251,7 @@ class MerkleEpochBuilder:
         observed_at_us: int,
         record: dict,
         nonce: bytes | None = None,
+        source_assurance: AssuranceLevel = AssuranceLevel.CHECKSUM_ONLY,
     ) -> EvidenceLeafV2:
         sequence = (
             self._leaves[-1].sequence + 1
@@ -261,6 +264,7 @@ class MerkleEpochBuilder:
             observed_at_us=observed_at_us,
             record=record,
             nonce=nonce,
+            source_assurance=source_assurance,
         )
         self._leaves.append(leaf)
         self._records.append(record)

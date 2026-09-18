@@ -1,0 +1,943 @@
+{
+    "config_version":  1,
+    "policy_mode":  "extend",
+    "policies":  [
+                     {
+                         "action":  "allow",
+                         "detail":  "Shell commands are risk-tiered by shell_command_risk() before execution. Known read-only patterns (ls, cat, git status, pytest) short-circuit to allow; destructive patterns (rm -rf, git reset --hard, mkfs, curl | sh) deny; everything else falls through to Claude Code\u0027s native permission prompt.",
+                         "escalate_if_severity_gte":  "destructive",
+                         "name":  "Bash",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "command":  {
+                                                                           "maxLength":  20000,
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "dangerouslyDisableSandbox":  {
+                                                                                             "type":  "boolean"
+                                                                                         },
+                                                           "description":  {
+                                                                               "type":  "string"
+                                                                           },
+                                                           "run_in_background":  {
+                                                                                     "type":  "boolean"
+                                                                                 },
+                                                           "timeout":  {
+                                                                           "maximum":  600000,
+                                                                           "minimum":  0,
+                                                                           "type":  "integer"
+                                                                       }
+                                                       },
+                                        "required":  [
+                                                         "command"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "destructive"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "PowerShell path. Same risk tiers as Bash. Windows-specific destructive patterns (Remove-Item -Recurse -Force, iwr | iex) are caught by shell_command_risk.",
+                         "escalate_if_severity_gte":  "destructive",
+                         "name":  "PowerShell",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "command":  {
+                                                                           "maxLength":  20000,
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "dangerouslyDisableSandbox":  {
+                                                                                             "type":  "boolean"
+                                                                                         },
+                                                           "description":  {
+                                                                               "type":  "string"
+                                                                           },
+                                                           "run_in_background":  {
+                                                                                     "type":  "boolean"
+                                                                                 },
+                                                           "timeout":  {
+                                                                           "maximum":  600000,
+                                                                           "minimum":  0,
+                                                                           "type":  "integer"
+                                                                       }
+                                                       },
+                                        "required":  [
+                                                         "command"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "destructive"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Filesystem read. Sensitive paths (.env, credentials, ~/.ssh) are caught by targets_sensitive_path() before this policy runs.",
+                         "name":  "Read",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "file_path":  {
+                                                                             "minLength":  1,
+                                                                             "type":  "string"
+                                                                         },
+                                                           "limit":  {
+                                                                         "minimum":  1,
+                                                                         "type":  "integer"
+                                                                     },
+                                                           "offset":  {
+                                                                          "minimum":  0,
+                                                                          "type":  "integer"
+                                                                      },
+                                                           "pages":  {
+                                                                         "type":  "string"
+                                                                     }
+                                                       },
+                                        "required":  [
+                                                         "file_path"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "read"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "Grep",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "-A":  {
+                                                                      "type":  "number"
+                                                                  },
+                                                           "-B":  {
+                                                                      "type":  "number"
+                                                                  },
+                                                           "-C":  {
+                                                                      "type":  "number"
+                                                                  },
+                                                           "-i":  {
+                                                                      "type":  "boolean"
+                                                                  },
+                                                           "-n":  {
+                                                                      "type":  "boolean"
+                                                                  },
+                                                           "-o":  {
+                                                                      "type":  "boolean"
+                                                                  },
+                                                           "context":  {
+                                                                           "type":  "number"
+                                                                       },
+                                                           "glob":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "head_limit":  {
+                                                                              "type":  "number"
+                                                                          },
+                                                           "multiline":  {
+                                                                             "type":  "boolean"
+                                                                         },
+                                                           "offset":  {
+                                                                          "type":  "number"
+                                                                      },
+                                                           "output_mode":  {
+                                                                               "enum":  [
+                                                                                            "content",
+                                                                                            "files_with_matches",
+                                                                                            "count"
+                                                                                        ],
+                                                                               "type":  "string"
+                                                                           },
+                                                           "path":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "pattern":  {
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "type":  {
+                                                                        "type":  "string"
+                                                                    }
+                                                       },
+                                        "required":  [
+                                                         "pattern"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "read"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "Glob",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "path":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "pattern":  {
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       }
+                                                       },
+                                        "required":  [
+                                                         "pattern"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "read"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "File overwrite. Injection scan runs on the content field; protected-path check runs first so writes to hook_config or credential paths deny before this policy sees them.",
+                         "escalate_if_severity_gte":  "config_change",
+                         "name":  "Write",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "content":  {
+                                                                           "type":  "string"
+                                                                       },
+                                                           "file_path":  {
+                                                                             "minLength":  1,
+                                                                             "type":  "string"
+                                                                         }
+                                                       },
+                                        "required":  [
+                                                         "file_path",
+                                                         "content"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "write"
+                     },
+                     {
+                         "action":  "allow",
+                         "escalate_if_severity_gte":  "config_change",
+                         "name":  "Edit",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "file_path":  {
+                                                                             "minLength":  1,
+                                                                             "type":  "string"
+                                                                         },
+                                                           "new_string":  {
+                                                                              "type":  "string"
+                                                                          },
+                                                           "old_string":  {
+                                                                              "type":  "string"
+                                                                          },
+                                                           "replace_all":  {
+                                                                               "type":  "boolean"
+                                                                           }
+                                                       },
+                                        "required":  [
+                                                         "file_path",
+                                                         "old_string",
+                                                         "new_string"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "write"
+                     },
+                     {
+                         "action":  "allow",
+                         "escalate_if_severity_gte":  "config_change",
+                         "name":  "NotebookEdit",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "cell_id":  {
+                                                                           "type":  "string"
+                                                                       },
+                                                           "cell_type":  {
+                                                                             "enum":  [
+                                                                                          "code",
+                                                                                          "markdown"
+                                                                                      ],
+                                                                             "type":  "string"
+                                                                         },
+                                                           "edit_mode":  {
+                                                                             "enum":  [
+                                                                                          "replace",
+                                                                                          "insert",
+                                                                                          "delete"
+                                                                                      ],
+                                                                             "type":  "string"
+                                                                         },
+                                                           "new_source":  {
+                                                                              "type":  "string"
+                                                                          },
+                                                           "notebook_path":  {
+                                                                                 "minLength":  1,
+                                                                                 "type":  "string"
+                                                                             }
+                                                       },
+                                        "required":  [
+                                                         "notebook_path",
+                                                         "new_source"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "write"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Outbound HTTP with LLM post-processing. External network, so classed as external_message; url is sent to the fetcher and rendered content goes to a small model. Escalation threshold is \u0027payment\u0027 so it doesn\u0027t gate every doc lookup.",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "WebFetch",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "prompt":  {
+                                                                          "type":  "string"
+                                                                      },
+                                                           "url":  {
+                                                                       "format":  "uri",
+                                                                       "minLength":  1,
+                                                                       "type":  "string"
+                                                                   }
+                                                       },
+                                        "required":  [
+                                                         "url",
+                                                         "prompt"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "WebSearch",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "allowed_domains":  {
+                                                                                   "items":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                   "type":  "array"
+                                                                               },
+                                                           "blocked_domains":  {
+                                                                                   "items":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                   "type":  "array"
+                                                                               },
+                                                           "query":  {
+                                                                         "minLength":  2,
+                                                                         "type":  "string"
+                                                                     }
+                                                       },
+                                        "required":  [
+                                                         "query"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Spawns a subagent. Metered because subagent runs consume tokens; classified above compute so per-session limits can bound cost. Prompt is scanned for injection like any other string leaf.",
+                         "name":  "Agent",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "description":  {
+                                                                               "minLength":  1,
+                                                                               "type":  "string"
+                                                                           },
+                                                           "isolation":  {
+                                                                             "enum":  [
+                                                                                          "worktree",
+                                                                                          "remote"
+                                                                                      ],
+                                                                             "type":  "string"
+                                                                         },
+                                                           "model":  {
+                                                                         "enum":  [
+                                                                                      "sonnet",
+                                                                                      "opus",
+                                                                                      "haiku",
+                                                                                      "fable"
+                                                                                  ],
+                                                                         "type":  "string"
+                                                                     },
+                                                           "prompt":  {
+                                                                          "minLength":  1,
+                                                                          "type":  "string"
+                                                                      },
+                                                           "run_in_background":  {
+                                                                                     "type":  "boolean"
+                                                                                 },
+                                                           "subagent_type":  {
+                                                                                 "type":  "string"
+                                                                             }
+                                                       },
+                                        "required":  [
+                                                         "description",
+                                                         "prompt"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "metered_compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Orchestrates many subagents. Higher escalation threshold because a workflow can spawn dozens of agents; a Workflow call without explicit opt-in should be reviewed.",
+                         "escalate_if_severity_gte":  "external_message",
+                         "max_calls_per_session":  20,
+                         "name":  "Workflow",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "args":  {
+
+                                                                    },
+                                                           "description":  {
+                                                                               "type":  "string"
+                                                                           },
+                                                           "name":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "resumeFromRunId":  {
+                                                                                   "type":  "string"
+                                                                               },
+                                                           "script":  {
+                                                                          "maxLength":  524288,
+                                                                          "type":  "string"
+                                                                      },
+                                                           "scriptPath":  {
+                                                                              "type":  "string"
+                                                                          },
+                                                           "title":  {
+                                                                         "type":  "string"
+                                                                     }
+                                                       },
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "metered_compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "Skill",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "args":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "skill":  {
+                                                                         "minLength":  1,
+                                                                         "type":  "string"
+                                                                     }
+                                                       },
+                                        "required":  [
+                                                         "skill"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "TodoWrite",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "todos":  {
+                                                                         "items":  {
+                                                                                       "additionalProperties":  false,
+                                                                                       "properties":  {
+                                                                                                          "activeForm":  {
+                                                                                                                             "minLength":  1,
+                                                                                                                             "type":  "string"
+                                                                                                                         },
+                                                                                                          "content":  {
+                                                                                                                          "minLength":  1,
+                                                                                                                          "type":  "string"
+                                                                                                                      },
+                                                                                                          "status":  {
+                                                                                                                         "enum":  [
+                                                                                                                                      "pending",
+                                                                                                                                      "in_progress",
+                                                                                                                                      "completed"
+                                                                                                                                  ],
+                                                                                                                         "type":  "string"
+                                                                                                                     }
+                                                                                                      },
+                                                                                       "required":  [
+                                                                                                        "content",
+                                                                                                        "activeForm",
+                                                                                                        "status"
+                                                                                                    ],
+                                                                                       "type":  "object"
+                                                                                   },
+                                                                         "type":  "array"
+                                                                     }
+                                                       },
+                                        "required":  [
+                                                         "todos"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "AskUserQuestion",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "annotations":  {
+                                                                               "type":  "object"
+                                                                           },
+                                                           "answers":  {
+                                                                           "type":  "object"
+                                                                       },
+                                                           "metadata":  {
+                                                                            "type":  "object"
+                                                                        },
+                                                           "questions":  {
+                                                                             "maxItems":  4,
+                                                                             "minItems":  1,
+                                                                             "type":  "array"
+                                                                         }
+                                                       },
+                                        "required":  [
+                                                         "questions"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "ReportFindings",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "findings":  {
+                                                                            "maxItems":  32,
+                                                                            "type":  "array"
+                                                                        },
+                                                           "level":  {
+                                                                         "enum":  [
+                                                                                      "low",
+                                                                                      "medium",
+                                                                                      "high",
+                                                                                      "xhigh",
+                                                                                      "max"
+                                                                                  ],
+                                                                         "type":  "string"
+                                                                     }
+                                                       },
+                                        "required":  [
+                                                         "findings"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "ListAgents",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "channel":  {
+                                                                           "type":  "string"
+                                                                       },
+                                                           "q":  {
+                                                                     "type":  "string"
+                                                                 }
+                                                       },
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "read"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Spawns a background process or WebSocket subscription. Compute (not write) because the monitor observes; any file mutations happen through the command that runs, which itself lands in Bash.",
+                         "name":  "Monitor",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "command":  {
+                                                                           "type":  "string"
+                                                                       },
+                                                           "description":  {
+                                                                               "minLength":  1,
+                                                                               "type":  "string"
+                                                                           },
+                                                           "timeout_ms":  {
+                                                                              "maximum":  3600000,
+                                                                              "minimum":  1000,
+                                                                              "type":  "number"
+                                                                          },
+                                                           "ws":  {
+                                                                      "properties":  {
+                                                                                         "protocols":  {
+                                                                                                           "items":  {
+                                                                                                                         "type":  "string"
+                                                                                                                     },
+                                                                                                           "type":  "array"
+                                                                                                       },
+                                                                                         "url":  {
+                                                                                                     "type":  "string"
+                                                                                                 }
+                                                                                     },
+                                                                      "required":  [
+                                                                                       "url"
+                                                                                   ],
+                                                                      "type":  "object"
+                                                                  }
+                                                       },
+                                        "required":  [
+                                                         "description",
+                                                         "timeout_ms"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "compute"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "TaskOutput",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "block":  {
+                                                                         "type":  "boolean"
+                                                                     },
+                                                           "task_id":  {
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "timeout":  {
+                                                                           "maximum":  600000,
+                                                                           "minimum":  0,
+                                                                           "type":  "number"
+                                                                       }
+                                                       },
+                                        "required":  [
+                                                         "task_id",
+                                                         "block",
+                                                         "timeout"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "read"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "TaskStop",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "shell_id":  {
+                                                                            "type":  "string"
+                                                                        },
+                                                           "task_id":  {
+                                                                           "type":  "string"
+                                                                       }
+                                                       },
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "config_change"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Cross-session or cross-agent message. Injection scan runs on the message body; PII scrubber flags a message that carries an email or badge number outside a documented handoff.",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "SendMessage",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "message":  {
+                                                                           "type":  "string"
+                                                                       },
+                                                           "notify_when_idle":  {
+                                                                                    "type":  "boolean"
+                                                                                },
+                                                           "summary":  {
+                                                                           "maxLength":  200,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "to":  {
+                                                                      "minLength":  1,
+                                                                      "type":  "string"
+                                                                  }
+                                                       },
+                                        "required":  [
+                                                         "to"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Drafts feedback for Anthropic. Feedback content stays local until the user approves send.",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "SendFeedback",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "area":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "details":  {
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "failure_mode":  {
+                                                                                "type":  "string"
+                                                                            },
+                                                           "task_category":  {
+                                                                                 "type":  "string"
+                                                                             },
+                                                           "title":  {
+                                                                         "minLength":  1,
+                                                                         "type":  "string"
+                                                                     },
+                                                           "type":  {
+                                                                        "enum":  [
+                                                                                     "bug",
+                                                                                     "idea",
+                                                                                     "missing_capability"
+                                                                                 ],
+                                                                        "type":  "string"
+                                                                    }
+                                                       },
+                                        "required":  [
+                                                         "type",
+                                                         "title",
+                                                         "details"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "PushNotification",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "message":  {
+                                                                           "maxLength":  200,
+                                                                           "minLength":  1,
+                                                                           "type":  "string"
+                                                                       },
+                                                           "status":  {
+                                                                          "enum":  [
+                                                                                       "proactive"
+                                                                                   ],
+                                                                          "type":  "string"
+                                                                      }
+                                                       },
+                                        "required":  [
+                                                         "message",
+                                                         "status"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Publishes to claude.ai. Default-private but URLs are shareable, so classed as external_message. Publish/read/list actions are all allowed; delete is naturally guarded by Claude Code\u0027s own confirm prompt.",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "Artifact",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Read/write against claude.ai/design projects. Uses OAuth-scoped session, so a call that lands on the wrong project surfaces as an auth error, not a data leak.",
+                         "escalate_if_severity_gte":  "payment",
+                         "name":  "DesignSync",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "method":  {
+                                                                          "enum":  [
+                                                                                       "list_projects",
+                                                                                       "get_project",
+                                                                                       "list_files",
+                                                                                       "get_file",
+                                                                                       "finalize_plan",
+                                                                                       "write_files",
+                                                                                       "delete_files",
+                                                                                       "register_assets",
+                                                                                       "unregister_assets",
+                                                                                       "create_project",
+                                                                                       "report_validate"
+                                                                                   ],
+                                                                          "type":  "string"
+                                                                      }
+                                                       },
+                                        "required":  [
+                                                         "method"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "external_message"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Session-only recurring prompt. Config change because the schedule persists across turns; auto-expires at 7 days.",
+                         "name":  "CronCreate",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "cron":  {
+                                                                        "minLength":  1,
+                                                                        "type":  "string"
+                                                                    },
+                                                           "durable":  {
+                                                                           "type":  "boolean"
+                                                                       },
+                                                           "prompt":  {
+                                                                          "minLength":  1,
+                                                                          "type":  "string"
+                                                                      },
+                                                           "recurring":  {
+                                                                             "type":  "boolean"
+                                                                         }
+                                                       },
+                                        "required":  [
+                                                         "cron",
+                                                         "prompt"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "config_change"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "CronDelete",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "id":  {
+                                                                      "minLength":  1,
+                                                                      "type":  "string"
+                                                                  }
+                                                       },
+                                        "required":  [
+                                                         "id"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "config_change"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "CronList",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "read"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "ScheduleWakeup",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "delaySeconds":  {
+                                                                                "maximum":  3600,
+                                                                                "minimum":  60,
+                                                                                "type":  "number"
+                                                                            },
+                                                           "noop":  {
+                                                                        "type":  "boolean"
+                                                                    },
+                                                           "prompt":  {
+                                                                          "type":  "string"
+                                                                      },
+                                                           "reason":  {
+                                                                          "type":  "string"
+                                                                      },
+                                                           "stop":  {
+                                                                        "type":  "boolean"
+                                                                    }
+                                                       },
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "config_change"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "EnterPlanMode",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "config_change"
+                     },
+                     {
+                         "action":  "allow",
+                         "name":  "ExitPlanMode",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "config_change"
+                     },
+                     {
+                         "action":  "allow",
+                         "escalate_if_severity_gte":  "config_change",
+                         "name":  "EnterWorktree",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "name":  {
+                                                                        "type":  "string"
+                                                                    },
+                                                           "path":  {
+                                                                        "type":  "string"
+                                                                    }
+                                                       },
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "write"
+                     },
+                     {
+                         "action":  "allow",
+                         "detail":  "Leaves a git worktree; removal is destructive. escalate_if_severity_gte=config_change catches removals through the escalate path; discard_changes=true triggers Claude Code\u0027s own confirm.",
+                         "escalate_if_severity_gte":  "config_change",
+                         "name":  "ExitWorktree",
+                         "schema":  {
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "action":  {
+                                                                          "enum":  [
+                                                                                       "keep",
+                                                                                       "remove"
+                                                                                   ],
+                                                                          "type":  "string"
+                                                                      },
+                                                           "discard_changes":  {
+                                                                                   "type":  "boolean"
+                                                                               }
+                                                       },
+                                        "required":  [
+                                                         "action"
+                                                     ],
+                                        "type":  "object"
+                                    },
+                         "side_effect":  "write"
+                     }
+                 ]
+}

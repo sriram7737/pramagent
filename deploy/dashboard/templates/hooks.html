@@ -90,18 +90,28 @@
 <section class="panel">
   <div class="panel-header"><div><h2>Tool policies</h2></div></div>
   <p style="color:var(--muted);margin:0 0 8px">
-    Override the built-in ToolGuard policy for any tool (JSON schema, side_effect,
-    action, escalate threshold). Validated before it is saved; an invalid policy
-    is rejected, never written.
+    Pramagent ships these defaults. Saving a policy with the same name creates
+    an audited override; a new name extends the set. Resetting an override
+    restores the shipped default.
   </p>
+  <form method="post" action="/hooks/policy-mode" style="margin:0 0 12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="policy_mode">Policy source</label>
+    <select id="policy_mode" name="policy_mode">
+      <option value="extend" {% if config.policy_mode == "extend" %}selected{% endif %}>Defaults + user overrides</option>
+      <option value="replace" {% if config.policy_mode == "replace" %}selected{% endif %}>User policies only</option>
+    </select>
+    <button class="button" type="submit">Apply</button>
+  </form>
   {% if config.policies %}
   <div class="table-wrap">
     <table class="trace-table">
-      <thead><tr><th>Name</th><th>Side effect</th><th>Action</th><th>Schema</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Source</th><th>Side effect</th><th>Action</th><th>Schema</th><th></th></tr></thead>
       <tbody>
       {% for p in config.policies %}
         <tr>
           <td class="mono">{{ p.name }}</td>
+          <td>{{ "Custom" if p.name in config.policy_override_names else "Default" }}</td>
           <td>{{ p.side_effect | default("read") }}</td>
           <td>{{ p.action | default("allow") }}</td>
           <td>
@@ -111,10 +121,12 @@
             </details>
           </td>
           <td>
+            {% if p.name in config.policy_override_names %}
             <form method="post" action="/hooks/policy/{{ p.name }}/delete">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button class="button deny" type="submit">Delete</button>
+              <button class="button" type="submit">{{ "Remove" if config.policy_mode == "replace" else "Reset" }}</button>
             </form>
+            {% endif %}
           </td>
         </tr>
       {% endfor %}
@@ -122,7 +134,7 @@
     </table>
   </div>
   {% else %}
-  <div class="empty">No policy overrides  -  every hook uses its built-in defaults.</div>
+  <div class="empty">No policies are available.</div>
   {% endif %}
 
   <h3 style="margin-top:16px">Add or edit a policy</h3>

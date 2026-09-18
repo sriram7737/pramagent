@@ -136,6 +136,59 @@ def resolve_quantum_signing_key_ring() -> dict:
     return resolve_signing_key_ring()
 
 
+def resolve_audit_verification_key_ring() -> dict:
+    """Resolve every configured audit key for read-only chain verification.
+
+    Quantum runs may use a dedicated signing namespace while the API and
+    ordinary audit stores use the main namespace. Verification must recognize
+    both or an intact quantum chain can be reported as tampered. The returned
+    ring is intended only for readers: its active key preserves the main
+    namespace when one exists, but all configured keys remain available for
+    validating tagged and legacy untagged records.
+
+    Reusing a key ID with different key material is rejected. Silently choosing
+    either value would make verification depend on environment ordering.
+    """
+    main = resolve_signing_key_ring()
+    quantum = resolve_quantum_signing_key_ring()
+    if quantum == main:
+        return main
+
+    def _entries(config: dict, namespace: str) -> tuple[dict[str, str], str | None]:
+        configured = config.get("signing_keys")
+        if configured:
+            keys = {str(kid): str(key) for kid, key in configured.items()}
+            active = str(config.get("active_kid") or next(iter(keys)))
+            return keys, active
+        key = str(config.get("signing_key") or "")
+        if not key:
+            return {}, None
+        synthetic_kid = f"__{namespace}_unversioned__"
+        return {synthetic_kid: key}, synthetic_kid
+
+    main_keys, main_active = _entries(main, "pramagent")
+    quantum_keys, quantum_active = _entries(quantum, "quantum")
+    if not main_keys:
+        return quantum
+    if not quantum_keys:
+        return main
+
+    merged = dict(main_keys)
+    for kid, key in quantum_keys.items():
+        existing = merged.get(kid)
+        if existing is not None and existing != key:
+            raise ValueError(
+                f"audit signing key ID {kid!r} is configured with different "
+                "values in the main and quantum key rings"
+            )
+        merged[kid] = key
+    return {
+        "signing_key": "",
+        "signing_keys": merged,
+        "active_kid": main_active or quantum_active,
+    }
+
+
 def _fetch_aws_secret(secret_id: str) -> str:
     try:
         import boto3

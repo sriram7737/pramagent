@@ -30,6 +30,11 @@ def all_known_tools() -> list[str]:
     seen: set[str] = set()
     for tools in KNOWN_TOOLS.values():
         seen.update(tools)
+    seen.update(
+        str(policy["name"])
+        for policy in hook_state.get_default_policies()
+        if policy.get("name")
+    )
     return sorted(seen)
 
 
@@ -186,10 +191,15 @@ def get_config() -> dict[str, Any]:
     """Full current config plus audit-chain status, for the console to render."""
     state = hook_state.get_state()
     integrity_valid, integrity_reason = hook_state.integrity_status()
+    overrides = hook_state.get_policy_overrides()
     return {
         "surfaces": state["surfaces"],
         "tools": state["tools"],
-        "policies": state["policies"] or [],
+        "policies": hook_state.get_policies() or [],
+        "policy_mode": hook_state.get_policy_mode(),
+        "policy_override_names": sorted(
+            str(policy.get("name")) for policy in overrides if policy.get("name")
+        ),
         "tenants": state["tenants"],
         "updated_at": state["updated_at"],
         "updated_by": state["updated_by"],
@@ -221,6 +231,20 @@ def set_tool_enabled(tool_name: str, enabled: bool, *, actor: str) -> dict[str, 
     return _commit(
         state, action="set_tool_enabled", actor=actor,
         detail={"tool": tool_name, "enabled": bool(enabled)},
+    )
+
+
+def set_policy_mode(mode: str, *, actor: str) -> dict[str, Any]:
+    """Select default-overlay or complete user-policy replacement behavior."""
+    if mode not in {"extend", "replace"}:
+        raise ValueError("policy mode must be 'extend' or 'replace'")
+    state = hook_state._state_for_update()
+    state["policy_mode"] = mode
+    return _commit(
+        state,
+        action="set_policy_mode",
+        actor=actor,
+        detail={"policy_mode": mode},
     )
 
 

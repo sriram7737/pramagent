@@ -53,6 +53,8 @@ def test_console_page_lists_surfaces(monkeypatch):
     assert "Hook control console" in page.text
     for surface in ("claude", "gemini", "codex", "plugin"):
         assert surface in page.text
+    assert "Default" in page.text
+    assert "Agent" in page.text
 
 
 def test_toggle_surface_persists_and_audits(monkeypatch):
@@ -128,6 +130,46 @@ def test_delete_policy(monkeypatch):
     )
     assert resp.status_code == 303
     assert not any(p["name"] == "Temp" for p in hook_state.get_policies() or [])
+
+
+def test_delete_default_override_restores_shipped_policy(monkeypatch):
+    from pramagent import hook_admin, hook_state
+
+    default = {
+        policy["name"]: policy for policy in hook_state.get_default_policies()
+    }["Read"]
+    hook_admin.upsert_policy(
+        {
+            "name": "Read",
+            "action": "block",
+            "side_effect": "read",
+            "schema": {"type": "object", "additionalProperties": False},
+        },
+        actor="seed",
+    )
+    client, csrf = _login_admin(monkeypatch)
+    response = client.post(
+        "/hooks/policy/Read/delete",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    effective = {policy["name"]: policy for policy in hook_state.get_policies()}
+    assert response.status_code == 303
+    assert effective["Read"] == default
+
+
+def test_admin_can_select_full_policy_replacement(monkeypatch):
+    from pramagent import hook_state
+
+    client, csrf = _login_admin(monkeypatch)
+    response = client.post(
+        "/hooks/policy-mode",
+        data={"policy_mode": "replace", "csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert hook_state.get_policy_mode() == "replace"
+    assert hook_state.get_policies() == []
 
 
 def test_csrf_required_for_toggle(monkeypatch):
