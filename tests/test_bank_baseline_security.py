@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import re
 import sys
 from pathlib import Path
 
@@ -7,6 +9,24 @@ from pathlib import Path
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "bank_baseline"
 sys.path.insert(0, str(EXAMPLE))
 from baseline import Controller, MockBank, Task
+
+
+def test_bank_sql_literals_do_not_use_python_digit_separators():
+    """SQLite versions differ on underscores inside SQL numeric literals."""
+    source_path = EXAMPLE / "baseline.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in {"execute", "executemany", "executescript"}:
+            continue
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        sql = node.args[0].value
+        if isinstance(sql, str) and re.search(r"\d_\d", sql):
+            offenders.append((node.lineno, sql))
+    assert offenders == []
 
 
 TOKEN = "synthetic-operator-token-for-tests-only"

@@ -165,9 +165,18 @@ def bank_worker(conn, path, service_key, initial_cents, fail_before_commit):
             ('ext-settlement','bank',100_000_000)])
         db.execute("INSERT INTO payees VALUES('p-vendor','tenant-a','Known Vendor','a-vendor',1)")
         db.execute("INSERT INTO payees VALUES('p-other','tenant-a','Unverified Payee','a-savings',0)")
-        db.execute("INSERT INTO cards VALUES('c-main','tenant-a','a-main','active',50_000)")
-        db.execute("INSERT INTO cards VALUES('c-spare','tenant-a','a-main','frozen',10_000)")
-        db.execute("INSERT INTO loans VALUES('l-1','tenant-a','a-main',300_000,'open')")
+        db.execute(
+            'INSERT INTO cards VALUES(?,?,?,?,?)',
+            ('c-main', 'tenant-a', 'a-main', 'active', 50_000),
+        )
+        db.execute(
+            'INSERT INTO cards VALUES(?,?,?,?,?)',
+            ('c-spare', 'tenant-a', 'a-main', 'frozen', 10_000),
+        )
+        db.execute(
+            'INSERT INTO loans VALUES(?,?,?,?,?)',
+            ('l-1', 'tenant-a', 'a-main', 300_000, 'open'),
+        )
         db.execute("INSERT INTO disputes VALUES('d-1','tenant-a','tx-seed','open')")
         db.execute("INSERT INTO fees VALUES('f-1','tenant-a','a-main',500,'charged')")
         db.execute("INSERT INTO customer VALUES('tenant-a','owner@example.test','+10000000000','1 Test Street')")
