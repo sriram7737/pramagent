@@ -28,6 +28,7 @@ include docs/SUPPLY_CHAIN.md
 include docs/IMPLEMENTATION_STATUS.md
 include docs/EVIDENCE_ENVELOPE_V2.md
 include docs/HOOK_DEPLOYMENT_BOUNDARY.md
+include docs/TASK_SCOPED_AUTHORIZATION.md
 include docs/LIVE_TEST_RESULTS.md
 include docs/LIVE_WORKFLOW_DEMO.md
 include docs/LOAD_TEST.md
@@ -51,3 +52,4 @@ include requirements-security.txt
 include deploy/postgres/hardening_rls.sql
 recursive-include docs *.png
 recursive-include tests/data *.json
+recursive-include examples/bank_baseline *.py *.md

@@ -29,7 +29,8 @@ from __future__ import annotations
 
 from .autogen import PramagentHook
 from .crewai import PramagentGuard
-from .generic import guarded_tool, protect, protect_tool, ProtectedCallResult
+from .generic import (guarded_tool, mediated_tool, protect, protect_tool,
+                      ProtectedCallResult)
 from .langgraph import PramagentNode
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "protect",
     "protect_tool",
     "guarded_tool",
+    "mediated_tool",
     "ProtectedCallResult",
 ]

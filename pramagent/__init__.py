@@ -61,6 +61,16 @@ from .usage import (
     UsageTracker,
     WebhookUsageSink,
 )
+from .action_control import (
+    ActionDecision,
+    ActionEffect,
+    ActionRequest,
+    DecisionCode,
+    ExecutionState,
+    SQLiteActionController,
+    TaskPermission,
+    summarize_action,
+)
 
 __version__ = "0.8.9"
 __all__ = [
@@ -120,6 +130,14 @@ __all__ = [
     "InMemoryUsageLedger",
     "InMemoryUsageSink",
     "WebhookUsageSink",
+    "ActionRequest",
+    "ActionEffect",
+    "ActionDecision",
+    "DecisionCode",
+    "ExecutionState",
+    "TaskPermission",
+    "SQLiteActionController",
+    "summarize_action",
     "attack_techniques_for_side_effect",
     "finalize_trace_conformance",
     "is_read_only_side_effect",

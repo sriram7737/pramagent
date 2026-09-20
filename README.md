@@ -28,8 +28,19 @@ contribution was merged in
 [langchain-ai/docs#4806](https://github.com/langchain-ai/docs/pull/4806)
 on August 11, 2026.
 
-The wedge is narrow by design: Pramagent does not prevent your model from being
-wrong; it prevents your model from doing damage when it is wrong.
+The wedge is narrow by design: Pramagent applies configured checks before
+supported tool calls and records the decision. It is one enforcement layer;
+production deployments still need a protected execution boundary so the agent
+cannot bypass or rewrite the guard.
+
+For workflows that need exact task authority, the package now includes an
+opt-in task-scoped execution controller. It binds tenant, policy version,
+operation, arguments, resources, destinations, cumulative limits, approval,
+and retry state into one immutable `ActionRequest`. See
+[Task-scoped authorization](https://github.com/sriram7737/pramagent/blob/main/docs/TASK_SCOPED_AUTHORIZATION.md).
+The included SQLite controller is single-host; consequential deployments must
+put it and downstream credentials in a separately permissioned execution
+service.
 
 ![Pramagent trust stack](https://raw.githubusercontent.com/sriram7737/pramagent/main/docs/stack.png)
 

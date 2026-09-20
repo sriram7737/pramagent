@@ -68,6 +68,7 @@ class Pramagent:
         output_judge=None,
         agent_scope=None,
         evidence_pipeline=None,
+        action_controller=None,
     ):
         """Create a Pramagent orchestrator.
 
@@ -128,6 +129,21 @@ class Pramagent:
         # Optional AWS Agentic AI Security Scoping Matrix declaration. Default
         # remains "undeclared" for backwards-compatible library use.
         self.agent_scope = normalize_agent_scope(agent_scope)
+        # Optional strict execution mediator. Tool validation remains available
+        # for backwards compatibility, while execute_action() requires this
+        # controller and never calls a tool directly.
+        self.action_controller = action_controller
+
+    def execute_action(self, action):
+        """Submit an immutable ActionRequest through the configured mediator.
+
+        The action controller owns task scope, exact-operation approval,
+        cumulative limits, idempotency, and dispatch to a trusted executor.
+        No fallback to direct execution exists when it is unavailable.
+        """
+        if self.action_controller is None:
+            raise RuntimeError("no action controller is configured")
+        return self.action_controller.submit(action)
 
     def validate_tool(
         self,

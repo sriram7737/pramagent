@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from ..core import Pramagent
+from ..action_control import ActionRequest
 from ..types import AgentResponse, Verdict
 
 
@@ -143,3 +144,65 @@ def guarded_tool(armor: Pramagent, fn: Optional[Callable[..., Any]] = None,
         tool_name=selected_name,
         action_label=action_label,
     )
+
+def mediated_tool(
+    armor: Pramagent,
+    fn: Optional[Callable[..., Any]] = None,
+    *,
+    request_factory: Callable[[tuple[Any, ...], dict[str, Any]], ActionRequest],
+    tool_name: Optional[str] = None,
+    operator_token: str,
+):
+    """Register and wrap a synchronous tool behind task-scoped mediation.
+
+    ``request_factory`` is trusted adapter code: it extracts operation,
+    resources, destinations, and limits from detached call arguments. The
+    wrapped function never calls ``fn`` directly. It returns an
+    ``ActionDecision``; pending approval therefore cannot fall through into
+    execution.
+
+    For a hard process boundary, register the executor in a separate service
+    and submit the same ActionRequest over an authenticated transport instead.
+    """
+    if fn is None:
+        return lambda real_fn: mediated_tool(
+            armor,
+            real_fn,
+            request_factory=request_factory,
+            tool_name=tool_name,
+            operator_token=operator_token,
+        )
+    controller = armor.action_controller
+    if controller is None:
+        raise RuntimeError("mediated_tool requires Pramagent(action_controller=...)")
+    if asyncio.iscoroutinefunction(fn):
+        raise TypeError("mediated_tool currently requires a synchronous executor")
+    name = tool_name or getattr(fn, "__name__", "tool")
+
+    def executor(payload: dict[str, Any], request: ActionRequest):
+        call_args = payload.get("args")
+        call_kwargs = payload.get("kwargs")
+        if type(call_args) is not list or type(call_kwargs) is not dict:
+            raise ValueError("mediated tool payload is malformed")
+        return fn(*call_args, **call_kwargs)
+
+    controller.register_executor(name, executor, token=operator_token)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        # Reuse ActionRequest canonicalization as the immutable boundary; the
+        # factory receives detached plain values only.
+        payload = {"args": list(args), "kwargs": dict(kwargs)}
+        detached = ActionRequest.create(
+            execution_id="_snapshot", task_id="_snapshot", tenant_id="_snapshot",
+            policy_version=0, tool_name=name, operation="_snapshot",
+            arguments=payload,
+        ).arguments
+        request = request_factory(tuple(detached["args"]), detached["kwargs"])
+        if not isinstance(request, ActionRequest):
+            raise TypeError("request_factory must return ActionRequest")
+        if request.tool_name != name:
+            raise ValueError("request_factory tool_name does not match the registered executor")
+        return armor.execute_action(request)
+
+    return wrapper

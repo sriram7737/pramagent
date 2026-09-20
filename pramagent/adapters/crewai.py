@@ -54,9 +54,9 @@ class PramagentGuard:
                     tenant_id=self.tenant_id, session_id=self.session_id,
                     action_label=action_label,
                 )
-                if decision.verdict == Verdict.BLOCK:
+                if decision.verdict in (Verdict.BLOCK, Verdict.ESCALATE):
                     raise PermissionError(
-                        f"tool '{tool_name}' blocked by Pramagent: {decision.reason}")
+                        f"tool '{tool_name}' not authorized by Pramagent: {decision.reason}")
                 return f(*args, **kwargs)
 
             @functools.wraps(f)
@@ -66,9 +66,9 @@ class PramagentGuard:
                     tenant_id=self.tenant_id, session_id=self.session_id,
                     action_label=action_label,
                 )
-                if decision.verdict == Verdict.BLOCK:
+                if decision.verdict in (Verdict.BLOCK, Verdict.ESCALATE):
                     raise PermissionError(
-                        f"tool '{tool_name}' blocked by Pramagent: {decision.reason}")
+                        f"tool '{tool_name}' not authorized by Pramagent: {decision.reason}")
                 return await f(*args, **kwargs)
 
             return async_w if is_coro else sync_w
